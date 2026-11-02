@@ -1,0 +1,19 @@
+# SearXNG: starts from the defaults and changes what is listed here. https://docs.searxng.org/admin/settings/index.html
+# The secret key comes from the variable SEARXNG_SECRET.
+use_default_settings: true
+
+general:
+  instance_name: "SearXNG"
+  enable_metrics: false
+
+search:
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  limiter: false
+  public_instance: false
+  image_proxy: true
+  method: "POST"

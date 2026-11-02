@@ -245,6 +245,13 @@ describe("templates and their files", () => {
     expect(newAppArgs(parse({ appId: "demo-app", server: "aws", image: "x:1" }))).not.toContain("--template");
   });
 
+  it("passes further templates as more --template flags, the first one first", () => {
+    const args = newAppArgs(parse({ appId: "demo-app", server: "aws", template: "mealie", extraTemplates: ["paperless", "kuma"] }));
+    expect(args.filter((x, i) => args[i - 1] === "--template")).toEqual(["mealie", "paperless", "kuma"]);
+    expect(newAppArgs(parse({ appId: "demo-app", server: "aws", image: "x:1", extraTemplates: ["kuma"] }))).not.toContain("--template");   // no first template: none
+    expect(planInput.safeParse({ appId: "demo-app", server: "aws", template: "mealie", extraTemplates: ["No Good"] }).success).toBe(false);
+  });
+
   it("writes the edited files below files/, also in folders, and removes everything afterwards", async () => {
     const { readFileSync, existsSync } = await import("node:fs");
     let seen: { args: string[]; conf: string; page: string; dir: string } | undefined;

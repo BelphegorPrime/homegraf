@@ -1,0 +1,14 @@
+# Template of ./homelab.py new-app --template bentopdf, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: BentoPDF
+  category: documents
+  description: "PDF toolbox that runs in the browser: merge, split, compress, convert. Nothing is stored on the server."
+  health_path: /
+  statuses: [200]
+services:
+  app:
+    image: ghcr.io/alam00000/bentopdf-simple:2.8.11
+    ports:
+      - "8080:8080"
+    environment:
+      DISABLE_IPV6: "true"

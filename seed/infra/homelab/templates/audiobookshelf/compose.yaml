@@ -1,0 +1,20 @@
+# Template of ./homelab.py new-app --template audiobookshelf, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: Audiobookshelf
+  category: media
+  description: Audiobook and podcast server with apps for phones. Point the two media volumes at your folders.
+  health_path: /
+  websockets: true
+  statuses: [200, 302]
+  host_paths: [/audiobooks, /podcasts]
+  first_run: Open __URL__ and create the root account, then add libraries for /audiobooks and /podcasts.
+services:
+  app:
+    image: ghcr.io/advplyr/audiobookshelf:2.37.2
+    ports:
+      - "8080:80"
+    volumes:
+      - /srv/docker/app/config:/config
+      - /srv/docker/app/metadata:/metadata
+      - /srv/media/audiobooks:/audiobooks
+      - /srv/media/podcasts:/podcasts

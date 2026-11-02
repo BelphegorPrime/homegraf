@@ -1,0 +1,30 @@
+# Template of ./homelab.py new-app --template omniroute, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: OmniRoute
+  category: ai
+  description: "Gateway for AI models: one OpenAI-compatible endpoint in front of many providers and local servers, with a dashboard (Redis)."
+  addons: [redis]
+  health_path: /
+  statuses: [200, 307, 401]
+  first_run: >-
+    Open __URL__ and log in with the generated password (./homelab.py secrets get __APP__ OMNIROUTE_INITIAL_PASSWORD), then add your
+    providers and create an API key.
+services:
+  app:
+    image: ghcr.io/diegosouzapw/omniroute:3.8.52-web
+    stop_grace_period: 40s
+    ports:
+      - "20128:20128"
+    volumes:
+      - /srv/docker/app/data:/app/data
+    environment:
+      DATA_DIR: /app/data
+      PORT: "20128"
+      REDIS_URL: redis://redis:6379
+      LOCAL_HOSTNAMES: localhost
+      OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS: "true"
+      JWT_SECRET: ${JWT_SECRET}
+      API_KEY_SECRET: ${API_KEY_SECRET}
+      INITIAL_PASSWORD: ${OMNIROUTE_INITIAL_PASSWORD}
+      OMNIROUTE_BOOTSTRAPPED: "true"
+      REQUIRE_API_KEY: "false"

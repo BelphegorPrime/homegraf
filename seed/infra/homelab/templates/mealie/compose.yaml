@@ -1,0 +1,27 @@
+# Template of ./homelab.py new-app --template mealie, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: Mealie
+  category: productivity
+  description: Recipe manager and meal planner with a PostgreSQL database. Sign-up is closed; the first login is the built-in admin.
+  addons: [postgres]
+  health_path: /
+  statuses: [200, 302]
+  first_run: >-
+    Log in at __URL__ as changeme@example.com with the password MyPassword, then change both under User profile.
+    Open sign-up for others in the admin area (ALLOW_SIGNUP).
+services:
+  app:
+    image: ghcr.io/mealie-recipes/mealie:v3.30.0
+    ports:
+      - "9000:9000"
+    volumes:
+      - /srv/docker/app/data:/app/data
+    environment:
+      BASE_URL: __URL__
+      ALLOW_SIGNUP: "false"
+      DB_ENGINE: postgres
+      POSTGRES_SERVER: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: app
+      POSTGRES_DB: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

@@ -1,0 +1,16 @@
+# Template of ./homelab.py new-app --template kuma, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: Uptime Kuma
+  category: tools
+  description: "Monitoring with a status page: checks websites, ports and containers and notifies you when one is down."
+  health_path: /
+  websockets: true
+  statuses: [200, 302]
+  first_run: Open __URL__ and create the admin account; then add your first monitor.
+services:
+  app:
+    image: louislam/uptime-kuma:2.5.9
+    ports:
+      - "3001:3001"
+    volumes:
+      - /srv/docker/app/data:/app/data

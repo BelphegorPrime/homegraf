@@ -1,0 +1,22 @@
+# Template of ./homelab.py new-app --template scrob, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: Scrob
+  category: media
+  description: Listening history (scrobbler) for your own music, with its own database in the same container.
+  health_path: /health
+  statuses: [200]
+  first_run: >-
+    Open __URL__ and create your account. For confirmation e-mails add the SMTP_ADDRESS, SMTP_PORT, SMTP_USERNAME and FROM_EMAIL
+    variables (and the password as a secret) and set REQUIRE_EMAIL_VALIDATION to true.
+services:
+  app:
+    image: ghcr.io/ellite/scrob:2.37.0-omnibus
+    ports:
+      - "7330:7330"
+    volumes:
+      - /srv/docker/app/data:/app/backend/data
+      - /srv/docker/app/db:/app/postgres/data
+    environment:
+      SECRET_KEY: ${SECRET_KEY}
+      SERVER_URL: __URL__
+      REQUIRE_EMAIL_VALIDATION: "false"

@@ -1,0 +1,33 @@
+# Template of ./homelab.py new-app --template romm, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: RomM
+  category: media
+  description: "ROM library for retro games: covers and metadata, and playing in the browser (MariaDB). Point the library volume at your ROMs."
+  addons: [mariadb]
+  health_path: /
+  websockets: true
+  statuses: [200, 302]
+  host_paths: [/romm/library]
+  first_run: >-
+    Open __URL__ and create the admin user. The library folder needs the layout of docs.romm.app (one folder per platform).
+    Metadata providers need API keys: add each as ${VAR} under environment in stacks/__APP__/compose.yaml and store the value with
+    ./homelab.py secrets set __APP__ VAR.
+services:
+  app:
+    image: rommapp/romm:5.4.1
+    ports:
+      - "8080:8080"
+    volumes:
+      - /srv/docker/app/data:/romm
+      - /srv/docker/app/resources:/romm/resources
+      - /srv/docker/app/redis_data:/redis-data
+      - /srv/docker/app/assets:/romm/assets
+      - /srv/docker/app/config:/romm/config
+      - /srv/media/roms:/romm/library
+    environment:
+      ROMM_AUTH_SECRET_KEY: ${ROMM_AUTH_SECRET_KEY}
+      DB_HOST: mariadb
+      DB_NAME: app
+      DB_USER: app
+      DB_PASSWD: ${MARIADB_PASSWORD}
+      HASHEOUS_API_ENABLED: "true"

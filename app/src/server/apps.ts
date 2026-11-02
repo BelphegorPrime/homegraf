@@ -39,6 +39,8 @@ export const planInput = z.object({
   env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "letters, digits and _"), z.string().max(2000)).default({}),
   /** Start from a template (nginx, httpd, haproxy): the files its volumes mount from the repo are written with the app. */
   template: z.string().regex(/^[a-z0-9-]{1,30}$/).optional(),
+  /** Further templates in the same compose file: each is the service <id>-<template>, with building blocks and secrets of its own. */
+  extraTemplates: z.array(z.string().regex(/^[a-z0-9-]{1,30}$/)).max(8).optional(),
   /** Edited copies of the template's files (path below the template folder -> text). */
   files: z.record(z.string().regex(/^(?!.*\.\.)[\w.@+-]+(\/[\w.@+-]+)*$/, "a relative path"), z.string().max(200_000)).default({})
     .refine((f) => Object.keys(f).length <= 20 && Object.values(f).reduce((n, s) => n + s.length, 0) <= 400_000, "too many or too large files"),
@@ -80,7 +82,7 @@ export function newAppArgs(i: PlanInput, composeFile?: string, filesDir?: string
     for (const v of i.secretVars) a.push("--secret-var", v, "--secret", `${v}=generate`);
     for (const x of i.addons) a.push("--addon", x);
   }
-  if (i.template) a.push("--template", i.template);
+  if (i.template) a.push("--template", i.template, ...(i.extraTemplates ?? []).flatMap((x) => ["--template", x]));
   if (filesDir) a.push("--files-dir", filesDir);
   // Typed values come last, so they win over a generated one for the same variable.
   for (const v of Object.keys(i.secretValues)) a.push("--secret", `${v}=env:${secretValueEnv(v)}`);

@@ -1,0 +1,22 @@
+# Template of ./homelab.py new-app --template jellyfin, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: Jellyfin
+  category: media
+  description: Media server for movies, series and music with apps for TVs and phones. Point the media volumes at your folders.
+  health_path: /health
+  websockets: true
+  statuses: [200]
+  host_paths: [/media/Movies, /media/Series]
+  first_run: >-
+    Open __URL__ and run the setup wizard, then add libraries for /media/Movies and /media/Series. For hardware transcoding
+    switch on the GPU option "dri" of the form (an Intel or AMD GPU in the server) and enable it in Jellyfin's playback settings.
+services:
+  app:
+    image: ghcr.io/jellyfin/jellyfin:12.4
+    ports:
+      - "8096:8096"
+    volumes:
+      - /srv/docker/app/config:/config
+      - /srv/docker/app/cache:/cache
+      - /srv/media/movies:/media/Movies:ro
+      - /srv/media/series:/media/Series:ro

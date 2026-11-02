@@ -1,0 +1,50 @@
+# Template of ./homelab.py new-app --template sparkyfitness, see templates.py for the keys of x-template. Renovate keeps the images current.
+x-template:
+  label: SparkyFitness
+  category: productivity
+  description: Self-hosted fitness and nutrition tracker (web app and API server, PostgreSQL). Sign-up is open for the first accounts.
+  addons: [postgres]
+  health_path: /
+  statuses: [200, 302]
+  first_run: >-
+    Open __URL__ and register. For the admin panel add SPARKY_FITNESS_ADMIN_EMAIL with your address to the environment of the
+    server service in stacks/__APP__/compose.yaml.
+services:
+  app:
+    image: codewithcj/sparkyfitness:v1.11.0
+    ports:
+      - "80:80"
+    environment:
+      SPARKY_FITNESS_FRONTEND_URL: __URL__
+      SPARKY_FITNESS_SERVER_HOST: server
+      SPARKY_FITNESS_SERVER_PORT: "3010"
+      NGINX_RATE_LIMIT: 5r/s
+  server:
+    image: codewithcj/sparkyfitness_server:v1.11.0
+    restart: unless-stopped
+    environment:
+      SPARKY_FITNESS_DB_HOST: postgres
+      SPARKY_FITNESS_DB_PORT: "5432"
+      SPARKY_FITNESS_DB_NAME: app
+      SPARKY_FITNESS_DB_USER: app
+      SPARKY_FITNESS_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      SPARKY_FITNESS_APP_DB_USER: sparky_app
+      SPARKY_FITNESS_APP_DB_PASSWORD: ${SPARKY_FITNESS_APP_DB_PASSWORD}
+      SPARKY_FITNESS_FRONTEND_URL: __URL__
+      SPARKY_FITNESS_API_ENCRYPTION_KEY: ${SPARKY_FITNESS_API_ENCRYPTION_KEY}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      NODE_ENV: production
+      SPARKY_FITNESS_LOG_LEVEL: ERROR
+      SPARKY_FITNESS_DISABLE_SIGNUP: "false"
+    volumes:
+      - /srv/docker/__APP__/backup:/app/SparkyFitnessServer/backup
+      - /srv/docker/__APP__/uploads:/app/SparkyFitnessServer/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3010/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy

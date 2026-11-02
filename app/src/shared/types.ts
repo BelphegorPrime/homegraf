@@ -173,6 +173,10 @@ export interface PreviewResult {
   secrets?: string[];
   /** The template's files this compose file mounts from the repo (path -> text), with the edits applied. */
   files?: Record<string, string>;
+  /** Folders of the templates (also the further ones) that still have the template's stand-in as source. */
+  standIn?: { service: string; path: string }[];
+  /** What to do once each further template runs, filled in for its own service and address. */
+  notes?: { template: string; text: string }[];
   ports?: { service: string; host: number; container: number }[];
   /** Ports the building blocks publish (UIs, S3 console); not candidates for the app's domain. */
   blockPorts?: { service: string; host: number; container: number; path: string }[];
@@ -212,12 +216,25 @@ export interface NetworkRow {
   external: boolean;
 }
 
-/** A template for a new app (nginx, httpd, haproxy): defaults for the form and the files that come with it. */
+/** A template for a new app (a web server, or a ready-made app such as Mealie): defaults for the form and what comes with it.
+ * The fields after `healthPath` come from newer versions of the tool; an older one does not send them. */
 export interface TemplateInfo {
   id: string;
   label: string;
   description: string;
   healthPath: string;
+  category?: string;
+  /** Building blocks that come with it (postgres, redis, ...). */
+  addons?: string[];
+  websockets?: boolean;
+  /** HTTP status codes that count as up without login. */
+  statuses?: number[];
+  /** Container paths whose host folder has to be chosen: the volume's source is a stand-in. */
+  hostPaths?: string[];
+  /** What to do once it runs. */
+  firstRun?: string;
+  /** Extra services of its own (a converter, a database with a special image). */
+  sidecars?: string[];
   defaults: {
     image: string;
     containerPort: number | null;

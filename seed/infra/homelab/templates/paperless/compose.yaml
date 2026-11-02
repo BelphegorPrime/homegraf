@@ -1,0 +1,43 @@
+# Template of ./homelab.py new-app --template paperless, see templates.py for the keys of x-template. Renovate keeps the images current.
+x-template:
+  label: Paperless-ngx
+  category: documents
+  description: "Document archive: scan or drop files into the consume folder and they are read (OCR), tagged and searchable. Office files work through Gotenberg and Tika."
+  addons: [postgres, redis]
+  health_path: /
+  websockets: true
+  statuses: [200, 302]
+  first_run: >-
+    Log in at __URL__ as admin with the generated password (./homelab.py secrets get __APP__ PAPERLESS_ADMIN_PASSWORD). Files put into
+    /srv/docker/__APP__/consume on the server are imported. Add PAPERLESS_OCR_LANGUAGE and PAPERLESS_TIME_ZONE to the environment for your language.
+services:
+  app:
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.4.1
+    ports:
+      - "8000:8000"
+    volumes:
+      - /srv/docker/app/data:/usr/src/paperless/data
+      - /srv/docker/app/media:/usr/src/paperless/media
+      - /srv/docker/app/consume:/usr/src/paperless/consume
+      - /srv/docker/app/export:/usr/src/paperless/export
+    environment:
+      PAPERLESS_URL: __URL__
+      PAPERLESS_REDIS: redis://redis:6379
+      PAPERLESS_DBHOST: postgres
+      PAPERLESS_DBNAME: app
+      PAPERLESS_DBUSER: app
+      PAPERLESS_DBPASS: ${POSTGRES_PASSWORD}
+      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY}
+      PAPERLESS_ADMIN_USER: admin
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
+      PAPERLESS_TIKA_ENABLED: "1"
+      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://gotenberg:3000
+      PAPERLESS_TIKA_ENDPOINT: http://tika:9998
+  gotenberg:
+    image: gotenberg/gotenberg:8.39.0
+    restart: unless-stopped
+    environment:
+      CHROMIUM_DISABLE_ROUTES: "1"
+  tika:
+    image: apache/tika:3.3.3.0
+    restart: unless-stopped

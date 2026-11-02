@@ -261,5 +261,14 @@
   .tabs { @apply mb-1.5 flex flex-wrap gap-1; }
   .tab { @apply cursor-pointer rounded-t-md border bg-card px-3 py-1 text-xs text-muted-foreground; }
   .tab.on { @apply border-primary text-foreground; }
-  .template-pick { @apply mt-3 max-w-[420px]; }
+  .template-picker { @apply mt-3; }
+  .template-picker h3 { @apply mb-1.5 mt-3 text-xs font-medium uppercase tracking-wide text-muted-foreground; }
+  .template-grid { @apply grid gap-2; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  .template-card { @apply flex cursor-pointer flex-col gap-0.5 rounded-md border bg-card p-2.5 text-left text-sm; }
+  .template-card small { @apply line-clamp-3 text-xs text-muted-foreground; }
+  .template-card:hover { @apply border-primary/60; }
+  .template-card.on { @apply border-primary; }
+  .template-note { @apply mt-3 rounded-md border bg-card p-2.5 text-sm; }
+  .template-note-head { @apply mb-1 flex flex-wrap items-center gap-2; }
+  .template-actions { @apply mt-3 flex flex-wrap gap-2; }
 }

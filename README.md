@@ -30,7 +30,7 @@ Every write action needs a signed-in user with the matching permission, and noth
 
 | Permission | Allows |
 | --- | --- |
-| `apps:create` | the **New app** wizard: image, ports, volumes, networks, limits, GPU, building blocks (PostgreSQL, Redis, S3, ...), VPN, templates; a live `compose.yaml` editor that stays in step with the form; creates the Komodo stack, the secrets and a pull request |
+| `apps:create` | the **New app** wizard: image, ports, volumes, networks, limits, GPU, building blocks (PostgreSQL, Redis, S3, ...), VPN, templates (ready-made apps; pick one or several for one compose file); a live `compose.yaml` editor that stays in step with the form; creates the Komodo stack, the secrets and a pull request |
 | `apps:remove` | destroys an app's stack and opens a pull request that removes it; after the merge it removes routing and secrets |
 | `hosts:edit` | switches the redirect from HTTP to HTTPS of a host (a pull request that changes its manifest); the **Certificates** tab also offers the root certificate of your CA for download |
 | `stacks:deploy` | redeploys a stack |

@@ -3,6 +3,7 @@
 # (./default.conf, ./html). Renovate keeps the image current.
 x-template:
   label: nginx
+  category: web server
   description: Web server. Serves the static site in html/ out of the box; default.conf turns it into a reverse proxy.
   health_path: /
 services:

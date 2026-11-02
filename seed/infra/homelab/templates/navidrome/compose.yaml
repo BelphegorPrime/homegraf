@@ -1,0 +1,19 @@
+# Template of ./homelab.py new-app --template navidrome, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: Navidrome
+  category: media
+  description: Music server and streamer (Subsonic API, many phone apps). Point the music volume at your library.
+  health_path: /
+  websockets: true
+  statuses: [200, 302]
+  host_paths: [/music]
+  first_run: Open __URL__; the first user you create is the administrator. The library in /music is scanned on its own.
+services:
+  app:
+    image: ghcr.io/navidrome/navidrome:0.64.2
+    user: "0:0"
+    ports:
+      - "4533:4533"
+    volumes:
+      - /srv/docker/app/data:/data
+      - /srv/media/music:/music:ro

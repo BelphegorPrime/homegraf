@@ -1,0 +1,29 @@
+# Template of ./homelab.py new-app --template llamacpp, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: llama.cpp server
+  category: ai
+  description: >-
+    Runs language models (GGUF files) on an NVIDIA GPU with an OpenAI-compatible API. It has no login of its own: anyone who
+    reaches it can use it.
+  health_path: /health
+  statuses: [200, 503]
+  first_run: >-
+    Copy GGUF model files to /srv/docker/__APP__/models on the server; models.ini holds the settings per model. The API is at
+    __URL__/v1 (OpenAI-compatible). The server needs the NVIDIA container toolkit.
+services:
+  app:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda12-b12030
+    ports:
+      - "8080:8080"
+    volumes:
+      - /srv/docker/app/models:/models
+      - ./models.ini:/config/models.ini:ro
+    command: [--host, 0.0.0.0, --port, "8080", --models-dir, /models, --models-preset, /config/models.ini, --models-max, "2"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities:
+                - gpu

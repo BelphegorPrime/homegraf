@@ -10,6 +10,8 @@ import { CredentialFields, useCredentials } from "./Credentials";
 import { authHeaders, rememberUser } from "./api";
 import { mergeFormChange } from "./composeMerge";
 import { CreationProgress } from "./CreationProgress";
+import { TemplatePicker } from "./TemplatePicker";
+import { unchosenPaths } from "./templates";
 import { envComplete, EnvEditor, envObject, envRows, type EnvRow, networkComplete, NetworksEditor, sameNetworks, sameVolumes, volumeComplete, VolumesEditor } from "./ServiceOptions";
 import type { NetworkRow, VolumeRow } from "../shared/types";
 
@@ -25,13 +27,14 @@ export function NewApp({ graph }: { graph: Graph }) {
   const servers = graph.nodes.filter((n) => n.type === "machine" && n.komodo).map((n) => n.label).sort();
   const [f, setF] = useState({
     appId: "", server: servers[0] ?? "", image: "", containerPort: "", hostPort: "", secretVars: "", cpus: "", memory: "", gpu: "",
-    routing: true, domain: "", websockets: false, forceHttps: true, healthPath: "",
+    routing: true, domain: "", websockets: false, forceHttps: true, healthPath: "", statuses: "",
   });
   const [addons, setAddons] = useState<string[]>([]);
   const [volumes, setVolumes] = useState<VolumeRow[]>([]);
   const [networks, setNetworks] = useState<NetworkRow[]>([]);
   const [env, setEnv] = useState<EnvRow[]>([]);
-  const [template, setTemplate] = useState("");                       // start from: nginx, httpd, haproxy
+  const [template, setTemplate] = useState("");                       // start from: nginx, mealie, paperless, ...
+  const [extras, setExtras] = useState<string[]>([]);                 // further templates in the same compose file
   const [fileEdits, setFileEdits] = useState<Record<string, string>>({});   // edited copies of the template's files
   const [tab, setTab] = useState("compose.yaml");
   // The compose file is the user's text. `base` is what the form generated last: a change of the form is merged into
@@ -90,13 +93,14 @@ export function NewApp({ graph }: { graph: Graph }) {
     appId: f.appId, server: f.server, routing: f.routing,
     // The container fields only matter while the tool generates the file from them.
     ...(existing ? {} : { image: text(f.image), containerPort: num(f.containerPort), hostPort: num(f.hostPort),
-      secretVars: f.secretVars.split(/[\s,]+/).filter(Boolean), addons, ...sentOptions, template: template || undefined, files: fileEdits }),
-    domain: text(f.domain), websockets: f.websockets, forceHttps: f.forceHttps, healthPath: text(f.healthPath),
+      secretVars: f.secretVars.split(/[\s,]+/).filter(Boolean), addons, ...sentOptions, template: template || undefined, extraTemplates: template && extras.length ? extras : undefined, files: fileEdits }),
+    domain: text(f.domain), websockets: f.websockets, forceHttps: f.forceHttps, healthPath: text(f.healthPath), statuses: text(f.statuses),
     compose: composeText(compose_), webPort: f.routing && ports.length > 1 ? webHost : undefined,
     secretValues: withSecrets ? Object.fromEntries(secrets.filter((s) => secretValues[s]).map((s) => [s, secretValues[s]])) : undefined,
   });
 
-  const formKey = JSON.stringify([f.appId, f.server, f.image, f.containerPort, f.hostPort, f.secretVars, addons, sentOptions]);
+  // A template's file names the app's address (BASE_URL ...): the domain and routing are part of the key while one is chosen.
+  const formKey = JSON.stringify([f.appId, f.server, f.image, f.containerPort, f.hostPort, f.secretVars, addons, sentOptions, template, extras, ...(template ? [f.routing, f.domain] : [])]);
   formKeyRef.current = formKey;
 
   // Form -> file: generate the file for the form, and bring the difference to the previous one into the user's text.
@@ -177,7 +181,7 @@ export function NewApp({ graph }: { graph: Graph }) {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [compose, existing, f.appId, f.server, settledTick, template, JSON.stringify(fileEdits)]);
+  }, [compose, existing, f.appId, f.server, settledTick, template, extras.join(), JSON.stringify(fileEdits)]);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -246,16 +250,36 @@ export function NewApp({ graph }: { graph: Graph }) {
   const fileNames = Object.keys(files);
   const activeTab = tab === "compose.yaml" || fileNames.includes(tab) ? tab : "compose.yaml";
   const fileText = (name: string) => fileEdits[name] ?? files[name] ?? "";
-  // A template fills the form with its defaults (image, port, volumes); from there the form and the file work as usual.
+  // A template fills the form with its defaults (image, port, volumes, environment), the building blocks it comes with and
+  // the routing answers it knows; from there the form and the file work as usual.
   function applyTemplate(id: string) {
-    setTemplate(id); setFileEdits({}); setTab("compose.yaml");
-    const d = templates.data?.find((x) => x.id === id)?.defaults;
-    if (!d) return;
-    setF((p) => ({ ...p, image: d.image, containerPort: d.containerPort?.toString() ?? "", hostPort: "", cpus: d.cpus, memory: d.memory, gpu: d.gpu, secretVars: d.secretVars.join(", ") }));
+    setTemplate(id); setExtras([]); setFileEdits({}); setTab("compose.yaml");
+    const picked = templates.data?.find((x) => x.id === id);
+    if (!picked) {   // "my own image": what the previous template brought goes with it
+      setF((p) => ({ ...p, websockets: false, healthPath: "", statuses: "" }));
+      setAddons([]);
+      return;
+    }
+    const d = picked.defaults;
+    setF((p) => ({ ...p, image: d.image, containerPort: d.containerPort?.toString() ?? "", hostPort: "", cpus: d.cpus, memory: d.memory, gpu: d.gpu, secretVars: d.secretVars.join(", "),
+      websockets: picked.websockets ?? false, healthPath: picked.healthPath === "/" ? "" : picked.healthPath, statuses: (picked.statuses ?? []).join(",") }));
+    setAddons(picked.addons ?? []);
     setVolumes(d.volumes); setNetworks(d.networks); setEnv(envRows(d.env));
   }
+  // Another template is one more service of the file: nothing of the form changes, its notes and folders come from the tool.
+  function addTemplate(id: string) { if (id !== template && !extras.includes(id)) setExtras((x) => [...x, id]); }
+  function removeTemplate(id: string) {
+    if (id !== template) return setExtras((x) => x.filter((e) => e !== id));
+    const [next, ...rest] = extras;   // the first one is the form's: the next one takes over
+    applyTemplate(next ?? "");
+    if (next) setExtras(rest);
+  }
+  const pickedTemplate = templates.data?.find((x) => x.id === template);
+  const furtherStandIns = (pv.data?.standIn ?? []).filter((x) => x.service !== f.appId).map((x) => `${x.path} of ${x.service}`);
+  const stillStandIn = [...unchosenPaths(pickedTemplate, volumes), ...furtherStandIns];
   const vpnOn = catalog.some((b) => b.vpn && addons.includes(b.id));
   const address = graph.nodes.find((n) => n.type === "machine" && n.komodo && n.label === f.server)?.address;
+  const appUrl = f.routing ? `https://${f.domain.trim() || `${f.appId || "<id>"}.<your domain>`}` : `http://${address ?? "<server>"}:${f.hostPort || "<port>"}`;
 
   return (
     <div className="list newapp">
@@ -271,14 +295,8 @@ export function NewApp({ graph }: { graph: Graph }) {
           </label>
         </div>
         {!existing && (templates.data?.length ?? 0) > 0 && (
-          <label className="field template-pick">
-            <span>Start from</span>
-            <NativeSelect value={template} onChange={(e) => applyTemplate(e.target.value)}>
-              <option value="">my own image</option>
-              {templates.data!.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
-            </NativeSelect>
-            <small className="muted">{templates.data!.find((x) => x.id === template)?.description ?? "Or pick a template: it fills in image, port and volumes, and brings the configuration files."}</small>
-          </label>
+          <TemplatePicker templates={templates.data!} value={template} extras={extras} onPick={applyTemplate} onAdd={addTemplate} onRemove={removeTemplate}
+                          blocks={blocks.data ?? []} appId={f.appId} url={appUrl} notes={pv.data?.notes ?? []} />
         )}
         {existing && <p className="muted">A stack with this ID exists: the plan continues it, and the compose file in the repo is used (shown below, read-only).</p>}
 
@@ -293,6 +311,7 @@ export function NewApp({ graph }: { graph: Graph }) {
 
         <h2>Volumes</h2>
         <VolumesEditor rows={volumes} onChange={setVolumes} disabled={locked} />
+        {stillStandIn.length > 0 && <p className="error">Choose the folder on {f.server || "the server"} for {stillStandIn.join(", ")}: the template's path is only a stand-in.</p>}
         <p className="muted">Data folder: <code>/srv/docker/&lt;id&gt;</code> on the server, the usual place for an app's data. Host path: a folder that already exists, e.g. a share. Docker volume: managed by Docker. Memory: a tmpfs, gone on restart. File from the repo: a path relative to <code>stacks/&lt;id&gt;</code>, delivered with every pull (and redeployed by hand when it changes).</p>
 
         <h2>Environment</h2>
@@ -355,6 +374,7 @@ export function NewApp({ graph }: { graph: Graph }) {
           <div className="grid">
             {field("Domain", "domain", { placeholder: `${f.appId || "<id>"}.<your domain>` })}
             {field("Health path", "healthPath", { placeholder: "/" })}
+            {field("Accepted statuses", "statuses", { placeholder: "200,301,302,307,401", hint: "HTTP codes that count as up without login" })}
             {ports.length > 1 && (
               <label className="field">
                 <span>Web interface</span>
@@ -396,7 +416,7 @@ export function NewApp({ graph }: { graph: Graph }) {
           <Textarea className="editor" spellCheck={false} value={fileText(activeTab)} aria-label={activeTab}
             onChange={(e) => setFileEdits((x) => ({ ...x, [activeTab]: e.target.value }))} />
           <div className="actions tight">
-            <span className="muted">Written to stacks/{f.appId || "<id>"}/{activeTab} with the app (template {template}); you can change it later in the repository.</span>
+            <span className="muted">Written to stacks/{f.appId || "<id>"}/{activeTab} with the app (template {[template, ...extras].join(", ")}); you can change it later in the repository.</span>
             {fileEdits[activeTab] !== undefined && <Button type="button" variant="outline" size="xs" onClick={() => setFileEdits((x) => Object.fromEntries(Object.entries(x).filter(([k]) => k !== activeTab)))}>Back to the template's</Button>}
           </div>
         </>

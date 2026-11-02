@@ -1,0 +1,21 @@
+# Template of ./homelab.py new-app --template libreoffice, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: LibreOffice
+  category: documents
+  description: "LibreOffice in the browser: the desktop application streamed to a web page, for documents, sheets and slides."
+  health_path: /
+  websockets: true
+  statuses: [200, 401]
+  first_run: "Open __URL__. There is no login of its own: anyone who reaches the page can open the files in /config."
+services:
+  app:
+    image: ghcr.io/linuxserver/libreoffice:25.8.7
+    shm_size: 1gb
+    ports:
+      - "3000:3000"
+    volumes:
+      - /srv/docker/app/config:/config
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC

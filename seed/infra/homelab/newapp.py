@@ -89,15 +89,26 @@ def db_of(block: addons.Addon, chosen: list[addons.Addon]) -> str:
     return next((b.id for b in chosen if b.id in block.requires_any), "")
 
 
-def get_template(p: dict) -> "templates.Template | None":
-    """--template NAME, or None."""
-    name = p.get("template")
-    if not name:
-        return None
+def chosen_templates(p: dict) -> list["templates.Template"]:
+    """--template NAME, repeatable: the first drives the form, the others come along with services of their own."""
+    names = p.get("templates") or p.get("template") or []
     known = templates.catalog()
-    if name not in known:
-        raise SystemExit(f"--template {name}: not one of {sorted(known)}")
-    return known[name]
+    out = []
+    for name in dict.fromkeys([names] if isinstance(names, str) else names):
+        if name not in known:
+            raise SystemExit(f"--template {name}: not one of {sorted(known)}")
+        out.append(known[name])
+    return out
+
+
+def get_template(p: dict) -> "templates.Template | None":
+    """The first --template, or None."""
+    return next(iter(chosen_templates(p)), None)
+
+
+def template_service(app_id: str, t: "templates.Template", chosen: list["templates.Template"]) -> str:
+    """The service that is the template's own app: <id> for the first template, <id>-<template> for the others."""
+    return app_id if t is chosen[0] else f"{app_id}-{t.id}"
 
 
 def template_defaults(t: "templates.Template") -> dict:
@@ -119,35 +130,106 @@ def with_template_defaults(p: dict, t: "templates.Template") -> dict:
         q["volume"] = [serviceopts.Volume(v["kind"], v["source"], v["target"], v["readOnly"], v["size"]).spec() for v in d["volumes"]]
     if not q.get("env"):
         q["env"] = [f"{k}={v}" for k, v in d["env"].items()]
+    if q.get("secret_vars") is None:
+        q["secret_vars"] = d["secretVars"]
+    for flag, key in (("cpus", "cpus"), ("memory", "memory"), ("gpu", "gpu")):
+        q[flag] = q.get(flag) or d[key]
     return q
 
 
-def template_files(compose: str, app_id: str, t: "templates.Template | None", files_dir: str | None) -> dict[str, str]:
-    """The template files this compose file mounts from the repo, with the text of an edited copy in files_dir if any."""
-    if t is None:
-        return {}
-    rows = form_values(compose, app_id)["volumes"]
-    out = {}
-    for name in templates.referenced(t, [v["source"] for v in rows if v["kind"] == "repo"]):
-        edited = pathlib.Path(files_dir) / name if files_dir else None
-        out[name] = edited.read_text() if edited and edited.is_file() else t.files[name]
+def routing_defaults(p: dict, t: "templates.Template") -> dict:
+    """The routing answers a template knows (WebSockets, the check path, the codes that count as up), unless given."""
+    q = dict(p)
+    if q.get("websockets") is None:
+        q["websockets"] = t.websockets
+    if not q.get("health_path"):
+        q["health_path"] = t.health_path
+    if not q.get("statuses") and t.statuses:
+        q["statuses"] = list(t.statuses)
+    return q
+
+
+def placeholders(app_id: str, domain: str, url: str):
+    """Fills __APP__, __URL__ (where the app is reached) and __DOMAIN__ in what a template brings."""
+    def fill(text: str) -> str:
+        return text.replace("__APP__", app_id).replace("__URL__", url).replace("__DOMAIN__", domain)
+    return fill
+
+
+def app_url(app_id: str, server: str, p: dict, host_port: int | None) -> tuple[str, str]:
+    """(domain, URL) the app will be reached at: https://<domain> with routing, else the server's address and port."""
+    domain = p.get("domain") or f"{app_id}.{settings.domain(ops.ROOT)}"
+    if p.get("routing") is not False:
+        return domain, f"https://{domain}"
+    return domain, f"http://{server_address(server) or 'localhost'}" + (f":{host_port}" if host_port else "")
+
+
+def unchosen_paths(compose: str, app_id: str, t: "templates.Template") -> list[str]:
+    """Container paths of host_paths whose volume still has the template's stand-in as source."""
+    stand_in = {v["target"]: v["source"] for v in template_defaults(t)["volumes"]}
+    chosen = {v["target"]: v["source"] for v in form_values(compose, app_id)["volumes"]}
+    return [t_ for t_ in t.host_paths if chosen.get(t_) == stand_in.get(t_)]
+
+
+def _present(compose: str, service: str) -> bool:
+    return service in ((yaml.safe_load(compose) or {}).get("services") or {})
+
+
+def stand_ins(compose: str, app_id: str, chosen: list["templates.Template"]) -> list[tuple[str, str]]:
+    """(service, container path) of every template folder that still has the stand-in of the template as source."""
+    out = []
+    for t in chosen:
+        service = template_service(app_id, t, chosen)
+        if _present(compose, service):
+            out += [(service, path) for path in unchosen_paths(compose, service, t)]
     return out
+
+
+def template_files(compose: str, app_id: str, t: "templates.Template | list[templates.Template] | None",
+                   files_dir: str | None) -> dict[str, str]:
+    """The template files this compose file mounts from the repo, with the text of an edited copy in files_dir if any.
+    With several templates each one's files are those its own service mounts; two with the same file name are refused."""
+    chosen = t if isinstance(t, list) else [t] if t else []
+    out, owner = {}, {}
+    for tpl in chosen:
+        service = template_service(app_id, tpl, chosen)
+        if not _present(compose, service):
+            continue
+        rows = form_values(compose, service)["volumes"]
+        for name in templates.referenced(tpl, [v["source"] for v in rows if v["kind"] == "repo"]):
+            if name in out:
+                raise SystemExit(f"--template {owner[name]} and {tpl.id} both bring the file {name}: they cannot share one app")
+            edited = pathlib.Path(files_dir) / name if files_dir else None
+            out[name], owner[name] = (edited.read_text() if edited and edited.is_file() else tpl.files[name]), tpl.id
+    return out
+
+
+class _Indented(yaml.SafeDumper):
+    """Lists inside a mapping are indented under their key, like in the generated compose file."""
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
 
 
 def skeleton(app_id: str, image: str, container_port: int | None, host_port: int | None,
              secret_vars: list[str], mount: str | None, blocks: list[addons.Addon] | None = None,
              block_ports: dict[str, int] | None = None, server_address: str | None = None,
-             opts: serviceopts.ServiceOptions | None = None) -> str:
+             opts: serviceopts.ServiceOptions | None = None, template: "templates.Template | None" = None,
+             fill=lambda text: text) -> str:
     """The compose file of a new app: one service for the image, plus the building blocks (database, cache, tools).
-    block_ports: the published host port of each block that has one; server_address: where the tools are opened."""
+    block_ports: the published host port of each block that has one; server_address: where the tools are opened.
+    template: adds its sidecars and the keys of its service the form does not model; fill: its placeholders."""
     blocks, block_ports = blocks or [], block_ports or {}
-    if app_id in {b.id for b in blocks}:
-        raise SystemExit(f"--app-id {app_id}: the service name is taken by the building block of the same name")
+    sidecars = template.sidecars if template else {}
+    if app_id in {b.id for b in blocks} | set(sidecars):
+        raise SystemExit(f"--app-id {app_id}: the service name is taken by the building block or sidecar of the same name")
     vpn = next((b for b in blocks if b.vpn), None)
     if vpn and not (container_port and host_port):
         raise SystemExit(f"--addon {vpn.id}: the VPN needs the app's port (--container-port)")
     lines = [WIZARD_NOTE, "services:", f"  {app_id}:", f"    image: {image}", f"    container_name: {app_id}",
              "    restart: unless-stopped"]
+    if template and template.extras:
+        dumped = yaml.dump(template.extras, Dumper=_Indented, sort_keys=False, default_flow_style=False, width=10_000)
+        lines += ["    " + line for line in fill(dumped).rstrip("\n").splitlines()]
     if vpn:
         lines += [f'    network_mode: "service:{vpn.id}"']   # the app is in the VPN's network: the port is published there
     elif container_port and host_port:
@@ -158,7 +240,7 @@ def skeleton(app_id: str, image: str, container_port: int | None, host_port: int
         raise SystemExit(f"--addon {vpn.id}: the app is in the VPN's network, it cannot join other networks")
     env = [f"      {v}: ${{{v}}}" for v in secret_vars]
     env += serviceopts.env_lines({k: v for k, v in opts.env.items() if k not in secret_vars})
-    for b in used:
+    for b in used if not template or template.addon_env else []:
         env += [f"      {k}: {v}" for k, v in b.app_env.items() if k not in secret_vars and k not in opts.env]
     if env:
         lines += ["    environment:"] + env
@@ -166,13 +248,116 @@ def skeleton(app_id: str, image: str, container_port: int | None, host_port: int
                                      opts.cpus, opts.memory, opts.gpu)
     for section in serviceopts.service_lines(own, app_id).values():
         lines += section
-    if used:
-        lines += ["    depends_on:"] + [f"      {b.id}:\n        condition: service_healthy" for b in used]
+    waits = [(b.id, "service_healthy") for b in used]
+    waits += [(n, "service_healthy" if "healthcheck" in (yaml.safe_load(t)[n] or {}) else "service_started") for n, t in sidecars.items()]
+    if waits:
+        lines += ["    depends_on:"] + [f"      {n}:\n        condition: {c}" for n, c in waits]
     text = "\n".join(lines) + "\n"
+    for t in sidecars.values():
+        text += "\n" + fill(t)
     for b in blocks:
         text += "\n" + b.render(app_id, block_ports.get(b.id), db_of(b, blocks), server_address,
                                 (host_port, container_port) if host_port and container_port else None)
     return text + "\n".join(serviceopts.top_level(own)) + ("\n" if serviceopts.top_level(own) else "")
+
+
+SERVICE_RE = re.compile(r"^  ([A-Za-z0-9._-]+):[ \t]*$", re.M)
+TOP_LEVEL_RE = re.compile(r"^(?:volumes|networks):", re.M)
+
+
+def var_prefix(t: "templates.Template") -> str:
+    """The prefix of the secrets of a further template: MEALIE_ for mealie (POSTGRES_PASSWORD -> MEALIE_POSTGRES_PASSWORD)."""
+    return re.sub(r"\W", "_", t.id).upper() + "_"
+
+
+def prefixed(prefix: str, var: str) -> str:
+    return var if var.startswith(prefix) else prefix + var
+
+
+def isolate(body: str, main: str, prefix: str) -> str:
+    """The services of one template made safe to sit next to another one's: every service but `main` is named
+    <main>-<name> (its depends_on, network_mode and the host names in its environment follow), every ${VAR} gets the prefix.
+    Containers, hosts and secrets of two templates then never meet."""
+    new = {n: f"{main}-{n}" for n in SERVICE_RE.findall(body) if n != main}
+    host = re.compile(r"(?:^|(?<=//)|(?<=@)|(?<=[\s\"']))(%s)(?=$|:\d|/|[\"'\s])" % "|".join(map(re.escape, sorted(new, key=len, reverse=True)))) if new else None
+    out, key = [], ""
+    for line in body.splitlines():
+        if (m := SERVICE_RE.match(line)):
+            key = ""
+            line = f"  {new.get(m.group(1), m.group(1))}:"
+        elif (m := re.match(r"^    ([A-Za-z_][\w-]*):", line)):
+            key = m.group(1)
+            if key == "network_mode":
+                line = re.sub(r"service:([\w.-]+)", lambda x: "service:" + new.get(x.group(1), x.group(1)), line)
+        elif key == "depends_on" and (m := re.match(r"^(      (?:- )?)([\w.-]+)(:?)\s*$", line)) and m.group(2) in new:
+            line = m.group(1) + new[m.group(2)] + m.group(3)
+        elif key == "environment" and host and (m := re.match(r"^(      [\w.-]+:\s*)(.*)$", line)):
+            line = m.group(1) + host.sub(lambda x: new[x.group(1)], m.group(2))
+        if not line.lstrip().startswith("#"):
+            line = re.sub(r"\$\{([A-Za-z_]\w*)(?=[}:\-+?])", lambda x: "${" + prefixed(prefix, x.group(1)), line)
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
+def extra_template(app_id: str, server: str, t: "templates.Template", taken: set[int]) -> str:
+    """The services a further template adds to the app's compose file (see isolate): its own app, its building blocks,
+    its sidecars. It publishes a free port of its own (added to taken); its folders below /srv/docker/<id>-<template>."""
+    name = f"{app_id}-{t.id}"
+    d = template_defaults(t)
+    cport = d["containerPort"]
+    hport = next(n for n in range(cport if cport >= 1024 else 8000, 65535) if n not in taken) if cport else None
+    if hport:
+        taken.add(hport)
+    blocks = [addons.catalog()[n] for n in t.addons]
+    block_ports = {}
+    for b in blocks:
+        if b.needs_port:
+            block_ports[b.id] = next(n for n in range(8000, 65535) if n not in taken)
+            taken.add(block_ports[b.id])
+    address = server_address(server)
+    fill = placeholders(name, "", f"http://{address or 'localhost'}" + (f":{hport}" if hport else ""))
+    opts = serviceopts.options_from(with_template_defaults({}, t))
+    opts = dataclasses.replace(opts, env={k: fill(v) for k, v in opts.env.items()})
+    text = skeleton(name, d["image"], cport, hport, d["secretVars"], None, blocks, block_ports, address, opts, t, fill)
+    body, tail = _split_top_level(text.partition("\nservices:\n")[2])
+    if tail:
+        raise SystemExit(f"--template {t.id}: its volumes or networks need top-level entries, it cannot share an app with another template")
+    return isolate(body, name, var_prefix(t))
+
+
+def _split_top_level(text: str) -> tuple[str, str]:
+    """(services, top-level volumes:/networks:) of the text below `services:`."""
+    m = TOP_LEVEL_RE.search(text)
+    return (text[:m.start()], text[m.start():]) if m else (text, "")
+
+
+def with_extra_services(text: str, extra: str) -> str:
+    """The text of a compose file with further services before its top-level volumes:/networks:."""
+    head, _, rest = text.partition("\nservices:\n")
+    body, tail = _split_top_level(rest)
+    return head + "\nservices:\n" + body.rstrip("\n") + "\n\n" + extra.rstrip("\n") + "\n" + (("\n" + tail) if tail else "")
+
+
+def extra_secrets(t: "templates.Template") -> set[str]:
+    """The prefixed variables of a further template: its own and those of its building blocks."""
+    blocks = addons.catalog()
+    return {prefixed(var_prefix(t), v) for v in t.secrets() | {s for n in t.addons for s in blocks[n].secrets}}
+
+
+def extra_note(compose: str, app_id: str, server: str, t: "templates.Template") -> str:
+    """The first-run note of a further template, filled in for its own service, folders, port and variables."""
+    name = f"{app_id}-{t.id}"
+    port = next((h for s, h, _ in compose_ports(compose) if s == name), None)
+    address = server_address(server) or "localhost"
+    text = t.first_run
+    for var in sorted(t.secrets() | {s for n in t.addons for s in addons.catalog()[n].secrets}, key=len, reverse=True):
+        text = re.sub(r"(?<!\w)%s(?!\w)" % re.escape(var), prefixed(var_prefix(t), var), text)
+    text = text.replace("/srv/docker/__APP__", f"/srv/docker/{name}")
+    return placeholders(app_id, "", f"http://{address}" + (f":{port}" if port else ""))(text)
+
+
+def extra_notes(compose: str, app_id: str, server: str, chosen: list["templates.Template"]) -> list[tuple["templates.Template", str]]:
+    return [(t, extra_note(compose, app_id, server, t)) for t in chosen[1:] if t.first_run and _present(compose, f"{app_id}-{t.id}")]
 
 
 def inventory_block(app: "App") -> str:
@@ -240,6 +425,8 @@ class App:
     secrets: dict[str, str | None] = dataclasses.field(default_factory=dict)   # None = keep the existing value
     files: dict[str, str] = dataclasses.field(default_factory=dict)            # extra files of stacks/<id> (from a template)
     template: str = ""
+    first_run: str = ""               # what to do once it runs (from a template)
+    host_paths: list[str] = dataclasses.field(default_factory=list)   # folders the template wants chosen on the server
 
     @property
     def dir(self) -> pathlib.Path:
@@ -268,6 +455,8 @@ def _choose_addons(p: dict) -> list[addons.Addon]:
     known = addons.catalog()
     if p.get("addon") is not None:
         names = p["addon"]
+    elif template := get_template(p):
+        names = list(template.addons)
     else:
         asked = ui.ask(f"Building blocks to add, comma-separated (empty = none; {', '.join(known)})", check=lambda a: None)
         names = [n.strip() for n in asked.split(",") if n.strip()]
@@ -350,8 +539,15 @@ def _ask_compose(app_id: str, server: str, p: dict, blocks: list[addons.Addon]) 
         if b.needs_port:
             block_ports[b.id] = next(n for n in range(8000, 65535) if n not in taken)
             taken.add(block_ports[b.id])
-    return skeleton(app_id, image, int(cport) if cport else None, int(hport) if hport else None, secret_vars, mount or None,
-                    blocks, block_ports, server_address(server), serviceopts.options_from(p))
+    opts = serviceopts.options_from(p)
+    fill = placeholders(app_id, *app_url(app_id, server, p, int(hport) if hport else None))
+    opts = dataclasses.replace(opts, env={k: fill(v) for k, v in opts.env.items()})
+    chosen = chosen_templates(p)
+    text = skeleton(app_id, image, int(cport) if cport else None, int(hport) if hport else None, secret_vars, mount or None,
+                    blocks, block_ports, server_address(server), opts, chosen[0] if chosen else None, fill)
+    for t in chosen[1:]:
+        text = with_extra_services(text, extra_template(app_id, server, t, taken))
+    return text
 
 
 def _ask_routing(app: App, ports: list[tuple[str, int, int]], p: dict) -> bool:
@@ -464,11 +660,19 @@ def gather(p: dict | None = None) -> App | None:
     else:
         blocks = _choose_addons(p)
         app = App(app_id, server, _ask_compose(app_id, server, p, blocks), True)
-    if app.compose_is_new and (template := get_template(p)):
-        app.template, app.files = template.id, template_files(app.compose, app_id, template, p.get("files_dir"))
-    elif p.get("template"):
+    chosen = chosen_templates(p) if app.compose_is_new else []
+    if chosen:
+        template = chosen[0]
+        app.template, app.files = ", ".join(t.id for t in chosen), template_files(app.compose, app_id, chosen, p.get("files_dir"))
+        notes = [(template, template.first_run)] + extra_notes(app.compose, app_id, server, chosen)
+        app.first_run = "\n".join(f"{t.label}: {text}" if len(chosen) > 1 else text for t, text in notes if text)
+        app.host_paths = [path if service == app_id else f"{path} of {service}" for service, path in stand_ins(app.compose, app_id, chosen)]
+        p = routing_defaults(p, template)
+    elif p.get("template") or p.get("templates"):
         ui.warn("--template is ignored: the compose file exists")
     generated = {v for b in blocks for v in b.secrets}   # the blocks' passwords: nobody needs to choose them
+    for t in chosen:
+        generated |= t.secrets() if t is chosen[0] else extra_secrets(t)   # and the templates' own keys
 
     ingress_path = app.dir / "ingress.yaml"
     ports = [p_ for p_ in compose_ports(app.compose) if p_[0] not in tool_services(app.compose)]   # the app's, not a tool's
@@ -510,6 +714,8 @@ def gather(p: dict | None = None) -> App | None:
         print(f"  files from the template {app.template}: {', '.join(app.files)}")
     print(f"  routing: {f'https://{app.domain} -> {app.server}:{app.upstream_port}' if app.domain else 'none'}")
     print(f"  secrets: {', '.join(k + ('' if v else ' (keep existing / later)') for k, v in app.secrets.items()) or 'none'}")
+    for target in app.host_paths:
+        ui.warn(f"the template's folder for {target} is a stand-in: change the volume to a folder that exists on {app.server}")
     return app if ui.confirm("Set it up now? (asks again before Komodo, Infisical and the push)") else None
 
 
@@ -705,12 +911,20 @@ def compose_preview(p: dict) -> dict:
             text = _ask_compose(app_id, server, p, _choose_addons(p))
     required, optional = compose_vars(text)
     tools = tool_services(text)
-    files = {} if existing.is_file() else template_files(text, app_id, get_template(p), p.get("files_dir"))
+    chosen = [] if existing.is_file() else chosen_templates(p)
+    files = template_files(text, app_id, chosen, p.get("files_dir"))
     return {"compose": text, "existing": existing.is_file(), "files": files, "secrets": sorted(required), "optional": sorted(optional),
+            "standIn": [{"service": s, "path": path} for s, path in stand_ins(text, app_id, chosen)],
+            "notes": [{"template": t.id, "text": note} for t, note in extra_notes(text, app_id, server, chosen)],
             "ports": [{"service": s, "host": h, "container": c} for s, h, c in compose_ports(text) if s not in tools],
             "blockPorts": [{"service": s, "host": h, "container": c, "path": addons.catalog()[s].url_path}
                            for s, h, c in compose_ports(text) if s in tools],
             "form": form_values(text, app_id)}
+
+
+def first_run(app: App) -> str:
+    """The template's note on what to do once the app runs, with its address filled in."""
+    return placeholders(app.id, app.domain or "", f"https://{app.domain}" if app.domain else "")(app.first_run)
 
 
 def pr_body(app: App) -> str:
@@ -719,6 +933,7 @@ def pr_body(app: App) -> str:
              f"- routing: {f'https://{app.domain} -> {app.server}:{app.upstream_port}' if app.domain else 'none'}",
              f"- secrets in Infisical (`{project_slug(app.server)}`, folder `/{app.id}`): {', '.join(sorted(app.secrets)) or 'none'}", "",
              "The Komodo stack and the secrets already exist; the merge makes `update-all` deploy the app.",
+             *([f"First run: {first_run(app)}"] if app.first_run else []),
              f"If this is closed instead: `./homelab.py remove-app --app-id {app.id} --server {app.server} --yes` removes stack and secrets."]
     return "\n".join(lines)
 
@@ -748,11 +963,15 @@ def run(infisical, komodo, preset: dict | None = None) -> bool:
         ui.step("Done")
         print(f"  pull request: {url}")
         print(f"  Merge it to deploy {app.id} on {app.server}; update-all does the rest.")
+        if app.first_run:
+            print(f"  First run: {first_run(app)}")
         return True
     sha, pushed_now = ops.commit_and_push(paths, message)
     ops.wait_for_update_all(app.server, sha, komodo, pushed_now)
     healthy = ensure_deployed(app, komodo) and ensure_routing(app, sha)
     ui.step("Done" if healthy else "Done, with problems (see above)")
     print(f"  {app.id} on {app.server}" + (f": https://{app.domain}" if app.domain else ""))
+    if app.first_run:
+        print(f"  First run: {first_run(app)}")
     print("  Change secrets later: ./homelab.py (Manage secrets) or ./homelab.py secrets set " + app.id + " <KEY>")
     return healthy

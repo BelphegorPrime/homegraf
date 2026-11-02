@@ -1,0 +1,12 @@
+# Template of ./homelab.py new-app --template omni-tools, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: Omni Tools
+  category: tools
+  description: Collection of small web tools (converters, text, image and video helpers) that run in the browser.
+  health_path: /
+  statuses: [200]
+services:
+  app:
+    image: iib0011/omni-tools:0.7.0
+    ports:
+      - "80:80"

@@ -1,0 +1,47 @@
+# Template of ./homelab.py new-app --template immich, see templates.py for the keys of x-template. Renovate keeps the images current.
+x-template:
+  label: Immich
+  category: media
+  description: Photo and video library with phone backup, search and face recognition. Brings its machine-learning service and a PostgreSQL with the vector extension. Point the library volume at your photo storage.
+  addons: [valkey]
+  health_path: /api/server/ping
+  websockets: true
+  statuses: [200]
+  host_paths: [/data]
+  first_run: >-
+    Open __URL__ and register: the first user is the administrator. Do not replace the database image by plain PostgreSQL (it needs
+    the vector extensions); read the Immich release notes before raising the version.
+services:
+  app:
+    image: ghcr.io/immich-app/immich-server:v3.3.5
+    ports:
+      - "2283:2283"
+    volumes:
+      - /srv/media/photos:/data
+    environment:
+      DB_HOSTNAME: database
+      DB_USERNAME: postgres
+      DB_DATABASE_NAME: immich
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOSTNAME: valkey
+  machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:v3.3.5
+    restart: unless-stopped
+    volumes:
+      - /srv/docker/__APP__/model_cache:/cache
+  database:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    restart: unless-stopped
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: immich
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - /srv/docker/__APP__/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d immich"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

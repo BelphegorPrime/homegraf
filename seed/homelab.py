@@ -4,7 +4,7 @@
   ./homelab.py                                   # interactive menus (for people)
   ./homelab.py new-app --app-id ID ... [--yes]   # agent mode: no prompts, dry run without --yes (--pr: pull request)
   ./homelab.py addons [--json]                   # building blocks for new-app --addon (postgres, redis, ...)
-  ./homelab.py templates [--json]                # starting points for new-app --template (nginx, httpd, haproxy)
+  ./homelab.py templates [--json]                # starting points for new-app --template (web servers, ready-made apps)
   ./homelab.py remove-app --app-id ID [--yes]
   ./homelab.py hosts [--json]                    # hosts ingressctl manages, and whether each redirects HTTP to HTTPS
   ./homelab.py force-https DOMAIN on|off [--pr] [--yes]
@@ -119,8 +119,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     g.add_argument("--memory", metavar="SIZE", help="memory limit, e.g. 512m or 2g")
     g.add_argument("--gpu", choices=("nvidia", "dri"), help="GPU: nvidia (reservation of all GPUs) or dri (/dev/dri, Intel/AMD)")
     g.add_argument("--env", action="append", default=None, metavar="NAME=value", help="plain environment variable, repeatable (secrets: --secret-var)")
-    g.add_argument("--template", metavar="NAME", help="start from a template (see ./homelab.py templates): its image, port and "
-                   "volumes are the defaults when --image is not given, and the files its volumes mount from the repo are written to stacks/<id>/")
+    g.add_argument("--template", metavar="NAME", action="append", help="start from a template (see ./homelab.py templates): its image, port, "
+                   "volumes and environment are the defaults when --image is not given, it brings its building blocks and sidecar services, "
+                   "and the files its volumes mount from the repo are written to stacks/<id>/. Repeat it to put several templates in one compose "
+                   "file: the first is the app <id>, each further one is the service <id>-<template> with building blocks, folders and secrets "
+                   "of its own (the form's flags are for the first)")
     g.add_argument("--files-dir", metavar="DIR", help="edited copies of the template's files; used instead of the template's own")
     g.add_argument("--compose-file", metavar="PATH",
                    help="use this finished compose file as stacks/<id>/compose.yaml instead of generating one")
@@ -232,10 +235,13 @@ def print_templates(as_json: bool) -> int:
     if as_json:
         import json
         print(json.dumps([{"id": t.id, "label": t.label, "description": t.description, "healthPath": t.health_path,
-                           "defaults": newapp.template_defaults(t), "files": list(t.files)} for t in found.values()], indent=2))
+                           "category": t.category, "addons": list(t.addons), "websockets": t.websockets,
+                           "statuses": list(t.statuses), "hostPaths": list(t.host_paths), "firstRun": t.first_run,
+                           "sidecars": list(t.sidecars), "defaults": newapp.template_defaults(t), "files": list(t.files)}
+                          for t in found.values()], indent=2))
     else:
         for t in found.values():
-            print(f"{t.id:10} {t.label}: {t.description}")
+            print(f"{t.id:14} [{t.category}] {t.label}: {t.description}")
     return 0
 
 

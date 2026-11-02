@@ -1,0 +1,23 @@
+# Template of ./homelab.py new-app --template searxng, see templates.py for the keys of x-template. Renovate keeps the image current.
+x-template:
+  label: SearXNG
+  category: tools
+  description: Metasearch engine without tracking. settings.yml has the engines and formats (JSON is on, for scripts and AI tools).
+  health_path: /
+  statuses: [200]
+  first_run: Open __URL__. Engines, languages and the JSON API are set in settings.yml of stacks/__APP__/searxng/ (change it in the repository).
+services:
+  app:
+    image: ghcr.io/searxng/searxng:2026.10.30-1cd13d98d
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "8080:8080"
+    volumes:
+      - /srv/docker/app/cache:/var/cache/searxng
+      - ./searxng:/etc/searxng:ro
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET}
+      FORCE_OWNERSHIP: "false"

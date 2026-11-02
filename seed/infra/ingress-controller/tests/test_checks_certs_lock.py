@@ -13,7 +13,12 @@ from ingressctl.checks import Checker
 from ingressctl.errors import CertificateError, IngressError
 from ingressctl.lock import npm_lock
 
-NOW = dt.datetime.now(dt.timezone.utc)
+
+
+def _now():
+    """Taken when a test runs, not when the module is imported: a certificate starts a minute before it was issued, so a clock
+    that is older than that (a slow suite) would find the certificate not valid yet."""
+    return dt.datetime.now(dt.timezone.utc)
 
 
 def _issue(ca, domains, days=90, eku=True):
@@ -25,7 +30,7 @@ def _issue(ca, domains, days=90, eku=True):
 def test_validate_issued_accepts_good_certificate():
     ca = FakeCa()
     key, pem = _issue(ca, ["a.lab.example", "b.lab.example"])
-    info = certs.validate_issued(pem, ca.pem, key, ("a.lab.example", "b.lab.example"), ca.pem, NOW)
+    info = certs.validate_issued(pem, ca.pem, key, ("a.lab.example", "b.lab.example"), ca.pem, _now())
     assert info.sans == ("a.lab.example", "b.lab.example")
 
 
@@ -33,21 +38,21 @@ def test_validate_rejects_wrong_key():
     ca = FakeCa()
     _, pem = _issue(ca, ["a.lab.example"])
     with pytest.raises(CertificateError, match="Schlüssel"):
-        certs.validate_issued(pem, ca.pem, certs.generate_key_pem(), ("a.lab.example",), ca.pem, NOW)
+        certs.validate_issued(pem, ca.pem, certs.generate_key_pem(), ("a.lab.example",), ca.pem, _now())
 
 
 def test_validate_rejects_untrusted_chain():
     ca, other = FakeCa(), FakeCa("Other Root")
     key, pem = _issue(ca, ["a.lab.example"])
     with pytest.raises(CertificateError, match="Kette"):
-        certs.validate_issued(pem, ca.pem, key, ("a.lab.example",), other.pem, NOW)
+        certs.validate_issued(pem, ca.pem, key, ("a.lab.example",), other.pem, _now())
 
 
 def test_validate_rejects_missing_san():
     ca = FakeCa()
     key, pem = _issue(ca, ["a.lab.example"])
     with pytest.raises(CertificateError, match="SANs"):
-        certs.validate_issued(pem, ca.pem, key, ("a.lab.example", "b.lab.example"), ca.pem, NOW)
+        certs.validate_issued(pem, ca.pem, key, ("a.lab.example", "b.lab.example"), ca.pem, _now())
 
 
 def test_renewal_lead_is_capped_by_lifetime():
@@ -55,8 +60,8 @@ def test_renewal_lead_is_capped_by_lifetime():
     _, pem = _issue(ca, ["a.lab.example"], days=9)
     info = certs.info_from_pem(pem)
     assert certs.renewal_lead(info, 30) == info.lifetime / 3
-    assert not certs.needs_renewal(info, 30, NOW)
-    assert certs.needs_renewal(info, 30, NOW + dt.timedelta(days=7))
+    assert not certs.needs_renewal(info, 30, _now())
+    assert certs.needs_renewal(info, 30, _now() + dt.timedelta(days=7))
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):

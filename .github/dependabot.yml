@@ -7,7 +7,8 @@ updates:
     schedule:
       interval: weekly
   # Images of the templates for new apps and of the building blocks (databases, caches). A new major version of a database
-  # needs a dump and restore first, so those are never proposed.
+  # needs a dump and restore first, so those are never proposed; the same for the image of Immich's database (PostgreSQL with
+  # the vector extensions) and for Meilisearch, whose index has to be dumped for every minor version.
   - package-ecosystem: docker-compose
     directories:
       - /seed/infra/homelab/templates/*
@@ -23,6 +24,10 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: mysql
         update-types: ["version-update:semver-major"]
+      - dependency-name: immich-app/postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: getmeili/meilisearch
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: docker
     directory: /seed/infra/ingress-controller
     schedule:

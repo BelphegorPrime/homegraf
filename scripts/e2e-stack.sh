@@ -56,6 +56,12 @@ ok "Forgejo (the user $owner, signed in by e-mail)"
 [ "$(code -H 'content-type: application/json' -d "$(json identity secret)" http://127.0.0.1:28081/api/tokens)" = 200 ] || die "Nginx Proxy Manager refuses $email"
 ok "Nginx Proxy Manager"
 
+step "single sign-on through the stack's own Forgejo"
+# played in the stack's network, where git.<domain> and homegraf.<domain> answer on port 80 as they do for a browser
+docker run --rm --network "$P-net" -e DOMAIN="$(grep '^DOMAIN=' "$env_file" | cut -d= -f2-)" -e FORGEJO_USER="$owner" -e ADMIN_EMAIL="$email" \
+  -e ADMIN_PASSWORD="$password" -v "$here/scripts/e2e_sso.py:/e2e_sso.py:ro" --entrypoint python "$P-bootstrap:local" -I /e2e_sso.py || die "single sign-on"
+ok "the administrator of Forgejo became the first administrator of homegraf"
+
 step "certificates from your own CA"
 # the service certificates starts after homegraf is healthy, so `up --wait` can return while it still works: wait for its end
 [ "$(timeout 900 docker wait "$P-certificates")" = 0 ] || { docker logs "$P-certificates" 2>&1 | tail -5; die "the service certificates did not finish"; }

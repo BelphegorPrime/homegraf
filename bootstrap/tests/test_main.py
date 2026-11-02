@@ -80,6 +80,8 @@ class RunTests(unittest.TestCase):
             env = dict(line.split("=", 1) for line in f.read().splitlines() if line and not line.startswith("#"))
         self.assertEqual(env["HOMEGRAF_CLONE_URL"], f"{s.env['FORGEJO_URL']}/owner/infrastructure.git")
         self.assertEqual((env["FORGEJO_TOKEN"], env["INFISICAL_BOOTSTRAP_CLIENT_ID"], env["INFISICAL_BOOTSTRAP_CLIENT_SECRET"]), ("tok-1", "client-1", "secret-1"))
+        self.assertEqual((env["OIDC_ISSUER"], env["HOMEGRAF_URL"], env["OIDC_ADMINS"], env["OIDC_LABEL"]), ("http://git.home.lab", "http://homegraf.home.lab", "owner", "Forgejo"))
+        self.assertEqual((env["OIDC_CLIENT_ID"], env["OIDC_CLIENT_SECRET"]), ("cid-1", "csec-1"))
         self.assertTrue(env["KOMODO_API_KEY"].startswith("K_") and env["KOMODO_API_SECRET"].startswith("S_"))
         self.assertEqual(oct(os.stat(f"{s.state_dir}/homegraf.env").st_mode & 0o777), "0o600")
         self.assertIn("update-all", s.komodo.procedures)
@@ -90,7 +92,7 @@ class RunTests(unittest.TestCase):
     def test_nothing_secret_is_printed(self):
         s = self.stack()
         _, out, err = s.run()
-        secrets = [PASSWORD, "hook-secret", "tok-1", "secret-1"] + [k["secret"] for k in s.komodo.keys]
+        secrets = [PASSWORD, "hook-secret", "tok-1", "secret-1", "csec-1"] + [k["secret"] for k in s.komodo.keys]
         for secret in secrets:
             self.assertNotIn(secret, out + err)
 

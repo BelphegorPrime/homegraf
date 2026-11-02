@@ -28,6 +28,8 @@ export interface OidcConfig {
   usernameClaim: string;
   label: string;
   sessionHours: number;
+  /** Provider user names that get every permission at their first sign-in (OIDC_ADMINS): the first administrator of a stack whose provider is its own Forgejo. */
+  admins?: string[];
 }
 
 /** The local UniFi controller, read with a read-only account (infra/graph/unifi.py). */
@@ -76,6 +78,7 @@ function oidcFrom(env: NodeJS.ProcessEnv): Pick<Config, "oidc" | "oidcProblem"> 
       scopes: env.OIDC_SCOPES || "openid profile", usernameClaim: env.OIDC_USERNAME_CLAIM || "preferred_username",
       label: env.OIDC_LABEL || (URL.canParse(issuer) ? new URL(issuer).hostname : "single sign-on"),
       sessionHours: Number.isFinite(hours) && hours > 0 ? hours : 8,
+      admins: (env.OIDC_ADMINS ?? "").split(/[\s,]+/).map((n) => n.toLowerCase()).filter(Boolean),
     },
   };
 }

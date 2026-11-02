@@ -137,6 +137,25 @@ describe("coming back from the provider", () => {
     expect(await setup({ claims: { preferred_username: undefined } }).signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/no "preferred_username"/) });
   });
 
+  it("gives the names in OIDC_ADMINS every permission at their first sign-in, and binds them like any entry", async () => {
+    const { signIn, oidc, users } = setup({ claims: { preferred_username: "Owner" } }, Date.now, { ...cfg, admins: ["owner"] });
+    const result = await signIn();
+    expect(result).toMatchObject({ ok: true });
+    expect(users.get("owner")).toMatchObject({ sso: true, sub: "u-1" });
+    expect(oidc.principal((result as { sessionId: string }).sessionId)?.principal.permissions).toEqual(["apps:create", "apps:remove", "hosts:edit", "stacks:deploy", "secrets:manage", "users:manage"]);
+  });
+
+  it("gives nobody else anything, and leaves an entry as the Users tab has it", async () => {
+    const other = setup({}, Date.now, { ...cfg, admins: ["owner"] });
+    const alice = await other.signIn();
+    expect(other.users.get("alice")).toBeUndefined();
+    expect(other.oidc.principal((alice as { sessionId: string }).sessionId)?.principal.permissions).toEqual([]);
+    const known = setup({ claims: { preferred_username: "owner" } }, Date.now, { ...cfg, admins: ["owner"] });
+    await known.users.addSso("owner", ["apps:create"]);
+    const result = await known.signIn();
+    expect(known.oidc.principal((result as { sessionId: string }).sessionId)?.principal.permissions).toEqual(["apps:create"]);
+  });
+
   it("never lets a provider account become the built-in administrator, and refuses names it cannot use", async () => {
     expect(await setup({ claims: { preferred_username: "Admin" } }).signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/reserved/) });
     expect(await setup({ claims: { preferred_username: "Boss" } }, Date.now, cfg, "boss").signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/"boss" is reserved/) });

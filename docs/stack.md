@@ -21,6 +21,13 @@ To run next to other things change the ports and `PROJECT_PREFIX`.
 Infisical and AdGuard Home, and of Forgejo (whose own user name, `owner`, also works). Infisical's policy is the strictest, so `setup.sh` asks for
 **14 characters or more with a letter and a digit** (or special character); a generated one always fits.
 
+**Sign in with Forgejo.** homegraf's sign-in page offers "Forgejo" next to the password: the accounts of the stack's own Forgejo are the users
+of homegraf. The bootstrap hands homegraf the application (`OIDC_ISSUER=http://git.<domain>`, client id and secret, `HOMEGRAF_URL`) and names the
+Forgejo administrator (`FORGEJO_ADMIN_USER`) in `OIDC_ADMINS`: at the first sign-in that account becomes an entry of the Users tab with every permission,
+bound to the Forgejo account. Everybody else is added in the Users tab by their Forgejo name, with the permissions they should have. Forgejo asks
+once whether to allow the application. The proxy answers to `git.<domain>` and `homegraf.<domain>` inside the stack's network too, so homegraf reaches
+its provider by the address a browser uses. These names, like Forgejo's `ROOT_URL`, assume that the proxy listens on port 80 of the host (`PORT_HTTP`).
+
 ## What happens on `up`
 
 ```
@@ -34,7 +41,7 @@ databases and services start ──► forgejo-admin (creates the Forgejo admini
 
 | Service | Automated | Result |
 | --- | --- | --- |
-| Forgejo | the administrator (the one-shot `forgejo-admin` service runs Forgejo's own command in a container that shares its data volume, so nothing needs the Docker socket); an API token for homegraf (`write:repository`, `write:issue`, `read:user`); the private repository `<owner>/infrastructure` with the seed as its first commit; a webhook that calls Komodo on every push to `main` | homegraf can read the repository, create branches and open pull requests |
+| Forgejo | the administrator (the one-shot `forgejo-admin` service runs Forgejo's own command in a container that shares its data volume, so nothing needs the Docker socket); an API token for homegraf (`write:repository`, `write:issue`, `read:user`); the private repository `<owner>/infrastructure` with the seed as its first commit; a webhook that calls Komodo on every push to `main`; the OAuth2 application `homegraf` (callback `http://homegraf.<domain>/api/auth/callback`) for the sign-in of homegraf | homegraf can read the repository, create branches and open pull requests |
 | Komodo | an API key for homegraf; the git account for Forgejo; a Repo resource for the repository, **cloned** on this host; the procedure `update-all` (pull the repository, deploy every stack whose files changed) | a push to `main` pulls and deploys; homegraf has live status and can create, change and remove stacks |
 | Nginx Proxy Manager | the administrator (NPM 2.16 has **no default user**: the first one is created through its setup call); a proxy host for `git`, `komodo`, `secrets`, `proxy` and `homegraf` under `<name>.<domain>`, plain HTTP, WebSockets on | the names work as soon as they reach this host |
 | Infisical | bootstraps the instance (administrator and organisation `homegraf`); a machine identity `homegraf` with the organisation role Admin and Universal Auth | homegraf and the tools can keep stack secrets; they create the projects (`stacks-<server>`) and folders themselves when the first app needs them |

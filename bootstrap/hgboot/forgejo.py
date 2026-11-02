@@ -8,6 +8,7 @@ from .steps import StepError, log
 
 STEP = "forgejo"
 TOKEN_NAME = "homegraf"
+OAUTH_APP = "homegraf"
 # What homegraf does with the token: git over http, branches, pull requests, files of a repository.
 TOKEN_SCOPES = ["write:repository", "write:issue", "read:user"]
 CHUNK = 80          # files per commit when seeding (one request each)
@@ -26,6 +27,7 @@ class Forgejo:
         self.wait(lambda: self.http("GET", self.cfg.forgejo_url + "/api/healthz").ok, "Forgejo", timeout=240)
         self.check_admin()
         self.ensure_token()
+        self.ensure_oauth_app()
         self.ensure_repository()
         self.seed(files)
         self.ensure_webhook()
@@ -53,6 +55,26 @@ class Forgejo:
             raise StepError(f"Forgejo refused to create the token: {r.status} {r.text[:200]}")
         self.state.set(STEP, "token", r.json()["sha1"])
         log(STEP, f"token for homegraf: created (scopes {', '.join(TOKEN_SCOPES)})")
+
+    def ensure_oauth_app(self) -> None:
+        """The application homegraf signs its users in through (single sign-on with this Forgejo). Forgejo shows the secret once, so
+        an application whose secret is not in the state is replaced."""
+        base = self.api + "/user/applications/oauth2"
+        uris = [self.cfg.homegraf_callback_url]
+        apps = self.http("GET", base, basic=self.basic).json() or []
+        mine = [a for a in apps if a["name"] == OAUTH_APP]
+        if (self.state.get(STEP, "oauth_client_secret") and any(a["client_id"] == self.state.get(STEP, "oauth_client_id") and a["redirect_uris"] == uris for a in mine)):
+            log(STEP, "single sign-on application for homegraf: already there")
+            return
+        for a in mine:
+            self.http("DELETE", f"{base}/{a['id']}", basic=self.basic)
+        r = self.http("POST", base, basic=self.basic, body={"name": OAUTH_APP, "confidential_client": True, "redirect_uris": uris})
+        if not r.ok:
+            raise StepError(f"Forgejo refused to create the single sign-on application: {r.status} {r.text[:200]}")
+        app = r.json()
+        self.state.set(STEP, "oauth_client_id", app["client_id"])
+        self.state.set(STEP, "oauth_client_secret", app["client_secret"])
+        log(STEP, f"single sign-on application for homegraf: created (callback {uris[0]})")
 
     def ensure_repository(self) -> None:
         repo = self.cfg.repository

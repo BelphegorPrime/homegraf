@@ -13,6 +13,13 @@ def homegraf_env(cfg, state) -> dict[str, str]:
         "INFISICAL_URL": cfg.infisical_url,
         "INFISICAL_BOOTSTRAP_CLIENT_ID": state.get("infisical", "client_id"),
         "INFISICAL_BOOTSTRAP_CLIENT_SECRET": state.get("infisical", "client_secret"),
+        # Sign-in through this stack's Forgejo; its administrator is the first homegraf administrator.
+        "OIDC_ISSUER": cfg.git_public_url,
+        "OIDC_CLIENT_ID": state.get("forgejo", "oauth_client_id"),
+        "OIDC_CLIENT_SECRET": state.get("forgejo", "oauth_client_secret"),
+        "HOMEGRAF_URL": cfg.homegraf_callback_url.removesuffix("/api/auth/callback"),
+        "OIDC_LABEL": "Forgejo",
+        "OIDC_ADMINS": cfg.forgejo_user,
     }
 
 
@@ -25,6 +32,7 @@ def summary(cfg, state, notes: list[str]) -> str:
         lines.append(f"  {label:22} http://{sub}.{d}    or http://{ip}:{ports[sub]}")
     lines += ["", "Sign in:",
               f"  homegraf, Komodo, AdGuard Home   user {cfg.admin_user}, password ADMIN_PASSWORD from .env",
+              f"  homegraf                         also the button \"Forgejo\": the Forgejo administrator {cfg.forgejo_user} is its first administrator",
               f"  Forgejo                          {cfg.admin_email} or the user name {cfg.forgejo_user} (it owns the repository), same password",
               f"  Nginx Proxy Manager              {cfg.admin_email}, same password",
               f"  Infisical                        {cfg.admin_email}, " + ("a generated password: docker compose run --rm bootstrap show infisical-password"

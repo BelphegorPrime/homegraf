@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { Permission } from "../shared/types.js";
+import { PERMISSIONS, type Permission } from "../shared/types.js";
 import type { OidcConfig } from "./config.js";
 import type { Principal } from "./auth.js";
 import { ADMIN, NAME_RE, type UserStore } from "./users.js";
@@ -129,7 +129,8 @@ export function createOidc({ cfg, users, admin = ADMIN, fetchFn = fetch, now = D
         if (name === admin) return { ok: false, error: `"${admin}" is reserved for the built-in administrator` };
         if (!NAME_RE.test(name)) return { ok: false, error: `"${raw}" is not a name this app can use (2 to 32 characters: letters, digits, . _ -)` };
 
-        const known = users.get(name);
+        let known = users.get(name);
+        if (!known && cfg.admins?.includes(name)) known = await users.addSso(name, Object.keys(PERMISSIONS) as Permission[]);
         if (known?.sso) {
           if (known.sub && known.sub !== claims.sub) return { ok: false, error: `${name} is bound to another account at the provider: remove the entry in the Users tab and add it again` };
           if (!known.sub) { try { users.bind(name, claims.sub); } catch { /* the users file is unreadable: the sign-in still works, unbound */ } }

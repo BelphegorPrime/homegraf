@@ -64,6 +64,15 @@ class Config:
         return self.admin_user if usable else FORGEJO_FALLBACK_USER
 
     @property
+    def git_public_url(self) -> str:
+        """Forgejo as a browser reaches it (its ROOT_URL): the issuer of the single sign-on."""
+        return f"http://git.{self.domain}"
+
+    @property
+    def homegraf_callback_url(self) -> str:
+        return f"http://homegraf.{self.domain}/api/auth/callback"
+
+    @property
     def repository(self) -> str:
         return f"{self.forgejo_user}/{REPOSITORY}"
 

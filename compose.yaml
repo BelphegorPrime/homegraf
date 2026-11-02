@@ -323,6 +323,13 @@ services:
     volumes:
       - proxy-data:/data
       - proxy-letsencrypt:/etc/letsencrypt
+    # Inside the network the names of the services answer too, as they do for a browser: homegraf signs its users in through
+    # http://git.${DOMAIN} (Forgejo's ROOT_URL, so the issuer of the single sign-on) and cannot reach the host's own address from here.
+    networks:
+      default:
+        aliases:
+          - git.${DOMAIN:-homegraf.lan}
+          - homegraf.${DOMAIN:-homegraf.lan}
     healthcheck:
       test: ["CMD", "/bin/check-health"]
       interval: 15s

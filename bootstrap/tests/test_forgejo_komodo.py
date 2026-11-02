@@ -42,6 +42,22 @@ class ForgejoTests(unittest.TestCase):
         self.forgejo().run(FILES)
         self.assertEqual([(r.method, r.path) for r in self.srv.requests if r.method in ("POST", "DELETE", "PUT")], [])
 
+    def test_creates_the_single_sign_on_application_and_keeps_its_secret(self):
+        self.forgejo().run(FILES)
+        (app,) = self.fake.oauth_apps
+        self.assertEqual((app["name"], app["redirect_uris"], app["confidential_client"]),
+                         ("homegraf", ["http://homegraf.home.lab/api/auth/callback"], True))
+        self.assertEqual((self.state.get("forgejo", "oauth_client_id"), self.state.get("forgejo", "oauth_client_secret")), ("cid-1", "csec-1"))
+
+    def test_an_application_whose_secret_is_lost_or_whose_callback_changed_is_replaced(self):
+        self.forgejo().run(FILES)
+        self.state.set("forgejo", "oauth_client_secret", "")
+        self.forgejo().run(FILES)
+        self.assertEqual([a["client_id"] for a in self.fake.oauth_apps], ["cid-2"])
+        self.cfg.domain = "other.lab"
+        self.forgejo().run(FILES)
+        self.assertEqual([(a["client_id"], a["redirect_uris"]) for a in self.fake.oauth_apps], [("cid-3", ["http://homegraf.other.lab/api/auth/callback"])])
+
     def test_a_token_whose_value_is_lost_is_replaced(self):
         self.forgejo().run(FILES)
         self.state.set("forgejo", "token", "gone")

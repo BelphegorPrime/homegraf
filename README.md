@@ -56,6 +56,7 @@ With only a repository mounted at `/repo` you get the map. The more of this you 
 | `HOMEGRAF_ADMIN` | the name of that administrator (default `admin`; the stack sets it to your e-mail address) |
 | `FORGEJO_TOKEN`, `HOMEGRAF_CLONE_URL`, `INFISICAL_URL`, `INFISICAL_BOOTSTRAP_CLIENT_ID`, `INFISICAL_BOOTSTRAP_CLIENT_SECRET` (plus the Komodo ones) | the write actions; they run in their own clone in the `/work` volume |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `HOMEGRAF_URL` | sign-in through an OpenID Connect provider (Forgejo, Keycloak, Authentik, ...) next to the password; who may do what is set by name in the UI |
+| `OIDC_ADMINS` | provider user names (comma or space separated) that get every permission at their first sign-in; the stack sets it to the administrator of its Forgejo. `OIDC_LABEL` names the button |
 | `UNIFI_URL`, `UNIFI_USER`, `UNIFI_PASSWORD` (`UNIFI_FINGERPRINT` to pin the certificate) | the optional network layer |
 
 The image is built by GitHub Actions for amd64 and arm64: `:main`, `:sha-<commit>`, and `:<version>` / `:latest` for tags `v*`.

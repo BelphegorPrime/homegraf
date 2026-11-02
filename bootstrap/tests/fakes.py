@@ -70,6 +70,8 @@ class FakeForgejo:
         self.commits: list[list[str]] = []
         self.users: dict[str, str] = {}              # other users, created through the admin API: name -> password
         self.user_tokens: dict[str, dict] = {}
+        self.oauth_apps: list[dict] = []
+        self.app_n = 0
         self.n = 0
 
     def authed(self, req):
@@ -108,6 +110,17 @@ class FakeForgejo:
             return 201, {"full_name": f"{p.split('/')[5]}/{req.json['name']}"}
         if p == "/api/v1/user":
             return 200, {"login": self.admin}
+        if p == "/api/v1/user/applications/oauth2" and req.method == "GET":
+            return 200, [{k: v for k, v in a.items() if k != "client_secret"} for a in self.oauth_apps]
+        if p == "/api/v1/user/applications/oauth2" and req.method == "POST":
+            self.app_n += 1
+            app = {"id": self.app_n, "name": req.json["name"], "client_id": f"cid-{self.app_n}", "client_secret": f"csec-{self.app_n}",
+                   "redirect_uris": req.json["redirect_uris"], "confidential_client": req.json["confidential_client"]}
+            self.oauth_apps.append(app)
+            return 201, app
+        if p.startswith("/api/v1/user/applications/oauth2/") and req.method == "DELETE":
+            self.oauth_apps = [a for a in self.oauth_apps if str(a["id"]) != p.rsplit("/", 1)[1]]
+            return 204, None
         if p == base and req.method == "GET":
             return 200, [{"name": n} for n in self.tokens]
         if p == base and req.method == "POST":

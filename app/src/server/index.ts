@@ -26,11 +26,11 @@ status.start();
 
 const certificates = certificateSource({ domains: async () => (await loadGraph()).nodes.filter((n) => n.type === "domain").map((n) => n.label) });
 const create = { problem: createProblem(cfg.create, cfg.komodo), applier: applier({ cfg }) };
-const store = userStore(`${cfg.dataDir}/users.json`);
+const store = userStore(`${cfg.dataDir}/users.json`, undefined, cfg.admin);
 if (store.problem) console.error(`users: ${store.problem}`);
-const users = { enabled: !!cfg.create.password, authenticate: authenticator({ adminPassword: cfg.create.password, users: store }), store };
+const users = { enabled: !!cfg.create.password, authenticate: authenticator({ adminPassword: cfg.create.password, admin: cfg.admin, users: store }), store, admin: cfg.admin };
 const pullState = pullStateReader(cfg);
-const sso = { oidc: cfg.oidc ? createOidc({ cfg: cfg.oidc, users: store }) : undefined, problem: cfg.oidcProblem };
+const sso = { oidc: cfg.oidc ? createOidc({ cfg: cfg.oidc, users: store, admin: cfg.admin }) : undefined, problem: cfg.oidcProblem };
 if (sso.problem) console.error(`sso: ${sso.problem}`);
 const removal = { apps: removableCatalog(cfg.repoDir), store: removalStore(`${cfg.dataDir}/removals.json`), pullState };
 if (removal.store.problem) console.error(`removals: ${removal.store.problem}`);
@@ -47,5 +47,5 @@ const stacks = {
 };
 
 serve({ fetch: createApp({ loadGraph, status, webDir: cfg.webDir, plan: planner(cfg.repoDir), preview: previewer(cfg.repoDir), addons: addonCatalog(cfg.repoDir), templates: templateCatalog(cfg.repoDir), unifi: unifi.status, certificates, create, users, removal, creations, hosts, stacks, sso }).fetch, port: cfg.port }, (info) => {
-  console.log(`homegraf listening on :${info.port} (repo ${cfg.repoDir}, status ${cfg.komodo ? "komodo" : "disabled"}, create ${createProblem(cfg.create, cfg.komodo) ?? "enabled"}, users ${users.enabled ? `${store.list().length} + admin` : "off"}, sso ${cfg.oidc ? cfg.oidc.label : "off"}, unifi ${cfg.unifi ? "on" : "off"})`);
+  console.log(`homegraf listening on :${info.port} (repo ${cfg.repoDir}, status ${cfg.komodo ? "komodo" : "disabled"}, create ${createProblem(cfg.create, cfg.komodo) ?? "enabled"}, users ${users.enabled ? `${store.list().length} + ${cfg.admin}` : "off"}, sso ${cfg.oidc ? cfg.oidc.label : "off"}, unifi ${cfg.unifi ? "on" : "off"})`);
 });

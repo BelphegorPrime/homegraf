@@ -97,7 +97,7 @@ class RunTests(unittest.TestCase):
     def test_the_summary_says_where_to_go_and_what_is_left(self):
         s = self.stack()
         _, out, _ = s.run()
-        for text in ("http://git.home.lab", "http://homegraf.home.lab", "http://192.168.1.10:8097", "user owner (Forgejo does not allow the name admin)",
+        for text in ("http://git.home.lab", "http://homegraf.home.lab", "http://192.168.1.10:8097", "admin@example.org or the user name owner",
                      "*.home.lab -> 192.168.1.10", "no token to type anywhere", "http://git.home.lab/owner/infrastructure", "http://192.168.1.10:3000/owner/infrastructure"):
             self.assertIn(text, out)
 

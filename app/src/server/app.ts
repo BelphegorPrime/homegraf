@@ -52,6 +52,8 @@ export interface UsersDeps {
   enabled: boolean;
   authenticate: Authenticator;
   store: UserStore;
+  /** The built-in administrator's name (HOMEGRAF_ADMIN); "admin" when not given. */
+  admin?: string;
 }
 
 const refusal: Record<Denied, [401 | 429 | 503, string]> = {
@@ -267,7 +269,7 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
   const body = async (c: Context) => ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
 
   app.get("/api/users", authorize("users:manage"), (c) =>
-    c.json({ users: [{ name: ADMIN, permissions: Object.keys(PERMISSIONS), builtin: true }, ...users.store.list().map(info)] }));
+    c.json({ users: [{ name: users.admin ?? ADMIN, permissions: Object.keys(PERMISSIONS), builtin: true }, ...users.store.list().map(info)] }));
 
   app.post("/api/users", authorize("users:manage"), async (c) => {
     const b = await body(c);
@@ -284,7 +286,7 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
   app.patch("/api/users/:name", authorize("users:manage"), async (c) => {
     const b = await body(c);
     const name = c.req.param("name");
-    if (name === ADMIN) return c.json({ error: "the administrator comes from the environment" }, 400);
+    if (name === (users.admin ?? ADMIN)) return c.json({ error: "the administrator comes from the environment" }, 400);
     try {
       const user = await users.store.update(name, { password: b.password as string | undefined, permissions: b.permissions as Permission[] | undefined });
       console.log(`user ${name} changed by ${c.get("principal").name}`);
@@ -294,7 +296,7 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
 
   app.delete("/api/users/:name", authorize("users:manage"), (c) => {
     const name = c.req.param("name");
-    if (name === ADMIN) return c.json({ error: "the administrator comes from the environment" }, 400);
+    if (name === (users.admin ?? ADMIN)) return c.json({ error: "the administrator comes from the environment" }, 400);
     try {
       users.store.remove(name);
       console.log(`user ${name} removed by ${c.get("principal").name}`);

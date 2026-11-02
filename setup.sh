@@ -55,7 +55,7 @@ port_state() {
 
 domain=${DOMAIN:-}
 email=${ADMIN_EMAIL:-}
-user=${ADMIN_USER:-admin}
+user=${ADMIN_USER:-}
 password=${ADMIN_PASSWORD:-}
 host_ip=${HOST_IP:-}
 dns_mode=${DNS_MODE:-}
@@ -94,6 +94,8 @@ if [ "$dns_mode" = sslip ]; then
 fi
 domain=${domain:-homegraf.lan}
 [ -n "$email" ] || email="admin@$domain"
+# The e-mail address is the sign-in name everywhere it can be (ADMIN_USER overrides it).
+[ -n "$user" ] || user=$email
 if [ -z "$password" ]; then
   until printf '%s' "$password" | grep -q '[A-Za-z]' && printf '%s' "$password" | grep -q '[0-9]'; do password=$(alnum 24); done
   generated_password=true
@@ -101,9 +103,10 @@ fi
 # One password for every service: Infisical's policy is the strictest (14 characters, a letter, a digit or a special character).
 [ "${#password}" -ge 14 ] || die "the password needs at least 14 characters"
 printf '%s' "$password" | grep -q '[A-Za-z]' && printf '%s' "$password" | grep -q '[0-9!@#%^&*(),.?:{}|<>]' || die "the password needs a letter and a digit (or special character)"
-# Forgejo does not allow the user name "admin" (nor a few others): its administrator is called owner then.
+# Forgejo takes the e-mail address to sign in too, but its user name (the owner of the repository) must be a plain name:
+# no "@", and not "admin" nor a few other reserved ones. It is called owner then.
 forgejo_user=$user
-case "$user" in admin) forgejo_user=owner ;; esac
+case "$user" in admin|*@*) forgejo_user=owner ;; esac
 case "$password$domain$email$user" in
   *[\"\'\\\$\`\ ]*) die "no spaces, quotes, backslashes, \$ or backticks in the domain, e-mail, user or password (they go into .env and URLs)" ;;
 esac

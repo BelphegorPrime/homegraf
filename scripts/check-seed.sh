@@ -24,7 +24,7 @@ py=$work/venv/bin/python
 step "placeholders"
 declare -A SAMPLE=(
   [DOMAIN]=home.example [HOST_IP]=10.0.0.10 [SERVER]=main [REPOSITORY]=admin/infrastructure [REPOS_DIR]=/etc/komodo/repos
-  [FORGEJO_URL]=http://forgejo:3000 [INFISICAL_URL]=http://infisical:8080 [ADMIN_USER]=admin
+  [FORGEJO_URL]=http://forgejo:3000 [INFISICAL_URL]=http://infisical:8080 [FORGEJO_USER]=owner
   [NETWORK]=homegraf-net [CREDENTIALS_VOLUME]=homegraf-ingressctl-credentials [STATE_VOLUME]=homegraf-ingressctl-state
 )
 for name in "${!SAMPLE[@]}"; do sed -i "s|@@${name}@@|${SAMPLE[$name]}|g" inventory/*.yaml external/*.yaml; done

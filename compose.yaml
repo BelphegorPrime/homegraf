@@ -60,7 +60,8 @@ services:
       - ${BIND_ADDRESS:-0.0.0.0}:${PORT_HOMEGRAF:-8097}:8080
     environment:
       TZ: ${TZ:-Etc/UTC}
-      # Sign-in: the password of the built-in user "admin"; more users are added in the UI.
+      # Sign-in: the built-in administrator is ADMIN_USER (the e-mail address, as set up by setup.sh) with ADMIN_PASSWORD; more users are added in the UI.
+      HOMEGRAF_ADMIN: ${ADMIN_USER:-admin}
       HOMEGRAF_PASSWORD: ${ADMIN_PASSWORD:?run ./setup.sh}
       # What the bootstrap creates (the Komodo API key, the Forgejo token, the Infisical identity ...) it writes to a file that homegraf
       # reads at start; whatever is set below wins over the file.

@@ -25,7 +25,7 @@ def summary(cfg, state, notes: list[str]) -> str:
         lines.append(f"  {label:22} http://{sub}.{d}    or http://{ip}:{ports[sub]}")
     lines += ["", "Sign in:",
               f"  homegraf, Komodo, AdGuard Home   user {cfg.admin_user}, password ADMIN_PASSWORD from .env",
-              f"  Forgejo                          user {cfg.forgejo_user} ({'Forgejo does not allow the name ' + cfg.admin_user if cfg.forgejo_user != cfg.admin_user else 'same'}), same password",
+              f"  Forgejo                          {cfg.admin_email} or the user name {cfg.forgejo_user} (it owns the repository), same password",
               f"  Nginx Proxy Manager              {cfg.admin_email}, same password",
               f"  Infisical                        {cfg.admin_email}, " + ("a generated password: docker compose run --rm bootstrap show infisical-password"
                                                                          if state.get("infisical", "admin_password") else "same password"),

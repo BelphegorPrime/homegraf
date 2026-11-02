@@ -79,6 +79,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(Config.from_env({**self.ENV, "ADMIN_USER": "owner"}).repository, "owner/infrastructure")
         self.assertEqual(Config.from_env({**self.ENV, "ADMIN_USER": "owner"}).clone_url, "http://forgejo:3000/owner/infrastructure.git")
 
+    def test_an_email_address_as_the_administrator_is_no_forgejo_name(self):
+        c = Config.from_env({**self.ENV, "ADMIN_USER": "me@example.org"})
+        self.assertEqual((c.forgejo_user, c.repository), ("owner", "owner/infrastructure"))
+
     def test_the_forgejo_administrator_can_be_named_explicitly(self):
         c = Config.from_env({**self.ENV, "FORGEJO_ADMIN_USER": "homelab"})
         self.assertEqual((c.forgejo_user, c.repository), ("homelab", "homelab/infrastructure"))

@@ -76,7 +76,7 @@ function checkPermissions(permissions: unknown): Permission[] {
  * The users as a JSON file on a volume (mode 0600, replaced atomically on every change). A small list kept in memory is
  * enough for a homelab; the store is the one place that would move to a database or an identity provider.
  */
-export function userStore(file: string, now: () => Date = () => new Date()): UserStore {
+export function userStore(file: string, now: () => Date = () => new Date(), admin: string = ADMIN): UserStore {
   let users: StoredUser[] = [];
   let problem: string | undefined;
   try {
@@ -106,7 +106,7 @@ export function userStore(file: string, now: () => Date = () => new Date()): Use
     get: (name) => find(name),
     async add(name, password, permissions) {
       if (problem) throw new UserError(problem, 503);
-      if (name === ADMIN) throw new UserError(`"${ADMIN}" is reserved for the administrator from the environment`);
+      if (name === admin) throw new UserError(`"${admin}" is reserved for the administrator from the environment`);
       if (!NAME_RE.test(name)) throw new UserError("the name is 2 to 32 characters: lower case letters, digits, . _ -");
       if (find(name)) throw new UserError(`user ${name} exists`, 409);
       const user: StoredUser = { name, hash: await hashPassword(checkPassword(password)), permissions: checkPermissions(permissions), created: now().toISOString() };
@@ -116,7 +116,7 @@ export function userStore(file: string, now: () => Date = () => new Date()): Use
     },
     async addSso(name, permissions) {
       if (problem) throw new UserError(problem, 503);
-      if (name === ADMIN) throw new UserError(`"${ADMIN}" is reserved for the administrator from the environment`);
+      if (name === admin) throw new UserError(`"${admin}" is reserved for the administrator from the environment`);
       if (!NAME_RE.test(name)) throw new UserError("the name is 2 to 32 characters: lower case letters, digits, . _ -");
       if (find(name)) throw new UserError(`user ${name} exists`, 409);
       const user: StoredUser = { name, hash: "", sso: true, permissions: checkPermissions(permissions), created: now().toISOString() };

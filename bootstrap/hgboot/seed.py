@@ -8,7 +8,7 @@ Placeholders (written @@NAME@@ in the seed, text files only):
   @@REPOS_DIR@@      where Komodo's agent keeps its clones of repositories on this host (absolute)
   @@FORGEJO_URL@@    Forgejo as the containers reach it
   @@INFISICAL_URL@@  Infisical as the containers reach it
-  @@ADMIN_USER@@     the administrator's name
+  @@FORGEJO_USER@@   the administrator's name on Forgejo (the owner of the repository; Komodo's git account)
   @@NETWORK@@        the compose network of the stack (ingressctl joins it to reach the proxy and Infisical by name)
   @@CREDENTIALS_VOLUME@@  the volume the bootstrap puts ingressctl's credentials on
   @@STATE_VOLUME@@   the volume of ingressctl's state
@@ -24,7 +24,7 @@ SKIP_DIRS = {".git", "__pycache__", "node_modules", ".pytest_cache"}
 
 def substitutions(cfg, server: str) -> dict[str, str]:
     return {"DOMAIN": cfg.domain, "HOST_IP": cfg.host_ip, "SERVER": server, "REPOSITORY": cfg.repository, "REPOS_DIR": cfg.repos_dir,
-            "FORGEJO_URL": cfg.forgejo_url, "INFISICAL_URL": cfg.infisical_url, "ADMIN_USER": cfg.admin_user,
+            "FORGEJO_URL": cfg.forgejo_url, "INFISICAL_URL": cfg.infisical_url, "FORGEJO_USER": cfg.forgejo_user,
             "NETWORK": cfg.network, "CREDENTIALS_VOLUME": cfg.credentials_volume,
             "STATE_VOLUME": cfg.state_volume}
 

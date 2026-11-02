@@ -21,6 +21,6 @@ controller:
   default_npm_instance: main
   management_server: "@@SERVER@@"          # the Komodo server ingressctl runs on (single writer)
   management_repo_dir: "@@REPOS_DIR@@/infrastructure"   # Komodo's clone of this repository on that server
-  komodo_git_account: "@@ADMIN_USER@@"
+  komodo_git_account: "@@FORGEJO_USER@@"
   allowed_repos: ["@@REPOSITORY@@"]
   allowed_branches: [main]

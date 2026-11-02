@@ -31,6 +31,13 @@ describe("userStore", () => {
     expect(existsSync(`${file}.tmp`)).toBe(false);
   });
 
+  it("reserves the configured administrator's name instead of admin", async () => {
+    const store = userStore(join(dir(), "users.json"), undefined, "boss");
+    expect((await store.add("boss", "correct horse battery", []).catch((e: unknown) => e) as UserError).message).toMatch(/"boss" is reserved/);
+    expect((await store.addSso("boss", []).catch((e: unknown) => e) as UserError).message).toMatch(/"boss" is reserved/);
+    expect((await store.add("admin", "correct horse battery", [])).name).toBe("admin");
+  });
+
   it("validates names, the reserved admin, duplicates, passwords and permissions", async () => {
     const store = userStore(join(dir(), "users.json"));
     const refused = async (p: Promise<unknown>) => (await p.catch((e: unknown) => e)) as UserError;

@@ -28,6 +28,8 @@ export function basicCredentials(header: string | undefined): { name: string; pa
 export interface AuthOptions {
   /** The administrator's password (HOMEGRAF_PASSWORD); without it nobody can sign in. */
   adminPassword: string | undefined;
+  /** The built-in administrator's name (HOMEGRAF_ADMIN), lower case. */
+  admin?: string;
   users: UserStore;
   now?: () => number;
   maxFailures?: number;
@@ -39,7 +41,7 @@ export interface AuthOptions {
  * `maxFailures` within `windowMs` that name is refused, even with the right password, until the oldest failure aged out.
  * An unknown name costs as much time as a wrong password and is counted like one.
  */
-export function authenticator({ adminPassword, users, now = Date.now, maxFailures = 5, windowMs = 10 * 60_000 }: AuthOptions): Authenticator {
+export function authenticator({ adminPassword, admin = ADMIN, users, now = Date.now, maxFailures = 5, windowMs = 10 * 60_000 }: AuthOptions): Authenticator {
   const failures = new Map<string, number[]>();
   const recent = (name: string) => (failures.get(name) ?? []).filter((t) => now() - t < windowMs);
 
@@ -52,8 +54,8 @@ export function authenticator({ adminPassword, users, now = Date.now, maxFailure
     if (attempts.length >= maxFailures) return { ok: false, reason: "locked" };
 
     let principal: Principal | undefined;
-    if (key === ADMIN) {
-      if (timingSafeEqual(digest(given.password), digest(adminPassword))) principal = { name: ADMIN, permissions: Object.keys(PERMISSIONS) as Permission[], source: "builtin" };
+    if (key === admin) {
+      if (timingSafeEqual(digest(given.password), digest(adminPassword))) principal = { name: admin, permissions: Object.keys(PERMISSIONS) as Permission[], source: "builtin" };
     } else {
       const user = users.get(key);
       if (await verifyPassword(given.password, user?.hash || await DUMMY_HASH) && user && !user.sso) principal = { name: user.name, permissions: user.permissions, source: "user" };

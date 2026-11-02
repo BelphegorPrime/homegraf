@@ -52,7 +52,8 @@ With only a repository mounted at `/repo` you get the map. The more of this you 
 | Environment | Turns on |
 | --- | --- |
 | `KOMODO_URL`, `KOMODO_API_KEY`, `KOMODO_API_SECRET` | live status |
-| `HOMEGRAF_PASSWORD` | sign-in: the password of the built-in user `admin`; more users are added in the UI (kept in the `/data` volume) |
+| `HOMEGRAF_PASSWORD` | sign-in: the password of the built-in administrator; more users are added in the UI (kept in the `/data` volume) |
+| `HOMEGRAF_ADMIN` | the name of that administrator (default `admin`; the stack sets it to your e-mail address) |
 | `FORGEJO_TOKEN`, `HOMEGRAF_CLONE_URL`, `INFISICAL_URL`, `INFISICAL_BOOTSTRAP_CLIENT_ID`, `INFISICAL_BOOTSTRAP_CLIENT_SECRET` (plus the Komodo ones) | the write actions; they run in their own clone in the `/work` volume |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `HOMEGRAF_URL` | sign-in through an OpenID Connect provider (Forgejo, Keycloak, Authentik, ...) next to the password; who may do what is set by name in the UI |
 | `UNIFI_URL`, `UNIFI_USER`, `UNIFI_PASSWORD` (`UNIFI_FINGERPRINT` to pin the certificate) | the optional network layer |

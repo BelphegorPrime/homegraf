@@ -19,6 +19,8 @@ interface Session { name: string; csrf: string; exp: number }
 export interface OidcDeps {
   cfg: OidcConfig;
   users: UserStore;
+  /** The built-in administrator's name: reserved, no account of the provider may take it. */
+  admin?: string;
   fetchFn?: typeof fetch;
   now?: () => number;
 }
@@ -46,7 +48,7 @@ export type SignIn = { ok: true; sessionId: string; maxAgeSeconds: number } | { 
  * in place of checking its signature; issuer, audience, expiry and nonce are checked. Who may do what is decided here, by name,
  * in the Users tab: a name the provider confirms but the list does not know may look and nothing else.
  */
-export function createOidc({ cfg, users, fetchFn = fetch, now = Date.now }: OidcDeps) {
+export function createOidc({ cfg, users, admin = ADMIN, fetchFn = fetch, now = Date.now }: OidcDeps) {
   const pending = new Map<string, Pending>();
   const sessions = new Map<string, Session>();
   let discovered: { at: number; value: Discovery } | undefined;
@@ -124,7 +126,7 @@ export function createOidc({ cfg, users, fetchFn = fetch, now = Date.now }: Oidc
         }
         if (typeof raw !== "string" || !raw) return { ok: false, error: `the provider's answer has no "${cfg.usernameClaim}"` };
         const name = raw.toLowerCase();
-        if (name === ADMIN) return { ok: false, error: `"${ADMIN}" is reserved for the built-in administrator` };
+        if (name === admin) return { ok: false, error: `"${admin}" is reserved for the built-in administrator` };
         if (!NAME_RE.test(name)) return { ok: false, error: `"${raw}" is not a name this app can use (2 to 32 characters: letters, digits, . _ -)` };
 
         const known = users.get(name);

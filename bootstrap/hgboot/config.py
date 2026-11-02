@@ -60,7 +60,8 @@ class Config:
     def forgejo_user(self) -> str:
         if self.forgejo_admin:
             return self.forgejo_admin
-        return self.admin_user if self.admin_user.lower() not in FORGEJO_RESERVED else FORGEJO_FALLBACK_USER
+        usable = self.admin_user.lower() not in FORGEJO_RESERVED and "@" not in self.admin_user
+        return self.admin_user if usable else FORGEJO_FALLBACK_USER
 
     @property
     def repository(self) -> str:

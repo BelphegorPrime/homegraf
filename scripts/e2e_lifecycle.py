@@ -1,4 +1,4 @@
-"""The part of scripts/e2e-stack.sh that talks to a running stack: HG_URL (homegraf), FORGEJO_URL, HG_PASSWORD (admin and owner)."""
+"""The part of scripts/e2e-stack.sh that talks to a running stack: HG_URL (homegraf), FORGEJO_URL, HG_PASSWORD (the administrator and owner), HG_USER (the administrator's name, default admin)."""
 import base64
 import http.client
 import json
@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 
 HG, FORGEJO, PASSWORD = os.environ["HG_URL"], os.environ["FORGEJO_URL"], os.environ["HG_PASSWORD"]
+ADMIN = os.environ.get("HG_USER", "admin")
 
 
 def basic(user):
@@ -38,7 +39,7 @@ def check(ok, what):
 def job_result(job):
     for _ in range(150):
         time.sleep(4)
-        _, j = call(HG, "admin", "GET", f"/api/apps/jobs/{job}")
+        _, j = call(HG, ADMIN, "GET", f"/api/apps/jobs/{job}")
         if j.get("state") != "running":
             return j
     check(False, f"job {job} did not finish")
@@ -65,13 +66,13 @@ def merge(number):
     check(st == 200, f"pull request #{number} merged")
 
 
-st, caps = call(HG, "admin", "GET", "/api/capabilities")
+st, caps = call(HG, ADMIN, "GET", "/api/capabilities")
 check(caps["create"]["enabled"] and caps["users"]["enabled"], "homegraf has the write actions switched on")
-st, g = call(HG, "admin", "GET", "/api/graph")
+st, g = call(HG, ADMIN, "GET", "/api/graph")
 check(st == 200 and not g["warnings"] and any(n["type"] == "infra" for n in g["nodes"]), "the map is built from the seed, without warnings")
 server = next(n["label"] for n in g["nodes"] if n["type"] == "machine")
 
-st, d = call(HG, "admin", "POST", "/api/apps/create", {"appId": "probe", "server": server, "image": "traefik/whoami:v1.11.0", "containerPort": 80,
+st, d = call(HG, ADMIN, "POST", "/api/apps/create", {"appId": "probe", "server": server, "image": "traefik/whoami:v1.11.0", "containerPort": 80,
                                                       "hostPort": 8000, "routing": False, "secretVars": ["API_TOKEN"]})
 check(st == 202, "create accepted")
 j = job_result(d["jobId"])
@@ -79,20 +80,20 @@ check(j["state"] == "done" and j.get("pullRequestUrl"), f"create finished with a
 merge(1)
 wait(answers, "the merge deployed the app (webhook, update-all, deploy) and it answers")
 
-st, d = call(HG, "admin", "POST", "/api/apps/remove", {"appId": "probe", "confirm": "probe"})
+st, d = call(HG, ADMIN, "POST", "/api/apps/remove", {"appId": "probe", "confirm": "probe"})
 check(st == 202, "remove accepted")
 j = job_result(d["jobId"])
 check(j["state"] == "done" and j.get("pullRequestUrl"), "first half done: stack destroyed, pull request open")
 check(not answers(), "the app is down")
-_, p = call(HG, "admin", "GET", "/api/removals")
+_, p = call(HG, ADMIN, "GET", "/api/removals")
 check([r["appId"] for r in p["removals"]] == ["probe"], "the removal waits for its merge")
 merge(2)
-wait(lambda: call(HG, "admin", "GET", "/api/removals")[1]["removals"][0]["pr"] == "merged", "homegraf sees the merge")
-st, d = call(HG, "admin", "POST", "/api/apps/remove/finish", {"appId": "probe"})
+wait(lambda: call(HG, ADMIN, "GET", "/api/removals")[1]["removals"][0]["pr"] == "merged", "homegraf sees the merge")
+st, d = call(HG, ADMIN, "POST", "/api/apps/remove/finish", {"appId": "probe"})
 check(st == 202, "finish accepted")
 j = job_result(d["jobId"])
 check(j["state"] == "done", "second half done (secrets removed)")
-check(call(HG, "admin", "GET", "/api/removals")[1]["removals"] == [], "nothing waits any more")
+check(call(HG, ADMIN, "GET", "/api/removals")[1]["removals"] == [], "nothing waits any more")
 
 
 # An app with an address: after its merge the proxy serves it over https with a certificate of the stack's CA (update-all ends with
@@ -116,7 +117,7 @@ if DOMAIN and ROOT_CA and HTTPS_PORT:
     def number(job):
         return int(job["pullRequestUrl"].rstrip("/").rsplit("/", 1)[1])
 
-    st, d = call(HG, "admin", "POST", "/api/apps/create", {"appId": "web", "server": server, "image": "traefik/whoami:v1.11.0", "containerPort": 80,
+    st, d = call(HG, ADMIN, "POST", "/api/apps/create", {"appId": "web", "server": server, "image": "traefik/whoami:v1.11.0", "containerPort": 80,
                                                           "hostPort": 8001, "routing": True})
     check(st == 202, "create with an address accepted")
     j = job_result(d["jobId"])
@@ -124,13 +125,13 @@ if DOMAIN and ROOT_CA and HTTPS_PORT:
     merge(number(j))
     wait(https_answers, f"https://{host} answers with a certificate of the CA (update-all ended with ingress-apply)", tries=100)
 
-    st, d = call(HG, "admin", "POST", "/api/apps/remove", {"appId": "web", "confirm": "web"})
+    st, d = call(HG, ADMIN, "POST", "/api/apps/remove", {"appId": "web", "confirm": "web"})
     check(st == 202, f"remove accepted ({st} {d})")
     j = job_result(d["jobId"])
     check(j["state"] == "done" and j.get("pullRequestUrl"), "first half done")
     merge(number(j))
-    wait(lambda: call(HG, "admin", "GET", "/api/removals")[1]["removals"][0]["pr"] == "merged", "homegraf sees the merge")
-    st, d = call(HG, "admin", "POST", "/api/apps/remove/finish", {"appId": "web"})
+    wait(lambda: call(HG, ADMIN, "GET", "/api/removals")[1]["removals"][0]["pr"] == "merged", "homegraf sees the merge")
+    st, d = call(HG, ADMIN, "POST", "/api/apps/remove/finish", {"appId": "web"})
     check(st == 202, "finish accepted")
     j = job_result(d["jobId"])
     check(j["state"] == "done", "second half done")

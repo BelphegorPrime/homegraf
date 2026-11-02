@@ -9,6 +9,8 @@ export interface Config {
   create: CreateConfig;
   /** Where the users file lives (a volume). */
   dataDir: string;
+  /** The built-in administrator's name (HOMEGRAF_ADMIN, default admin): a user name, or the e-mail address the stack was set up with. */
+  admin: string;
   /** Signing in through an OpenID Connect provider (Forgejo, Keycloak, Authentik, …); off unless all four settings are there. */
   oidc?: OidcConfig;
   /** Some OIDC settings are there but not all. */
@@ -94,6 +96,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           verify: env.UNIFI_VERIFY === "true", fingerprint: env.UNIFI_FINGERPRINT || undefined }
       : undefined,
     dataDir: env.DATA_DIR ?? "/data",
+    admin: (env.HOMEGRAF_ADMIN ?? "").trim().toLowerCase() || "admin",
     ...oidcFrom(env),
     create: {
       password: env.HOMEGRAF_PASSWORD || undefined,

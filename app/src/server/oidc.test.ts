@@ -41,10 +41,10 @@ function provider(change: { claims?: Record<string, unknown>; token?: Response; 
   return { seen, fetchFn };
 }
 
-function setup(change: Parameters<typeof provider>[0] = {}, now: () => number = Date.now, config: OidcConfig = cfg) {
+function setup(change: Parameters<typeof provider>[0] = {}, now: () => number = Date.now, config: OidcConfig = cfg, admin?: string) {
   const users = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
   const p = provider(change);
-  const oidc = createOidc({ cfg: config, users, fetchFn: p.fetchFn, now });
+  const oidc = createOidc({ cfg: config, users, admin, fetchFn: p.fetchFn, now });
   /** Starts a sign-in like a browser and comes back with `code`. */
   async function signIn(code = "good-code", overrides: { cookie?: string; state?: string } = {}) {
     const { location, stateCookie } = await oidc.login();
@@ -139,6 +139,7 @@ describe("coming back from the provider", () => {
 
   it("never lets a provider account become the built-in administrator, and refuses names it cannot use", async () => {
     expect(await setup({ claims: { preferred_username: "Admin" } }).signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/reserved/) });
+    expect(await setup({ claims: { preferred_username: "Boss" } }, Date.now, cfg, "boss").signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/"boss" is reserved/) });
     expect(await setup({ claims: { preferred_username: "a" } }).signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/not a name/) });
     expect(await setup({ claims: { preferred_username: "x y" } }).signIn()).toMatchObject({ ok: false });
   });

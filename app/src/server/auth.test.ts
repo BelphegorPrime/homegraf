@@ -35,6 +35,13 @@ describe("authenticator", () => {
     expect(await auth(basic("admin", "s3cret-admiN"))).toEqual({ ok: false, reason: "wrong" });
   });
 
+  it("names the administrator after HOMEGRAF_ADMIN, such as the e-mail address the stack was set up with", async () => {
+    const auth = authenticator({ adminPassword: "s3cret-admin", admin: "me@example.org", users: freshStore() });
+    const ok = await auth(basic("Me@Example.org", "s3cret-admin"));
+    expect(ok).toMatchObject({ ok: true, principal: { name: "me@example.org", source: "builtin" } });
+    expect(await auth(basic("admin", "s3cret-admin"))).toEqual({ ok: false, reason: "wrong" });
+  });
+
   it("signs in a stored user with exactly that user's permissions", async () => {
     const users = freshStore();
     await users.add("alice", "correct horse battery", ["apps:create"]);

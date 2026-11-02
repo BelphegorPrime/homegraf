@@ -17,8 +17,8 @@ copies knobs it finds in its environment (`PORT_*`, `BIND_ADDRESS`, `PROJECT_PRE
 `DNS_MODE=... HOST_IP=... ./setup.sh --yes` asks nothing. Every knob is documented in [.env.example](../.env.example).
 To run next to other things change the ports and `PROJECT_PREFIX`.
 
-**One password for everything.** The administrator password (`ADMIN_PASSWORD`) is the sign-in of homegraf, Komodo, Nginx Proxy Manager,
-Infisical and AdGuard Home, and the password of the Forgejo administrator. Infisical's policy is the strictest, so `setup.sh` asks for
+**One name and one password for everything.** Your e-mail address (`ADMIN_EMAIL`, which `setup.sh` also writes as `ADMIN_USER`) and the administrator password (`ADMIN_PASSWORD`) are the sign-in of homegraf, Komodo, Nginx Proxy Manager,
+Infisical and AdGuard Home, and of Forgejo (whose own user name, `owner`, also works). Infisical's policy is the strictest, so `setup.sh` asks for
 **14 characters or more with a letter and a digit** (or special character); a generated one always fits.
 
 ## What happens on `up`
@@ -79,7 +79,7 @@ The seed is plain files; text files may contain these placeholders, which the bo
 | `@@REPOSITORY@@` | `<owner>/infrastructure`, the repository on Forgejo |
 | `@@REPOS_DIR@@` | where Komodo's agent keeps its clones on this host (`<DATA_DIR>/periphery/repos`, absolute, the same inside and outside the agent) |
 | `@@FORGEJO_URL@@`, `@@INFISICAL_URL@@` | the services as the containers reach them (`http://forgejo:3000`, `http://infisical:8080`) |
-| `@@ADMIN_USER@@` | the administrator's name |
+| `@@FORGEJO_USER@@` | the administrator's name on Forgejo (`owner`), the owner of the repository and Komodo's git account |
 | `@@NETWORK@@`, `@@CREDENTIALS_VOLUME@@`, `@@STATE_VOLUME@@` | the compose network of the stack, the volume with ingressctl's credentials and the one with its state (`inventory/ingressctl.compose.yaml` connects the Komodo stack `ingressctl` to both) |
 
 The seed is committed once, when the repository is empty; a repository that has content is never touched.
@@ -117,8 +117,8 @@ and the rewrite `*.<domain> -> <host address>`. Pitfalls:
 
 | Service | Role | Port (default) | Notes |
 | --- | --- | --- | --- |
-| `homegraf` | the map, the wizard, users and permissions | 8097 | read-only container; signs in with `admin` and `ADMIN_PASSWORD`; starts after the bootstrap |
-| `forgejo` + `forgejo-db` | the repository your homelab is defined in; every change from homegraf is a pull request here | 3000, ssh 2222 | install wizard locked, registration closed; its administrator is `FORGEJO_ADMIN_USER` (`owner`: Forgejo does not allow `admin`) |
+| `homegraf` | the map, the wizard, users and permissions | 8097 | read-only container; signs in with `ADMIN_USER` and `ADMIN_PASSWORD` (`HOMEGRAF_ADMIN`); starts after the bootstrap |
+| `forgejo` + `forgejo-db` | the repository your homelab is defined in; every change from homegraf is a pull request here | 3000, ssh 2222 | install wizard locked, registration closed; its administrator is `FORGEJO_ADMIN_USER` (`owner`: the repository belongs to it, and a user name has no `@`; Forgejo accepts `ADMIN_EMAIL` to sign in as well) |
 | `forgejo-admin` | one-shot: creates that administrator | | runs before the bootstrap, exits |
 | `komodo-core` + `komodo-mongo` | deploys the stacks of that repository, reports their state | 9120 | the administrator is created from `ADMIN_USER` / `ADMIN_PASSWORD` on the very first start |
 | `komodo-periphery` | the agent that runs `docker compose` on this host | (internal 8120) | **mounts the Docker socket, so it is root on this host**; registered as the first server `Local` |

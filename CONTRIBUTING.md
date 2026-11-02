@@ -11,9 +11,9 @@ Thanks for looking. Bug reports, ideas and pull requests are welcome. For a secu
 | `seed/inventory`, `seed/stacks`, `seed/README.md` | the skeleton of a new installation's own repository | **here** |
 | `seed/` (the tools listed in [`TOOLS`](TOOLS): `homelab.py`, `infra/graph`, `infra/homelab`, `infra/infisical`, `infra/ingress-controller`, `infra/stackctl`, `infra/komodo/...`) | the command line the app runs, and the first content of a new installation's own repository | **here** |
 
-The tools are developed here, in the same pull request as the app that calls them. They are exposed to other repositories as tagged versions of the paths in `TOOLS`: the
-author's homelab repository takes a tag with `infra/tools/update-tools.sh` (it writes the files to their own paths, records the tag and a hash of the files, and its CI refuses
-local edits). So a change to a tool is a pull request here, then a tag. The app and the tools talk through commands and JSON (see
+The tools are developed here, in the same pull request as the app that calls them. They are exposed in two ways: the image carries them (`docker exec homegraf homelab.py ...`, see
+[docs/app.md](docs/app.md#where-things-are-developed)), and the paths in [`TOOLS-INPLACE`](TOOLS-INPLACE) are taken by the author's homelab repository from a tag with
+`infra/tools/update-tools.sh` (it writes the files to their own paths, records the tag and a hash of the files, and its CI refuses local edits). So a change to a tool is a pull request here, then a tag. The app and the tools talk through commands and JSON (see
 [docs/app.md](docs/app.md#where-things-are-developed)): keep that contract working.
 
 ## Before you open a pull request

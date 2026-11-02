@@ -23,9 +23,10 @@ import time
 
 import yaml
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+CODE = pathlib.Path(__file__).resolve().parents[2]                      # where the tools are
+ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)             # the repository they work on
 for _p in ("infra/homelab", "infra/komodo", "infra/infisical", "infra/stackctl"):
-    sys.path.insert(0, str(ROOT / _p))
+    sys.path.insert(0, str(CODE / _p))
 import addons  # noqa: E402
 import settings  # noqa: E402
 import serviceopts  # noqa: E402
@@ -760,7 +761,7 @@ def validate(app: App) -> None:
     ui.ok("inventory and compose files")
     if not app.domain:
         return
-    sys.path.insert(0, str(ROOT / "infra/ingress-controller/src"))
+    sys.path.insert(0, str(CODE / "infra/ingress-controller/src"))
     try:
         from ingressctl.cli import main as ingressctl_main
     except ImportError:

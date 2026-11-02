@@ -31,7 +31,8 @@ import urllib.parse
 import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
+CODE = HERE.parents[1]                                          # where the tools are
+ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)   # the repository they work on
 ENV = "prod"
 ROLE = "viewer"  # built-in project role: read secrets, change nothing
 TOKEN_TTL = 600  # seconds; the wrapper needs the token for one compose call only
@@ -237,7 +238,7 @@ def main() -> int:
         print("no stack with `secrets: infisical` in inventory/stacks.yaml")
         return 0
     sys.path.insert(0, str(HERE))
-    sys.path.insert(0, str(ROOT / "infra/komodo"))
+    sys.path.insert(0, str(CODE / "infra/komodo"))
     import komodo_api  # noqa: E402
     from bootstrap import Api  # noqa: E402
     return sync(Api(), komodo_api, stacks, os.environ["INFISICAL_URL"].rstrip("/"), imports, args.apply)

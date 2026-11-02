@@ -11,9 +11,10 @@ import time
 
 import yaml
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+CODE = pathlib.Path(__file__).resolve().parents[2]                      # where the tools are
+ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)             # the repository they work on
 for _p in ("infra/homelab", "infra/komodo"):
-    sys.path.insert(0, str(ROOT / _p))
+    sys.path.insert(0, str(CODE / _p))
 import settings  # noqa: E402
 import ui  # noqa: E402
 

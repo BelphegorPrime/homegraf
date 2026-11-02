@@ -4,8 +4,8 @@ from __future__ import annotations
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "infra/infisical"))
+CODE = pathlib.Path(__file__).resolve().parents[2]    # where the tools are
+sys.path.insert(0, str(CODE / "infra/infisical"))
 import secret  # noqa: E402
 import ui  # noqa: E402
 

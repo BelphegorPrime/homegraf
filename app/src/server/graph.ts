@@ -1,16 +1,17 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Graph } from "../shared/types.js";
+import { toolPath } from "./tools.js";
 
 const run = promisify(execFile);
 
-/** Runs infra/graph/build.py from the repo checkout, so the builder always matches the repo it reads. */
+/** Runs infra/graph/build.py of the tools (the image's copy, so the builder always matches this app) on the repo checkout. */
 export function graphLoader(repoDir: string, ttlMs: number, now: () => number = Date.now, extraArgs: () => Promise<string[]> = async () => []) {
   let cached: { at: number; graph: Graph } | undefined;
   let inflight: Promise<Graph> | undefined;
 
   async function build(): Promise<Graph> {
-    const { stdout } = await run("python3", ["-I", `${repoDir}/infra/graph/build.py`, "--root", repoDir, ...(await extraArgs())], {
+    const { stdout } = await run("python3", ["-I", toolPath(repoDir, "infra/graph/build.py"), "--root", repoDir, ...(await extraArgs())], {
       maxBuffer: 32 * 1024 * 1024,
       timeout: 30_000,
     });

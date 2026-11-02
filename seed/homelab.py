@@ -27,9 +27,10 @@ import os
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent
+CODE = pathlib.Path(__file__).resolve().parent                # where the tools are
+ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)   # the repository they work on
 for _p in ("infra/homelab", "infra/komodo", "infra/infisical"):
-    sys.path.insert(0, str(ROOT / _p))
+    sys.path.insert(0, str(CODE / _p))
 import addons  # noqa: E402
 import hostopts  # noqa: E402
 import komodo_api  # noqa: E402

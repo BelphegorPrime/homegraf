@@ -74,7 +74,12 @@ if grep -rInE -e '(^|[^0-9.])192\.168\.[0-9]+\.[0-9]+' -e '/home/[a-z]' --includ
   echo "the lines above name a private address or a home folder: tools, templates and tests use neutral names (10.0.0.x, lab.example)" >&2
   exit 1
 fi
-echo "$(echo "$tools" | wc -l) tool paths, all generic"
+for p in $(grep -v '^#' "$here/TOOLS-INPLACE" | grep -v '^$'); do
+  echo "$tools" | grep -qxF "$p" || echo "$tools" | grep -qxF "$(dirname "$p")" || echo "$tools" | grep -qxF "$(dirname "$(dirname "$p")")" \
+    || { echo "TOOLS-INPLACE lists $p, which no path of TOOLS covers" >&2; exit 1; }
+  [ -e "$p" ] || { echo "TOOLS-INPLACE lists $p, which is not in seed/" >&2; exit 1; }
+done
+echo "$(echo "$tools" | wc -l) tool paths, all generic; the in-place ones are part of them"
 
 step "the tools"
 $py homelab.py --help >/dev/null && echo "homelab.py --help"

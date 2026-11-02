@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import ipaddress
+import os
 import json
 import pathlib
 import re
@@ -407,7 +408,7 @@ def build_graph(root: pathlib.Path, unifi: dict | None = None) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--root", type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[2])
+    ap.add_argument("--root", type=pathlib.Path, default=pathlib.Path(os.environ.get("HOMELAB_ROOT") or pathlib.Path(__file__).resolve().parents[2]))
     ap.add_argument("-o", "--output", type=pathlib.Path)
     ap.add_argument("--check", action="store_true", help="exit 1 if an edge points at a missing node")
     ap.add_argument("--unifi", type=pathlib.Path, help="snapshot of the UniFi controller (unifi.py): replaces the network placeholders")

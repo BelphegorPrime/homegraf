@@ -34,7 +34,7 @@ The controller's certificate is self-signed, so it is not verified; set `UNIFI_F
 
 ```bash
 cd app && npm ci
-REPO_DIR=../seed npm run dev:server  # API on :8080; the seed is a small sample repository, or point REPO_DIR at your own checkout
+REPO_DIR=../seed npm run dev:server  # (tools and data in one folder: TOOLS_DIR is unset) API on :8080; the seed is a small sample repository, or point REPO_DIR at your own checkout
 npm run dev:web                      # Vite with /api proxied to :8080
 npm run typecheck && npm test
 ```
@@ -47,7 +47,7 @@ The tools the app runs are in `seed/infra/` and `seed/homelab.py`, listed in [`T
 
 This repository is the home of the app: `app/` and this file are developed and changed here, and GitHub Actions builds, scans and publishes the image from it. The README, the license, the all-in-one `compose.yaml`, the bootstrap, the scripts and the workflows are here too.
 
-The tools in `seed/` (`homelab.py`, `infra/graph`, `infra/homelab`, `infra/infisical`, `infra/ingress-controller`, `infra/stackctl`, `infra/komodo/...`, the list is [`TOOLS`](../TOOLS)) are the initial content of a new installation's own infrastructure repository, and the app calls them (`homelab.py <command> --json`, the graph builder). They are developed here: a new template, a change to the wizard or to the graph builder comes with the change to the app that shows it. **Exposed:** a tag of this repository pins a version of exactly the paths in `TOOLS`, and the author's homelab repository takes such a tag with `infra/tools/update-tools.sh`, which writes the files to the same paths there (servers, Komodo and CI use them in place), records the tag and a hash of the files in a lock, and lets CI fail when a file differs from the lock. The skeleton around the tools (`seed/inventory`, `seed/stacks`, `seed/README.md`) is not exposed.
+The tools in `seed/` (`homelab.py`, `infra/graph`, `infra/homelab`, `infra/infisical`, `infra/ingress-controller`, `infra/stackctl`, `infra/komodo/...`, the list is [`TOOLS`](../TOOLS)) are the initial content of a new installation's own infrastructure repository, and the app calls them (`homelab.py <command> --json`, the graph builder). They are developed here: a new template, a change to the wizard or to the graph builder comes with the change to the app that shows it. **Exposed in two ways.** The image carries the paths of `TOOLS` in `/opt/homegraf` (`TOOLS_DIR`) and puts `homelab.py` on the `PATH`, so `docker exec -it homegraf homelab.py status` or `docker run --rm -it -v "$PWD":/repo ghcr.io/belphegorprime/homegraf homelab.py ...` run the tools of that version. They work on the repository named by `HOMELAB_ROOT` (default `/repo`, the read-only checkout; a clone you mount is writable and can take a pull request), not on the folder they sit in; the app calls them the same way, so the app and its tools are always one version. The paths of [`TOOLS-INPLACE`](../TOOLS-INPLACE) are also taken by the author's homelab repository from a tag, with `infra/tools/update-tools.sh`, to the same paths there, because its servers, Komodo and CI use those files in place; it records the tag and a hash of the files in a lock and lets CI fail when a file differs. The skeleton around the tools (`seed/inventory`, `seed/stacks`, `seed/README.md`) is not exposed.
 
 `scripts/check-seed.sh` refuses private addresses and home folders in the tools and runs their tests from an empty copy of `seed/`; the tools stay generic, and what is specific to one installation lives in `inventory/`.
 

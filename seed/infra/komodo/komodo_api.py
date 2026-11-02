@@ -13,9 +13,16 @@ import urllib.error
 import urllib.request
 
 
-def load_env(path: pathlib.Path = pathlib.Path(__file__).with_name("komodo.env")) -> None:
+def _env_file() -> pathlib.Path:
+    """komodo.env of the repository the tools work on (HOMELAB_ROOT), else next to this file."""
+    root = os.environ.get("HOMELAB_ROOT")
+    return pathlib.Path(root) / "infra/komodo/komodo.env" if root else pathlib.Path(__file__).with_name("komodo.env")
+
+
+def load_env(path: pathlib.Path | None = None) -> None:
     """KOMODO_*-Variablen aus komodo.env übernehmen, sofern sie nicht schon gesetzt sind.
     Ohne die Datei (eine neue Installation, ein Container) kommen sie aus der Umgebung des Prozesses."""
+    path = path or _env_file()
     if not path.is_file():
         return
     for key, value in re.findall(r"^(?:export\s+)?(KOMODO_\w+)=(\S*)", path.read_text(), re.M):

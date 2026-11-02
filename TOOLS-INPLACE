@@ -1,0 +1,15 @@
+# The part of TOOLS that another repository needs at the same paths, because its servers, Komodo and CI use the files in place
+# (compose-wrap.sh on every deploy, the ingressctl image build, stackctl and the graph builder in CI, the scripts that import
+# komodo_api, settings and ui). infra/tools/update-tools.sh over there takes exactly these paths from a tag. Everything else in
+# TOOLS (homelab.py, the rest of infra/homelab: the wizard, the templates, the building blocks) is used through the image:
+# `docker exec homegraf homelab.py ...`.
+infra/graph
+infra/infisical
+infra/ingress-controller
+infra/stackctl
+infra/komodo/komodo_api.py
+infra/komodo/create_stack.py
+infra/komodo/rebuild.py
+infra/komodo/run_ingressctl.py
+infra/homelab/settings.py
+infra/homelab/ui.py

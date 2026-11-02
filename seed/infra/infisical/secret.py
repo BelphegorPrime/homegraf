@@ -30,11 +30,12 @@ import urllib.parse
 import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
+CODE = HERE.parents[1]                                          # where the tools are
+ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)   # the repository they work on
 sys.path.insert(0, str(HERE))
 import stack_secrets as ss  # noqa: E402
 
-sys.path.insert(0, str(ROOT / "infra/homelab"))
+sys.path.insert(0, str(CODE / "infra/homelab"))
 import ui  # noqa: E402
 
 KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -120,7 +121,7 @@ class Folder:
 
 
 def deploy(stack: dict) -> None:
-    sys.path.insert(0, str(ROOT / "infra/komodo"))
+    sys.path.insert(0, str(CODE / "infra/komodo"))
     import komodo_api  # noqa: E402
     komodo_api.load_env()
     print(f"Deploying {stack['komodo_stack']} ...")

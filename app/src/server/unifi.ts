@@ -3,6 +3,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UnifiConfig } from "./config.js";
+import { toolPath } from "./tools.js";
 
 export type UnifiRun = (file: string, args: string[], env: Record<string, string>) => Promise<{ code: number; out: string; err: string }>;
 
@@ -47,7 +48,7 @@ export function unifiSource(opts: {
       UNIFI_URL: cfg!.url, UNIFI_USER: cfg!.user, UNIFI_PASSWORD: cfg!.password,
       ...(cfg!.verify ? { UNIFI_VERIFY: "true" } : {}), ...(cfg!.fingerprint ? { UNIFI_FINGERPRINT: cfg!.fingerprint } : {}),
     };
-    const { code, out, err } = await run(`${repoDir}/infra/graph/unifi.py`, ["--root", repoDir], env);
+    const { code, out, err } = await run(toolPath(repoDir, "infra/graph/unifi.py"), ["--root", repoDir], env);
     if (code !== 0) {
       error = (err.trim().split("\n").pop() ?? `exit ${code}`).replace(cfg!.password, "***");
       return;

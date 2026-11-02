@@ -12,6 +12,7 @@ all migrated stacks use. The periphery root is taken from an existing stack on t
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import re
 import sys
@@ -21,8 +22,9 @@ import yaml
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import komodo_api as k  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "infra/homelab"))
+CODE = pathlib.Path(__file__).resolve().parents[2]                      # where the tools are
+ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)             # the repository they work on
+sys.path.insert(0, str(CODE / "infra/homelab"))
 import settings  # noqa: E402
 
 

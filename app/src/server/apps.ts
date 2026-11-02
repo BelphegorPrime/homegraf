@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
+import { toolPath, toolRoot } from "./tools.js";
 import type { AddonInfo, HostInfo, PlanResult, PreviewResult, RemovableApp, ManagedStack, TemplateInfo } from "../shared/types.js";
 
 const ID = /^[a-z0-9][a-z0-9-]{1,40}$/;
@@ -131,17 +132,17 @@ const quote = (s: string) => (/^[\w./:@=,%-]+$/.test(s) ? s : `'${s.replaceAll("
 /** The same invocation as a shell command, with --yes, for running it by hand. */
 export const shellCommand = (args: string[]) => `./homelab.py ${[...args, "--yes"].map(quote).join(" ")}`;
 
-export type Runner = (file: string, args: string[]) => Promise<{ code: number; out: string }>;
+export type Runner = (file: string, args: string[], root?: string) => Promise<{ code: number; out: string }>;
 
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 
-export const spawnRunner: Runner = (file, args) =>
+export const spawnRunner: Runner = (file, args, root) =>
   new Promise((resolve) => {
     const child = execFile(
       "python3",
       ["-I", file, ...args],
       // A clean environment: the plan must not see credentials, and the tool loads what it needs from the repo.
-      { timeout: 60_000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1" } },
+      { timeout: 60_000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1", ...(root ? toolRoot(root) : {}) } },
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
         resolve({ code, out: `${stdout}${stderr}` });
@@ -167,7 +168,7 @@ export function planner(repoDir: string, run: Runner = spawnRunner) {
   const queue = serial();
   return (input: PlanInput): Promise<PlanResult> =>
     queue(() => withWorkFiles(input, async ({ composeFile, filesDir }) => {
-      const { code, out } = await run(`${repoDir}/homelab.py`, newAppArgs({ ...input, ...NO_VALUES }, composeFile, filesDir));
+      const { code, out } = await run(toolPath(repoDir, "homelab.py"), newAppArgs({ ...input, ...NO_VALUES }, composeFile, filesDir), repoDir);
       // The command to run by hand: the compose file and the template files are then next to it.
       const command = shellCommand(newAppArgs({ ...input, ...NO_VALUES }, input.compose ? "compose.yaml" : undefined,
         Object.keys(input.files).length ? "files" : undefined));
@@ -180,7 +181,7 @@ export function previewer(repoDir: string, run: Runner = spawnRunner) {
   const queue = serial();
   return (input: PlanInput): Promise<PreviewResult> =>
     queue(() => withWorkFiles(input, async ({ composeFile, filesDir }) => {
-      const { code, out } = await run(`${repoDir}/homelab.py`, [...newAppArgs({ ...input, ...NO_VALUES }, composeFile, filesDir), "--print-compose"]);
+      const { code, out } = await run(toolPath(repoDir, "homelab.py"), [...newAppArgs({ ...input, ...NO_VALUES }, composeFile, filesDir), "--print-compose"], repoDir);
       const text = out.replace(ANSI, "").trim();
       if (code !== 0) return { ok: false, error: text.replace(/^error: /m, "").split("\n").filter(Boolean).pop() ?? `exit ${code}` };
       try {
@@ -197,7 +198,7 @@ function cachedList<T>(repoDir: string, command: string, run: Runner, ttlMs: num
   let cached: { at: number; value: T[] } | undefined;
   return async (): Promise<T[]> => {
     if (cached && now() - cached.at < ttlMs) return cached.value;
-    const { code, out } = await run(`${repoDir}/homelab.py`, [command, "--json"]);
+    const { code, out } = await run(toolPath(repoDir, "homelab.py"), [command, "--json"], repoDir);
     if (code !== 0) throw new Error(`homelab.py ${command} failed: ${out.trim().slice(-200)}`);
     cached = { at: now(), value: JSON.parse(out) as T[] };
     return cached.value;
@@ -222,8 +223,8 @@ export function secretTool(repoDir: string, env: Record<string, string>): Secret
   return (args, stdin) =>
     new Promise((resolve) => {
       const child = execFile(
-        "python3", ["-I", `${repoDir}/homelab.py`, "secrets", ...args],
-        { timeout: 60_000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1", HOME: "/tmp", ...env } },
+        "python3", ["-I", toolPath(repoDir, "homelab.py"), "secrets", ...args],
+        { timeout: 60_000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1", HOME: "/tmp", ...toolRoot(repoDir), ...env } },
         (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, out: `${stdout}${stderr}`.replace(ANSI, "") }),
       );
       child.stdin?.end(stdin ?? "");

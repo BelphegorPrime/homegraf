@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import type { JobKind, JobSnapshot } from "../shared/types.js";
 import { newAppArgs, secretValueEnv, withWorkFiles, type PlanInput } from "./apps.js";
 import type { Config } from "./config.js";
+import { toolPath, toolRoot } from "./tools.js";
 
 /** Runs a command in cwd with env, hands its output to onData and resolves with the exit code. */
 export type Spawn = (cmd: string, args: string[], o: { cwd?: string; env: Record<string, string>; timeoutMs: number }, onData: (s: string) => void) => Promise<number>;
@@ -134,7 +135,7 @@ export function applier({ cfg, spawn: run = nodeSpawn, exists = existsSync, logi
     return job;
   }
 
-  const removeArgs = (appId: string, ...rest: string[]) => ["-I", `${c.workDir}/homelab.py`, "remove-app", "--app-id", appId, ...rest, "--yes"];
+  const removeArgs = (appId: string, ...rest: string[]) => ["-I", toolPath(c.workDir, "homelab.py"), "remove-app", "--app-id", appId, ...rest, "--yes"];
 
   return {
     /** Starts creating an app; undefined while another job runs. */
@@ -146,8 +147,8 @@ export function applier({ cfg, spawn: run = nodeSpawn, exists = existsSync, logi
           // Typed secret values travel in the environment (--secret VAR=env:NAME), the edited compose file as a temporary file.
           const typed = Object.fromEntries(Object.entries(input.secretValues).map(([k, v]) => [secretValueEnv(k), v]));
           return withWorkFiles(input, ({ composeFile, filesDir }) =>
-            run("python3", ["-I", `${cwd}/homelab.py`, ...newAppArgs(input, composeFile, filesDir), "--pr", "--yes"],
-              { cwd, env: { ...env, ...typed }, timeoutMs: 15 * 60_000 }, emit));
+            run("python3", ["-I", toolPath(cwd, "homelab.py"), ...newAppArgs(input, composeFile, filesDir), "--pr", "--yes"],
+              { cwd, env: { ...env, ...toolRoot(cwd), ...typed }, timeoutMs: 15 * 60_000 }, emit));
         },
       });
     },
@@ -155,28 +156,28 @@ export function applier({ cfg, spawn: run = nodeSpawn, exists = existsSync, logi
     startRemoval(appId: string, requestedBy?: string, onDone?: (job: Job) => void): Job | undefined {
       return begin("remove", appId, {
         by: requestedBy, typed: [], onDone,
-        tool: ({ cwd, env, emit }) => run("python3", removeArgs(appId, "--pr"), { cwd, env, timeoutMs: 20 * 60_000 }, emit),
+        tool: ({ cwd, env, emit }) => run("python3", removeArgs(appId, "--pr"), { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 20 * 60_000 }, emit),
       });
     },
     /** Second half, after the merge: NPM host, certificate and secrets. */
     finishRemoval(appId: string, server: string, requestedBy?: string, onDone?: (job: Job) => void): Job | undefined {
       return begin("finish", appId, {
         by: requestedBy, typed: [], onDone,
-        tool: ({ cwd, env, emit }) => run("python3", removeArgs(appId, "--server", server, "--finish"), { cwd, env, timeoutMs: 30 * 60_000 }, emit),
+        tool: ({ cwd, env, emit }) => run("python3", removeArgs(appId, "--server", server, "--finish"), { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 30 * 60_000 }, emit),
       });
     },
     /** Turns the HTTP to HTTPS redirect of a host on or off: the change to its manifest goes in a pull request. */
     startHostOption(domain: string, forceHttps: boolean, requestedBy?: string, onDone?: (job: Job) => void): Job | undefined {
       return begin("host", domain, {
         by: requestedBy, typed: [], onDone,
-        tool: ({ cwd, env, emit }) => run("python3", ["-I", `${c.workDir}/homelab.py`, "force-https", domain, forceHttps ? "on" : "off", "--pr", "--yes"], { cwd, env, timeoutMs: 10 * 60_000 }, emit),
+        tool: ({ cwd, env, emit }) => run("python3", ["-I", toolPath(c.workDir, "homelab.py"), "force-https", domain, forceHttps ? "on" : "off", "--pr", "--yes"], { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 10 * 60_000 }, emit),
       });
     },
     /** Redeploys a Komodo stack (pull and up); changed secrets and bind-mounted files need it. */
     startDeploy(komodoStack: string, requestedBy?: string): Job | undefined {
       return begin("deploy", komodoStack, {
         by: requestedBy, typed: [], readOnly: true,
-        tool: ({ cwd, env, emit }) => run("python3", ["-I", `${cwd}/homelab.py`, "deploy", komodoStack, "--yes"], { cwd, env, timeoutMs: 20 * 60_000 }, emit),
+        tool: ({ cwd, env, emit }) => run("python3", ["-I", toolPath(cwd, "homelab.py"), "deploy", komodoStack, "--yes"], { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 20 * 60_000 }, emit),
       });
     },
     get: (id: string) => jobs.get(id),

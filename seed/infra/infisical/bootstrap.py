@@ -27,8 +27,9 @@ import sys
 import urllib.error
 import urllib.request
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "infra/homelab"))
+CODE = pathlib.Path(__file__).resolve().parents[2]                      # where the tools are
+ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)             # the repository they work on
+sys.path.insert(0, str(CODE / "infra/homelab"))
 import settings  # noqa: E402
 
 NAME = "ingressctl"

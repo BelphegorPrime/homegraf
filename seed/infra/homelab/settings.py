@@ -13,13 +13,15 @@ homegraf itself is always part of the platform: the UI cannot remove or redeploy
 from __future__ import annotations
 
 import fnmatch
+import os
 import pathlib
 import re
 import subprocess
 
 import yaml
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+CODE = pathlib.Path(__file__).resolve().parents[2]                      # where the tools are
+ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)             # the repository they work on
 FILE = "inventory/homegraf.yaml"
 SELF = "homegraf"
 FALLBACK_DOMAIN = "homegraf.lan"

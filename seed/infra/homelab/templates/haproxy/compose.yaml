@@ -1,0 +1,12 @@
+# Template of ./homelab.py new-app --template haproxy. See templates/nginx/compose.yaml for how it works.
+x-template:
+  label: HAProxy
+  description: Load balancer and reverse proxy. Answers with a test page out of the box; haproxy.cfg has the lines for servers.
+  health_path: /
+services:
+  app:
+    image: haproxy:3.4.7-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro

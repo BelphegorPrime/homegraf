@@ -1,0 +1,4 @@
+# Ownership namespaces. One is enough until a second owner needs its own boundary.
+namespaces:
+  infrastructure:
+    paths: [stacks/, external/]   # external/: ingress for things without a stack (VMs, appliances)

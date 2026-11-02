@@ -1,0 +1,8 @@
+# The app (app/) is synced from the author's homelab repository, where its dependencies are kept current; here only what
+# lives in this repository itself.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

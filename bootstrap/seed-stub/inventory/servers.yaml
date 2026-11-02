@@ -1,0 +1,3 @@
+# The servers Komodo manages. This host is the first one.
+servers:
+  "@@SERVER@@": { address: "@@HOST_IP@@", status: verified }

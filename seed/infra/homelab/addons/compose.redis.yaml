@@ -1,0 +1,19 @@
+# Building block of ./homelab.py new-app --addon redis. No password: it is only reachable inside the stack's network.
+# __APP__ is replaced by the app ID.
+x-addon:
+  label: Redis
+  description: In-memory cache and queue; reachable from the app as redis:6379, no password (internal network only).
+  secrets: []
+  app_env:
+    REDIS_URL: redis://redis:6379
+services:
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    volumes:
+      - /srv/docker/__APP__/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

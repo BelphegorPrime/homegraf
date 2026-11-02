@@ -1,0 +1,25 @@
+# Added to infra/ingress-controller/compose.yaml for the Komodo stack ingressctl (the bootstrap creates it): the network of the
+# homegraf stack, so ingressctl reaches the proxy and Infisical by name, its credentials from their own volume (not from git), and
+# a state volume that belongs to this installation.
+services:
+  ingressctl:
+    entrypoint:
+      - /bin/sh
+      - -c
+      - . /credentials/ingressctl.env && exec ingressctl "$$@"
+      - ingressctl
+    networks: [stack]
+    volumes:
+      - credentials:/credentials:ro
+
+networks:
+  stack:
+    external: true
+    name: "@@NETWORK@@"
+
+volumes:
+  state:                       # ingressctl's own record of what it manages: one per installation, not a name shared by every stack on the host
+    name: "@@STATE_VOLUME@@"
+  credentials:
+    external: true
+    name: "@@CREDENTIALS_VOLUME@@"

@@ -1,0 +1,28 @@
+# Komodo-Stack "ingressctl" auf dem Management-Server (inventory/ingress.yaml: controller.management_server).
+# Wie alle Stacks: files_on_host im Komodo-Repo-Klon infrastructure-<server>; ../.. ist die Wurzel dieses Klons.
+# Läuft nicht dauerhaft. Deploy baut das Image aus dem ausgecheckten Stand und führt einmal `status` aus.
+# Mutierende Läufe startet Komodo per RunStackService (Procedures ingress-apply und ingress-renew).
+# Zugänge kommen aus infra/secrets/*.env im Checkout (auf Wunsch des Betreibers im Repo).
+name: ingressctl
+services:
+  ingressctl:
+    build:
+      context: .
+    image: ingressctl:local
+    restart: "no"
+    working_dir: /repo
+    entrypoint:
+      - /bin/sh
+      - -c
+      - . /repo/infra/secrets/npm.env && . /repo/infra/secrets/ingressctl.env && exec ingressctl "$$@"
+      - ingressctl
+    command: ["status"]
+    environment:
+      INGRESSCTL_STATE_DIR: /var/lib/ingressctl
+    volumes:
+      - ../..:/repo:ro                                    # Checkout (Komodo-Repo-Klon)
+      - state:/var/lib/ingressctl   # SQLite-State, Locks, Pending-Schlüssel (sichern!); Rechte aus dem Image (uid 10001)
+
+volumes:
+  state:
+    name: ingressctl-state

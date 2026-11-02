@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ingressctl"
+version = "0.1.0"
+description = "Deklarative HTTPS-Zugänge: ingress.yaml -> Nginx Proxy Manager + Infisical private CA"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML==6.0.3",
+  "requests==2.34.2",
+  "cryptography==50.0.2",
+  "jsonschema==4.26.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0", "vermin==1.9.2"]
+
+[project.scripts]
+ingressctl = "ingressctl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ingressctl = ["schema/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

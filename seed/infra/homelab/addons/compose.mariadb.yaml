@@ -1,0 +1,23 @@
+# Building block of ./homelab.py new-app --addon mariadb. __APP__ is replaced by the app ID.
+x-addon:
+  label: MariaDB
+  description: MySQL-compatible database; reachable from the app as mariadb:3306 (database and user "app").
+  secrets: [MARIADB_ROOT_PASSWORD, MARIADB_PASSWORD]
+  app_env:
+    MARIADB_URL: mysql://app:${MARIADB_PASSWORD}@mariadb:3306/app
+services:
+  mariadb:
+    image: mariadb:12.3
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: app
+      MARIADB_USER: app
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+    volumes:
+      - /srv/docker/__APP__/mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

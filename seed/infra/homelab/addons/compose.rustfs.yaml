@@ -1,0 +1,31 @@
+# Building block of ./homelab.py new-app --addon rustfs: S3-compatible object storage (Apache-2.0, one container, S3 API
+# and web console). The app reaches the S3 API as rustfs:9000 inside the stack; the console is published on a free LAN
+# port and takes the access key and secret key as login. The image runs as uid 10001 and cannot write into the
+# root-owned bind mount, hence user 0:0. For a lighter store with replication, Garage is the alternative (it needs a
+# config file and a layout step, so it is not a one-click block). __APP__ is the app ID, __PORT__ the console's LAN port.
+x-addon:
+  label: RustFS (S3 storage)
+  url_path: /rustfs/console/
+  description: S3-compatible object storage; the app reaches it as rustfs:9000 (access and secret key generated), the web console (log in with the access key as account and the secret key as key) is on the LAN port shown after choosing it.
+  secrets: [RUSTFS_ACCESS_KEY, RUSTFS_SECRET_KEY]
+  app_env:
+    S3_ENDPOINT: http://rustfs:9000
+    S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+    S3_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+services:
+  rustfs:
+    image: rustfs/rustfs:1.0.4
+    user: "0:0"
+    restart: unless-stopped
+    ports:
+      - "__PORT__:9001"
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+    volumes:
+      - /srv/docker/__APP__/rustfs:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

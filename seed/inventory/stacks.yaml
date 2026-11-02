@@ -1,0 +1,3 @@
+# One entry per deployable compose unit (= one Komodo stack). `./homelab.py new-app` appends to this list; so does the New app
+# wizard of homegraf.
+stacks:

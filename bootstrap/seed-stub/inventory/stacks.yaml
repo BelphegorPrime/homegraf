@@ -1,0 +1,2 @@
+# One entry per stack (compose project) Komodo deploys. New apps are added here by the homegraf wizard.
+stacks: []

@@ -1,0 +1,6 @@
+# Settings of the homelab tools: what is specific to this installation (filled in by the bootstrap).
+domain: "@@DOMAIN@@"
+repository: "@@REPOSITORY@@"
+infisical_url: "@@INFISICAL_URL@@"
+platform_stacks: []
+platform: {}

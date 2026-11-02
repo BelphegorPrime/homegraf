@@ -1,0 +1,19 @@
+# Building block of ./homelab.py new-app --addon valkey. Redis-compatible, no password: it is only reachable inside the
+# stack's network. __APP__ is replaced by the app ID.
+x-addon:
+  label: Valkey
+  description: Redis-compatible in-memory cache and queue (open-source fork); reachable from the app as valkey:6379, no password (internal network only).
+  secrets: []
+  app_env:
+    VALKEY_URL: redis://valkey:6379
+services:
+  valkey:
+    image: valkey/valkey:9-alpine
+    restart: unless-stopped
+    volumes:
+      - /srv/docker/__APP__/valkey:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

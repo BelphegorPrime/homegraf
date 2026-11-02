@@ -1,0 +1,17 @@
+# Settings of the tools (seed/infra/homelab/settings.py): what is specific to this installation.
+domain: "@@DOMAIN@@"                 # apps are reachable at <app>.<domain>
+repository: "@@REPOSITORY@@"       # this repository on the forge (owner/name); the Komodo repo resources clone it
+infisical_url: "@@INFISICAL_URL@@"
+repos_dir: "@@REPOS_DIR@@"           # where Komodo's agent keeps its clones on the host: the run directory of every stack
+# Stacks the UI never removes, redeploys or manages secrets of (homegraf itself is always one). The services of the
+# platform run from the stack's own compose file, not as Komodo stacks, so there is nothing to list here.
+platform_stacks: []
+platform_prefixes: []
+# The platform around your stacks, as the map shows it. `stack` is the Komodo stack that runs it; empty = not a Komodo stack.
+platform:
+  npm: {label: Nginx Proxy Manager, stack: "", kind: proxy}
+  komodo: {label: Komodo, stack: "", kind: deploy}
+  forgejo: {label: Forgejo, stack: "", kind: git}
+  infisical: {label: Infisical, stack: "", kind: secrets}
+  ca: {label: Private CA, stack: "", kind: certificates}
+  homegraf: {label: homegraf, stack: "", kind: map}

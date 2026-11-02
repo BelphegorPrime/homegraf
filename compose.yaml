@@ -1,0 +1,620 @@
+name: homegraf
+
+# The all-in-one homegraf stack, phase 1: every service the stack stands on, running on one Docker host.
+#   ./setup.sh                  writes .env (domain, admin, random secrets)
+#   docker compose up -d        starts everything; docs/stack.md says what each part is and what is still manual
+#
+# Reached by port first (see .env); the proxy hosts <name>.${DOMAIN} are added once phase 2 (the bootstrap) exists, or by hand
+# in Nginx Proxy Manager. The names must reach this host: DNS_MODE in .env says how (sslip.io, AdGuard Home from the optional
+# profile "dns" below, or your own DNS). Pinned images: Renovate or Dependabot keep them current.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-bootstrap-env: &bootstrap-env
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?run ./setup.sh}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?run ./setup.sh}
+      FORGEJO_ADMIN_USER: ${FORGEJO_ADMIN_USER:-owner}
+      DOMAIN: ${DOMAIN:-homegraf.lan}
+      HOST_IP: ${HOST_IP:?run ./setup.sh}
+      DNS_MODE: ${DNS_MODE:-external}
+      DATA_DIR: ${DATA_DIR:?run ./setup.sh}
+      KOMODO_WEBHOOK_SECRET: ${KOMODO_WEBHOOK_SECRET:?run ./setup.sh}
+      BIND_ADDRESS: ${BIND_ADDRESS:-0.0.0.0}
+      PORT_HTTP: ${PORT_HTTP:-80}
+      PORT_NPM_ADMIN: ${PORT_NPM_ADMIN:-81}
+      PORT_FORGEJO: ${PORT_FORGEJO:-3000}
+      PORT_KOMODO: ${PORT_KOMODO:-9120}
+      PORT_INFISICAL: ${PORT_INFISICAL:-8079}
+      PORT_HOMEGRAF: ${PORT_HOMEGRAF:-8097}
+      PORT_DNS_ADMIN: ${PORT_DNS_ADMIN:-8053}
+      COMPOSE_NETWORK: ${PROJECT_PREFIX:-homegraf}-net
+      CREDENTIALS_VOLUME: ${PROJECT_PREFIX:-homegraf}-ingressctl-credentials
+      STATE_VOLUME: ${PROJECT_PREFIX:-homegraf}-ingressctl-state
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
+
+# One network with a fixed name: ingressctl (a Komodo stack, so not part of this file) joins it to reach the proxy and Infisical by name.
+networks:
+  default:
+    name: ${PROJECT_PREFIX:-homegraf}-net
+
+services:
+  # --- homegraf: the map and the wizard ---------------------------------------------------------------------------------
+  homegraf:
+    image: ${HOMEGRAF_IMAGE:-ghcr.io/belphegorprime/homegraf:main}
+    container_name: ${PROJECT_PREFIX:-homegraf}-homegraf
+    restart: unless-stopped
+    user: node
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_HOMEGRAF:-8097}:8080
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      # Sign-in: the password of the built-in user "admin"; more users are added in the UI.
+      HOMEGRAF_PASSWORD: ${ADMIN_PASSWORD:?run ./setup.sh}
+      # What the bootstrap creates (the Komodo API key, the Forgejo token, the Infisical identity ...) it writes to a file that homegraf
+      # reads at start; whatever is set below wins over the file.
+      HOMEGRAF_ENV_FILE: /state/homegraf.env
+      # Live status from Komodo.
+      KOMODO_URL: http://komodo-core:9120
+      KOMODO_API_KEY: ${KOMODO_API_KEY:-}
+      KOMODO_API_SECRET: ${KOMODO_API_SECRET:-}
+      # The write actions (New app, Remove, Redeploy, Secrets) need these too.
+      HOMEGRAF_CLONE_URL: ${HOMEGRAF_CLONE_URL:-}
+      FORGEJO_URL: http://forgejo:3000
+      FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+      INFISICAL_URL: http://infisical:8080
+      INFISICAL_BOOTSTRAP_CLIENT_ID: ${INFISICAL_CLIENT_ID:-}
+      INFISICAL_BOOTSTRAP_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET:-}
+      # Optional hardware layer: set these to read a UniFi controller; without them there is simply no Network tab.
+      UNIFI_URL: ${UNIFI_URL:-}
+      UNIFI_USER: ${UNIFI_USER:-}
+      UNIFI_PASSWORD: ${UNIFI_PASSWORD:-}
+      UNIFI_FINGERPRINT: ${UNIFI_FINGERPRINT:-}
+    volumes:
+      # The repository your homelab is defined in (compose files, inventory, the tools): Komodo's clone of it, which a push to main
+      # (the webhook, the procedure update-all) keeps current. REPO_DIR points elsewhere, e.g. at a checkout of your own.
+      - ${REPO_DIR:-${DATA_DIR:?run ./setup.sh}/periphery/repos/infrastructure}:/repo:ro
+      - homegraf-data:/data
+      - homegraf-work:/work
+      - bootstrap-state:/state:ro
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *logging
+
+  # --- Forgejo: the repository of your homelab; every change from homegraf is a pull request here ----------------------
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:17.0.1
+    container_name: ${PROJECT_PREFIX:-homegraf}-forgejo
+    restart: unless-stopped
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      TZ: ${TZ:-Etc/UTC}
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: forgejo-db:5432
+      FORGEJO__database__NAME: forgejo
+      FORGEJO__database__USER: forgejo
+      FORGEJO__database__PASSWD: ${FORGEJO_DB_PASSWORD:?run ./setup.sh}
+      FORGEJO__server__DOMAIN: git.${DOMAIN:-homegraf.lan}
+      FORGEJO__server__ROOT_URL: http://git.${DOMAIN:-homegraf.lan}/
+      FORGEJO__server__SSH_DOMAIN: git.${DOMAIN:-homegraf.lan}
+      FORGEJO__server__SSH_PORT: ${PORT_FORGEJO_SSH:-2222}
+      # No install wizard: the service forgejo-admin below creates the administrator.
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__security__SECRET_KEY: ${FORGEJO_SECRET_KEY:?run ./setup.sh}
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      # The webhook to Komodo (push -> update-all) goes to a container in the same network, which Forgejo refuses by default.
+      FORGEJO__webhook__ALLOWED_HOST_LIST: private
+    volumes:
+      - forgejo-data:/data
+    ports:
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_FORGEJO:-3000}:3000
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_FORGEJO_SSH:-2222}:22
+    depends_on:
+      forgejo-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/healthz >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    logging: *logging
+
+  forgejo-db:
+    image: postgres:17
+    container_name: ${PROJECT_PREFIX:-homegraf}-forgejo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: forgejo
+      POSTGRES_PASSWORD: ${FORGEJO_DB_PASSWORD:?run ./setup.sh}
+      POSTGRES_DB: forgejo
+    volumes:
+      - forgejo-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgejo -d forgejo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  # --- Komodo: deploys the stacks of that repository to your servers and reports their state ---------------------------
+  komodo-core:
+    image: ghcr.io/moghtech/komodo-core:2.3.4
+    container_name: ${PROJECT_PREFIX:-homegraf}-komodo-core
+    init: true
+    restart: unless-stopped
+    depends_on:
+      komodo-mongo:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      KOMODO_DATABASE_ADDRESS: komodo-mongo:27017
+      KOMODO_DATABASE_USERNAME: komodo
+      KOMODO_DATABASE_PASSWORD: ${KOMODO_DB_PASSWORD:?run ./setup.sh}
+      KOMODO_HOST: http://komodo.${DOMAIN:-homegraf.lan}
+      KOMODO_TITLE: homegraf
+      KOMODO_PASSKEY: ${KOMODO_PASSKEY:?run ./setup.sh}
+      KOMODO_JWT_SECRET: ${KOMODO_JWT_SECRET:?run ./setup.sh}
+      KOMODO_WEBHOOK_SECRET: ${KOMODO_WEBHOOK_SECRET:?run ./setup.sh}
+      # The agent below is the first server.
+      KOMODO_FIRST_SERVER: https://komodo-periphery:8120
+      KOMODO_LOCAL_AUTH: "true"
+      KOMODO_INIT_ADMIN_USERNAME: ${ADMIN_USER:-admin}
+      KOMODO_INIT_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?run ./setup.sh}
+      KOMODO_DISABLE_USER_REGISTRATION: "true"
+      KOMODO_MONITORING_INTERVAL: 15-sec
+    ports:
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_KOMODO:-9120}:9120
+    volumes:
+      - komodo-keys:/config/keys
+      - komodo-repos:/repo-cache
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9120/version >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    labels:
+      komodo.skip: ""
+    logging: *logging
+
+  komodo-mongo:
+    image: mongo:9.0.4
+    container_name: ${PROJECT_PREFIX:-homegraf}-komodo-mongo
+    restart: unless-stopped
+    command: --quiet --wiredTigerCacheSizeGB 0.25
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: komodo
+      MONGO_INITDB_ROOT_PASSWORD: ${KOMODO_DB_PASSWORD:?run ./setup.sh}
+    volumes:
+      - komodo-mongo-db:/data/db
+      - komodo-mongo-config:/data/configdb
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u komodo -p \"$$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand(\"ping\").ok' | grep -q 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    labels:
+      komodo.skip: ""
+    logging: *logging
+
+  # The agent that runs docker compose on this host. It needs the Docker socket (root on this host), the same as Komodo anywhere.
+  # Its root directory must be the same path inside and outside the container, hence the absolute DATA_DIR from setup.sh.
+  komodo-periphery:
+    image: ghcr.io/moghtech/komodo-periphery:2.3.4
+    container_name: ${PROJECT_PREFIX:-homegraf}-komodo-periphery
+    restart: unless-stopped
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      PERIPHERY_ROOT_DIRECTORY: ${DATA_DIR:?run ./setup.sh}/periphery
+      PERIPHERY_PASSKEYS: ${KOMODO_PASSKEY:?run ./setup.sh}
+      PERIPHERY_SSL_ENABLED: "true"
+      PERIPHERY_DISABLE_TERMINALS: "false"
+      PERIPHERY_INCLUDE_DISK_MOUNTS: /etc/hostname
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/proc
+      - ${DATA_DIR:?run ./setup.sh}/periphery:${DATA_DIR}/periphery
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSk https://127.0.0.1:8120/version >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+    labels:
+      komodo.skip: ""
+    logging: *logging
+
+  # --- Infisical: the secrets of the stacks (later also the certificate authority of your LAN) --------------------------
+  infisical:
+    image: infisical/infisical:v0.167.4
+    container_name: ${PROJECT_PREFIX:-homegraf}-infisical
+    restart: unless-stopped
+    depends_on:
+      infisical-db:
+        condition: service_healthy
+      infisical-redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-Etc/UTC}
+      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY:?run ./setup.sh}
+      AUTH_SECRET: ${INFISICAL_AUTH_SECRET:?run ./setup.sh}
+      SITE_URL: http://secrets.${DOMAIN:-homegraf.lan}
+      DB_CONNECTION_URI: postgres://infisical:${INFISICAL_DB_PASSWORD:?run ./setup.sh}@infisical-db:5432/infisical
+      REDIS_URL: redis://infisical-redis:6379
+      TELEMETRY_ENABLED: "false"
+    ports:
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_INFISICAL:-8079}:8080
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/status >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    logging: *logging
+
+  infisical-db:
+    image: postgres:18
+    container_name: ${PROJECT_PREFIX:-homegraf}-infisical-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD: ${INFISICAL_DB_PASSWORD:?run ./setup.sh}
+      POSTGRES_DB: infisical
+    volumes:
+      - infisical-db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infisical -d infisical"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  infisical-redis:
+    image: redis:8.10
+    container_name: ${PROJECT_PREFIX:-homegraf}-infisical-redis
+    restart: unless-stopped
+    volumes:
+      - infisical-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *logging
+
+  # --- Nginx Proxy Manager: https://<app>.<your domain> to the containers ---------------------------------------------
+  proxy:
+    image: docker.io/jc21/nginx-proxy-manager:2.16.0
+    container_name: ${PROJECT_PREFIX:-homegraf}-proxy
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_HTTP:-80}:80
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_HTTPS:-443}:443
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_NPM_ADMIN:-81}:81
+    volumes:
+      - proxy-data:/data
+      - proxy-letsencrypt:/etc/letsencrypt
+    healthcheck:
+      test: ["CMD", "/bin/check-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *logging
+
+  # --- AdGuard Home: DNS for the domain (optional: only with DNS_MODE=adguard, which setup.sh turns on as COMPOSE_PROFILES=dns) ---
+  # The services are reached by name and the proxy routes by that name, so the names have to reach this host: a wildcard rewrite
+  # *.${DOMAIN} -> ${HOST_IP} makes every future app reachable without another DNS step. First start shows AdGuard's setup page on
+  # PORT_DNS_SETUP (phase 2 will do that through the API); afterwards the admin UI is on PORT_DNS_ADMIN.
+  # DNS is bound to DNS_BIND (the LAN address) only: that avoids the clash with systemd-resolved, which holds 127.0.0.53:53.
+  dns:
+    image: docker.io/adguard/adguardhome:v0.108.0-b.82
+    container_name: ${PROJECT_PREFIX:-homegraf}-dns
+    profiles: [dns]
+    restart: unless-stopped
+    ports:
+      - ${DNS_BIND:-0.0.0.0}:${PORT_DNS:-53}:53/tcp
+      - ${DNS_BIND:-0.0.0.0}:${PORT_DNS:-53}:53/udp
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_DNS_SETUP:-3300}:3000/tcp
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_DNS_ADMIN:-8053}:80/tcp
+    volumes:
+      - dns-work:/opt/adguardhome/work
+      - dns-conf:/opt/adguardhome/conf
+    healthcheck:
+      # Before the setup page is done AdGuard serves it on 3000, afterwards the admin UI on 80.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/ || wget -q --spider http://127.0.0.1:3000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *logging
+
+  # --- the bootstrap: configures the services against each other, once; safe to run again --------------------------------
+  # Forgejo has no setting for its first administrator, only a command. This one-shot runs it in a container of its own that shares
+  # Forgejo's data volume, so nothing needs the Docker socket. The name "admin" is not allowed by Forgejo: setup.sh picks FORGEJO_ADMIN_USER.
+  forgejo-admin:
+    image: codeberg.org/forgejo/forgejo:17.0.1
+    container_name: ${PROJECT_PREFIX:-homegraf}-forgejo-admin
+    restart: "no"
+    user: "1000:1000"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if forgejo admin user list --admin | awk 'NR > 1 {print $$2}' | grep -qx "$$FORGEJO_ADMIN_USER"; then
+          echo "Forgejo administrator $$FORGEJO_ADMIN_USER exists"
+        else
+          forgejo admin user create --admin --username "$$FORGEJO_ADMIN_USER" --email "$$ADMIN_EMAIL" --password "$$ADMIN_PASSWORD" --must-change-password=false
+        fi
+        # The Actions runner (profiles runner, renovate) is pre-registered with a secret both sides know: no token to fetch.
+        case ",$$COMPOSE_PROFILES," in *,runner,* | *,renovate,*)
+          forgejo forgejo-cli actions register --secret "$$RUNNER_SECRET" --name homegraf-runner --labels docker:docker://node:22-bookworm ;;
+        esac
+    environment:
+      GITEA_CUSTOM: /data/gitea
+      GITEA_WORK_DIR: /data
+      HOME: /data/git
+      FORGEJO_ADMIN_USER: ${FORGEJO_ADMIN_USER:-owner}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?run ./setup.sh}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?run ./setup.sh}
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
+      RUNNER_SECRET: ${RUNNER_SECRET:-}
+    volumes:
+      - forgejo-data:/data
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    logging: *logging
+
+  # --- optional: the Actions runner (profile "runner"; the profile "renovate" brings it along) ---------------------------
+  # Jobs run in a Docker daemon of their own (docker-in-docker, privileged), NOT on the host's: a workflow cannot reach the host's
+  # Docker socket or its containers. The price is a daemon that needs --privileged and a slower start of every job.
+  runner-dind:
+    image: docker:29.9.2-dind
+    container_name: ${PROJECT_PREFIX:-homegraf}-runner-dind
+    profiles: [runner, renovate]
+    restart: unless-stopped
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock"]
+    volumes:
+      - runner-dind:/var/lib/docker
+    healthcheck:
+      test: ["CMD-SHELL", "docker -H tcp://127.0.0.1:2375 info >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+    logging: *logging
+
+  runner:
+    image: code.forgejo.org/forgejo/runner:12.13.2
+    container_name: ${PROJECT_PREFIX:-homegraf}-runner
+    profiles: [runner, renovate]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cd /data
+        # The address of Forgejo is the one of this HOST, not forgejo:3000: the job containers run in the Docker daemon next door, which does
+        # not see this network, and they use the runner's address for everything they fetch (so Forgejo must not be bound to loopback).
+        [ -f .runner ] || forgejo-runner create-runner-file --instance "http://$$HOST_IP:$$PORT_FORGEJO" --secret "$$RUNNER_SECRET" --name homegraf-runner
+        [ -f config.yml ] || {
+          forgejo-runner generate-config > config.yml
+          sed -i 's|^  labels: \[\]|  labels: ["docker:docker://node:22-bookworm"]|' config.yml
+        }
+        exec forgejo-runner daemon -c config.yml
+    environment:
+      DOCKER_HOST: tcp://runner-dind:2375
+      RUNNER_SECRET: ${RUNNER_SECRET:-}
+      HOST_IP: ${HOST_IP:?run ./setup.sh}
+      PORT_FORGEJO: ${PORT_FORGEJO:-3000}
+    volumes:
+      - runner-data:/data
+    depends_on:
+      runner-dind:
+        condition: service_healthy
+      forgejo:
+        condition: service_healthy
+      forgejo-admin:
+        condition: service_completed_successfully
+    logging: *logging
+
+  # --- optional: Uptime Kuma (profile "status"): is everything up, and a page to show it ------------------------------------------
+  # The bootstrap adds the proxy host status.<domain>; the first visit asks for an account (Kuma keeps its own users).
+  kuma:
+    image: louislam/uptime-kuma:2.5.9
+    container_name: ${PROJECT_PREFIX:-homegraf}-kuma
+    profiles: [status]
+    restart: unless-stopped
+    ports:
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_KUMA:-3001}:3001
+    volumes:
+      - kuma-data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "node extra/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging: *logging
+
+  # --- optional: backups (profile "backup"): a dump of every database once a day, seven days kept ----------------------------
+  # Into ${DATA_DIR}/backups, on this host: copy them somewhere else too, a backup on the disk that fails is none. What is not in a
+  # dump: the volumes with files (the repositories' git data in forgejo-data, Komodo's keys, the proxy's data); the databases carry the
+  # accounts, the issues and pull requests, the secrets and the stack definitions. BACKUP_INTERVAL (seconds) and BACKUP_KEEP_DAYS tune it.
+  backup:
+    image: postgres:18
+    container_name: ${PROJECT_PREFIX:-homegraf}-backup
+    profiles: [backup]
+    restart: unless-stopped
+    depends_on:
+      forgejo-db:
+        condition: service_healthy
+      infisical-db:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        dump() {      # name, command that writes the dump to stdout; a failed dump leaves no half file
+          local file="/backups/$$1-$$(date -u +%Y%m%dT%H%M%SZ).gz"
+          if "$${@:2}" | gzip > "$$file.part" && [ "$${PIPESTATUS[0]}" = 0 ]; then mv "$$file.part" "$$file"; echo "backup: $$file"
+          else rm -f "$$file.part"; echo "backup: $$1 FAILED" >&2; fi
+        }
+        while true; do
+          PGPASSWORD="$$FORGEJO_DB_PASSWORD" dump forgejo pg_dump -h forgejo-db -U forgejo forgejo
+          PGPASSWORD="$$INFISICAL_DB_PASSWORD" dump infisical pg_dump -h infisical-db -U infisical infisical
+          find /backups -name '*.gz' -mtime +"$${BACKUP_KEEP_DAYS:-7}" -delete
+          sleep "$${BACKUP_INTERVAL:-86400}"
+        done
+    environment:
+      FORGEJO_DB_PASSWORD: ${FORGEJO_DB_PASSWORD:?run ./setup.sh}
+      INFISICAL_DB_PASSWORD: ${INFISICAL_DB_PASSWORD:?run ./setup.sh}
+      BACKUP_INTERVAL: ${BACKUP_INTERVAL:-86400}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+    volumes:
+      - ${DATA_DIR:?run ./setup.sh}/backups:/backups
+    logging: *logging
+
+  # The same for Komodo's MongoDB (its own image: the Postgres image has no mongodump).
+  backup-komodo:
+    image: mongo:9.0.4
+    container_name: ${PROJECT_PREFIX:-homegraf}-backup-komodo
+    profiles: [backup]
+    restart: unless-stopped
+    depends_on:
+      komodo-mongo:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        while true; do
+          file="/backups/komodo-$$(date -u +%Y%m%dT%H%M%SZ).archive.gz"
+          if mongodump --quiet --uri "mongodb://komodo:$$KOMODO_DB_PASSWORD@komodo-mongo:27017/?authSource=admin" --archive --gzip > "$$file.part"; then
+            mv "$$file.part" "$$file"; echo "backup: $$file"
+          else rm -f "$$file.part"; echo "backup: komodo FAILED" >&2; fi
+          find /backups -name 'komodo-*.archive.gz' -mtime +"$${BACKUP_KEEP_DAYS:-7}" -delete
+          sleep "$${BACKUP_INTERVAL:-86400}"
+        done
+    environment:
+      KOMODO_DB_PASSWORD: ${KOMODO_DB_PASSWORD:?run ./setup.sh}
+      BACKUP_INTERVAL: ${BACKUP_INTERVAL:-86400}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+    volumes:
+      - ${DATA_DIR:?run ./setup.sh}/backups:/backups
+    logging: *logging
+
+  # A Python program with only the standard library (bootstrap/): Forgejo token, repository and its first content; the Komodo API key,
+  # repository resource and the procedure update-all; the proxy hosts; the Infisical administrator and the machine identity homegraf
+  # uses; AdGuard Home's setup and the wildcard rewrite. It writes what homegraf needs to the state volume, and homegraf starts after it.
+  # What it did and what it creates: docs/stack.md.
+  # EXTENSION POINT: the optional services as compose profiles (Forgejo runner, Renovate, Komodo backup, Uptime Kuma) hang in here.
+  bootstrap:
+    image: ${BOOTSTRAP_IMAGE:-ghcr.io/belphegorprime/homegraf-bootstrap:main}
+    container_name: ${PROJECT_PREFIX:-homegraf}-bootstrap
+    restart: "no"
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment: *bootstrap-env
+    volumes:
+      - bootstrap-state:/state
+    depends_on:
+      forgejo-admin:
+        condition: service_completed_successfully
+      komodo-core:
+        condition: service_healthy
+      komodo-periphery:
+        condition: service_healthy
+      infisical:
+        condition: service_healthy
+      proxy:
+        condition: service_healthy
+      dns:
+        condition: service_healthy
+        required: false
+    logging: *logging
+
+  # The private certificate authority and ingressctl, after everything else is up: ingressctl checks the upstream of every proxy host, and
+  # homegraf starts last. A failure here is a warning (the hosts stay on plain HTTP) and never stops the stack; rerun it with
+  # `docker compose up -d certificates`. What it does: docs/stack.md.
+  certificates:
+    image: ${BOOTSTRAP_IMAGE:-ghcr.io/belphegorprime/homegraf-bootstrap:main}
+    container_name: ${PROJECT_PREFIX:-homegraf}-certificates
+    restart: "no"
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["certificates"]
+    environment: *bootstrap-env
+    volumes:
+      - bootstrap-state:/state
+      - ingressctl-credentials:/credentials     # what ingressctl signs in with; the stack ingressctl mounts it read-only
+      - ingressctl-state:/ingressctl-state:ro   # not used here: it makes this project the owner of the volume, so `down -v` removes it
+    depends_on:
+      homegraf:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  bootstrap-state:
+  kuma-data:
+  runner-dind:
+  runner-data:
+  ingressctl-credentials:
+    name: ${PROJECT_PREFIX:-homegraf}-ingressctl-credentials
+  # ingressctl's own state: used by the Komodo stack ingressctl, declared here so that `docker compose down -v` removes it with the rest
+  # (a new installation must not inherit the hosts and certificates of the old one)
+  ingressctl-state:
+    name: ${PROJECT_PREFIX:-homegraf}-ingressctl-state
+  homegraf-data:
+  homegraf-work:
+  forgejo-data:
+  forgejo-db:
+  komodo-keys:
+  komodo-repos:
+  komodo-mongo-db:
+  komodo-mongo-config:
+  infisical-db:
+  infisical-redis:
+  proxy-data:
+  proxy-letsencrypt:
+  dns-work:
+  dns-conf:

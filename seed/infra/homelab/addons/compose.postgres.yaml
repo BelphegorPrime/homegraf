@@ -1,0 +1,23 @@
+# Building block of ./homelab.py new-app --addon postgres. Renovate keeps the image current (major upgrades need
+# a dump/restore first, see docs/plans/04-db-major-upgrades.md). __APP__ is replaced by the app ID.
+x-addon:
+  label: PostgreSQL
+  description: Relational database; reachable from the app as postgres:5432 (database and user "app").
+  secrets: [POSTGRES_PASSWORD]
+  app_env:
+    POSTGRES_URL: postgresql://app:${POSTGRES_PASSWORD}@postgres:5432/app
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - /srv/docker/__APP__/postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

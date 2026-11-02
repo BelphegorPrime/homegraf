@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git.example.org/owner/infrastructure/ingress.v1.schema.json",
+  "title": "ingress.yaml (homelab.ingress/v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "namespace", "services"],
+  "properties": {
+    "apiVersion": {"const": "homelab.ingress/v1"},
+    "namespace": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+    "services": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "stack", "lifecycle", "proxy", "certificate", "healthcheck"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+          "stack": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+          "lifecycle": {"enum": ["present", "absent"]},
+          "npm_instance": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+          "proxy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["domains", "upstream"],
+            "properties": {
+              "domains": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string", "minLength": 1, "maxLength": 253}},
+              "upstream": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["scheme", "port"],
+                "properties": {
+                  "scheme": {"enum": ["http", "https"]},
+                  "server": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+                  "host": {"type": "string", "pattern": "^[A-Za-z0-9.-]{1,253}$"},
+                  "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+                },
+                "oneOf": [{"required": ["server"]}, {"required": ["host"]}]
+              },
+              "websockets": {"type": "boolean", "default": false},
+              "force_https": {"type": "boolean", "default": true}
+            }
+          },
+          "certificate": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["issuer_ref"],
+            "properties": {
+              "issuer_ref": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+              "validity_days": {"type": "integer", "minimum": 1, "maximum": 398, "default": 90},
+              "renew_before_days": {"type": "integer", "minimum": 1, "maximum": 180, "default": 30}
+            }
+          },
+          "healthcheck": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "accepted_statuses"],
+            "properties": {
+              "path": {"type": "string", "pattern": "^/[^\\s]*$", "maxLength": 512},
+              "accepted_statuses": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 100, "maximum": 599}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

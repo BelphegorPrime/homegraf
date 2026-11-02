@@ -1,0 +1,24 @@
+# Building block of ./homelab.py new-app --addon redisinsight: a web UI for the Redis or Valkey block. It has no login of
+# its own and Redis has no password here: whoever can reach its LAN port has full access to the cache (a decision of the
+# operator, who owns the LAN). The connection is added once in the UI; it is not kept when the container is recreated.
+# __DB__ is the redis or valkey block, __PORT__ the LAN port.
+x-addon:
+  label: RedisInsight
+  description: Web UI for Redis or Valkey. No login of its own - anyone on the LAN who reaches its port has full access to the cache. Add the connection once in the UI (host redis or valkey, port 6379).
+  ui: true
+  requires_any: [redis, valkey]
+  secrets: []
+services:
+  redisinsight:
+    image: redis/redisinsight:3.8.0
+    restart: unless-stopped
+    ports:
+      - "__PORT__:5540"
+    depends_on:
+      __DB__:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5540/api/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

@@ -1,0 +1,24 @@
+# Building block of ./homelab.py new-app --addon meilisearch (linkwarden runs the same pairing). __APP__ is replaced by
+# the app ID.
+x-addon:
+  label: Meilisearch
+  description: Search engine; reachable from the app as meilisearch:7700 with a generated master key.
+  secrets: [MEILI_MASTER_KEY]
+  app_env:
+    MEILI_HOST: http://meilisearch:7700
+    MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.12.8
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+    volumes:
+      - /srv/docker/__APP__/meilisearch:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

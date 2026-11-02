@@ -1,0 +1,15 @@
+# Template of ./homelab.py new-app --template nginx. The service "app" gives the form its defaults (image, port,
+# volumes); the other files of this folder are copied to stacks/<id>/ when the compose file mounts them from the repo
+# (./default.conf, ./html). Renovate keeps the image current.
+x-template:
+  label: nginx
+  description: Web server. Serves the static site in html/ out of the box; default.conf turns it into a reverse proxy.
+  health_path: /
+services:
+  app:
+    image: nginx:1.31.8-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./html:/usr/share/nginx/html:ro

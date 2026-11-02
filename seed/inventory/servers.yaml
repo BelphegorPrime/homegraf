@@ -1,0 +1,4 @@
+# The Docker hosts Komodo manages. Names = the Komodo server names; address = reachable from the proxy (used for upstreams).
+# A single host to start with; another host gets its own entry here once its Periphery agent is connected to Komodo.
+servers:
+  "@@SERVER@@": { address: "@@HOST_IP@@", status: verified }

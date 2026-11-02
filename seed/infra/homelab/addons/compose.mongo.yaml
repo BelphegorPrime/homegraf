@@ -1,0 +1,22 @@
+# Building block of ./homelab.py new-app --addon mongo. Every release raises the featureCompatibilityVersion, so
+# upgrades go through infra/db-upgrade/mongo_major.py, see docs/plans/04-db-major-upgrades.md. __APP__ is replaced by the app ID.
+x-addon:
+  label: MongoDB
+  description: Document database; reachable from the app as mongo:27017 (user "app", authentication database "admin").
+  secrets: [MONGO_PASSWORD]
+  app_env:
+    MONGO_URL: mongodb://app:${MONGO_PASSWORD}@mongo:27017
+services:
+  mongo:
+    image: mongo:9.0.4
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: app
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+    volumes:
+      - /srv/docker/__APP__/mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

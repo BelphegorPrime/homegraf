@@ -1,0 +1,26 @@
+# Ingress control (ingressctl): the proxy, the certificate authority and where ingressctl runs. No credentials in this file.
+npm_instances:
+  main:
+    server: "@@SERVER@@"
+    api_url: "http://proxy:81/api"          # the proxy's admin API, reachable from the management server only
+    tls_address: "proxy"           # port 443 of the proxy as ingressctl reaches it (same network), for the check after a change
+    tls_port: 443
+
+issuers:
+  homelab-private-ca:
+    type: infisical
+    api_url: "@@INFISICAL_URL@@"
+    project_id: null           # Infisical "Certificate Manager" project
+    profile_id: null           # certificate profile (CA + policy)
+    application_id: null   # application with API enrollment for that profile
+    max_validity_days: 90
+    ca_bundle: inventory/homegraf-root-ca.pem  # root/intermediate chain to verify with (no key)
+    allowed_domains: ["*.@@DOMAIN@@"]         # must match the policy in Infisical
+
+controller:
+  default_npm_instance: main
+  management_server: "@@SERVER@@"          # the Komodo server ingressctl runs on (single writer)
+  management_repo_dir: "@@REPOS_DIR@@/infrastructure"   # Komodo's clone of this repository on that server
+  komodo_git_account: "@@ADMIN_USER@@"
+  allowed_repos: ["@@REPOSITORY@@"]
+  allowed_branches: [main]

@@ -1,0 +1,56 @@
+# The services of the homegraf stack itself, as proxy hosts: ingressctl keeps their certificates current (renewal every day).
+# The bootstrap created the hosts first and let ingressctl adopt them. force_https stays false until your devices trust the root
+# certificate (inventory/homegraf-root-ca.pem); then set it to true and push, and http redirects to https.
+apiVersion: homelab.ingress/v1
+namespace: infrastructure
+services:
+- id: git        # Forgejo (the repository of your homelab)
+  stack: external
+  lifecycle: present
+  proxy:
+    domains: [git.@@DOMAIN@@]
+    upstream: {scheme: http, host: forgejo, port: 3000}
+    websockets: true
+    force_https: false
+  certificate: {issuer_ref: homelab-private-ca, validity_days: 90, renew_before_days: 30}
+  healthcheck: {path: /, accepted_statuses: [200, 301, 302, 303, 307, 308, 401, 502]}
+- id: komodo        # Komodo (deploys the stacks)
+  stack: external
+  lifecycle: present
+  proxy:
+    domains: [komodo.@@DOMAIN@@]
+    upstream: {scheme: http, host: komodo-core, port: 9120}
+    websockets: true
+    force_https: false
+  certificate: {issuer_ref: homelab-private-ca, validity_days: 90, renew_before_days: 30}
+  healthcheck: {path: /, accepted_statuses: [200, 301, 302, 303, 307, 308, 401, 502]}
+- id: secrets        # Infisical (secrets and the certificate authority)
+  stack: external
+  lifecycle: present
+  proxy:
+    domains: [secrets.@@DOMAIN@@]
+    upstream: {scheme: http, host: infisical, port: 8080}
+    websockets: true
+    force_https: false
+  certificate: {issuer_ref: homelab-private-ca, validity_days: 90, renew_before_days: 30}
+  healthcheck: {path: /, accepted_statuses: [200, 301, 302, 303, 307, 308, 401, 502]}
+- id: proxy        # Nginx Proxy Manager (admin page)
+  stack: external
+  lifecycle: present
+  proxy:
+    domains: [proxy.@@DOMAIN@@]
+    upstream: {scheme: http, host: proxy, port: 81}
+    websockets: true
+    force_https: false
+  certificate: {issuer_ref: homelab-private-ca, validity_days: 90, renew_before_days: 30}
+  healthcheck: {path: /, accepted_statuses: [200, 301, 302, 303, 307, 308, 401, 502]}
+- id: homegraf        # homegraf (the map and the wizard)
+  stack: external
+  lifecycle: present
+  proxy:
+    domains: [homegraf.@@DOMAIN@@]
+    upstream: {scheme: http, host: homegraf, port: 8080}
+    websockets: true
+    force_https: false
+  certificate: {issuer_ref: homelab-private-ca, validity_days: 90, renew_before_days: 30}
+  healthcheck: {path: /, accepted_statuses: [200, 301, 302, 303, 307, 308, 401, 502]}

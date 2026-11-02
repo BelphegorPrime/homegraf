@@ -1,0 +1,13 @@
+# Template of ./homelab.py new-app --template httpd (Apache HTTP Server). See templates/nginx/compose.yaml for how it works.
+x-template:
+  label: Apache httpd
+  description: Web server. Serves the static site in htdocs/ out of the box; httpd.conf has the modules for a reverse proxy.
+  health_path: /
+services:
+  app:
+    image: httpd:2.4.69-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
+      - ./htdocs:/usr/local/apache2/htdocs:ro

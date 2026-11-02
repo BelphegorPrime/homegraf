@@ -1,0 +1,27 @@
+# Building block of ./homelab.py new-app --addon mongoku: a web UI for the MongoDB block, already connected to it. It has
+# no login of its own: whoever can reach its LAN port can read and change the database (a decision of the operator,
+# who owns the LAN). The origin is the address people open it at; without it Mongoku refuses form posts (403).
+# __APP__ is the app ID, __DB__ the mongo block, __PORT__ the LAN port, __HOST__ the server's address.
+x-addon:
+  label: Mongoku
+  description: Web UI for MongoDB, already connected to it. No login of its own - anyone on the LAN who reaches its port can read and change the data.
+  ui: true
+  requires_any: [mongo]
+  secrets: []
+services:
+  mongoku:
+    image: huggingface/mongoku:2.11.5
+    restart: unless-stopped
+    ports:
+      - "__PORT__:3100"
+    environment:
+      MONGOKU_DEFAULT_HOST: mongodb://app:${MONGO_PASSWORD}@__DB__:27017
+      MONGOKU_SERVER_ORIGIN: http://__HOST__:__PORT__
+    depends_on:
+      __DB__:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/').then(r=>process.exit(r.status<500?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

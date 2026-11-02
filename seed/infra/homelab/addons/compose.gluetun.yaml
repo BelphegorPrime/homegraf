@@ -1,0 +1,28 @@
+# Building block of ./homelab.py new-app --addon gluetun: the app runs through the WireGuard VPN of
+# stacks/gluetun/wg0.conf (provider "custom", like the gluetun stacks). The app shares gluetun's network, so its
+# published port moves to gluetun and gluetun's firewall lets it in; the app waits until the VPN is up (gluetun's
+# own healthcheck). An app in that network cannot resolve other services by name (tested), so the block cannot be
+# combined with the others. __HOST_PORT__ and __CONTAINER_PORT__ are the app's port.
+x-addon:
+  label: VPN (gluetun)
+  description: Runs the app through the WireGuard VPN of stacks/gluetun/wg0.conf. Needs the app's port, and cannot be combined with other blocks (an app in the VPN's network cannot reach other services by name).
+  vpn: true
+  exclusive: true
+  secrets: []
+services:
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.3
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "__HOST_PORT__:__CONTAINER_PORT__"
+    environment:
+      TZ: Europe/Berlin
+      VPN_SERVICE_PROVIDER: custom
+      VPN_TYPE: wireguard
+      FIREWALL_INPUT_PORTS: "__CONTAINER_PORT__"
+    volumes:
+      - ../gluetun/wg0.conf:/gluetun/wireguard/wg0.conf:ro

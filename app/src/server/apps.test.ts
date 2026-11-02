@@ -106,7 +106,7 @@ describe("POST /api/apps/plan", () => {
   });
 
   it("answers 400 with the offending fields", async () => {
-    const res = await post({ appId: "Nope", server: "aws" });
+    const res = await post({ appId: "no pe!", server: "aws" });
     expect(res.status).toBe(400);
     expect((await res.json()).issues[0].field).toBe("appId");
   });
@@ -243,6 +243,13 @@ describe("templates and their files", () => {
     expect(newAppArgs(input, undefined, "/tmp/w/files")).toEqual(expect.arrayContaining(["--template", "nginx", "--files-dir", "/tmp/w/files"]));
     expect(newAppArgs(input, "/tmp/w/compose.yaml", "/tmp/w/files")).toEqual(expect.arrayContaining(["--compose-file", "/tmp/w/compose.yaml", "--template", "nginx"]));
     expect(newAppArgs(parse({ appId: "demo-app", server: "aws", image: "x:1" }))).not.toContain("--template");
+  });
+
+  it("takes the app ID in any case and uses it in lowercase", () => {
+    const input = parse({ appId: "EngineX", server: "aws", image: "x:1" });
+    expect(input.appId).toBe("enginex");
+    expect(newAppArgs(input).slice(0, 3)).toEqual(["new-app", "--app-id", "enginex"]);
+    expect(planInput.safeParse({ appId: "Engine X", server: "aws" }).success).toBe(false);   // still only letters, digits and dashes
   });
 
   it("passes further templates as more --template flags, the first one first", () => {

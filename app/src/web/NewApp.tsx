@@ -226,10 +226,19 @@ export function NewApp({ graph }: { graph: Graph }) {
   const copy = (what: "command" | "compose", value: string) =>
     navigator.clipboard?.writeText(value).then(() => setCopied(what), () => undefined);
   const err = (field: string) => issues.find((i) => i.field === field)?.message;
-  const field = (label: string, key: keyof typeof f, props: { placeholder?: string; hint?: string; locked?: boolean } = {}) => (
+  const field = (label: string, key: keyof typeof f, props: { placeholder?: string; hint?: string; locked?: boolean; lowercase?: boolean } = {}) => (
     <label className="field">
       <span>{label}</span>
-      <Input value={String(f[key])} placeholder={props.placeholder} disabled={props.locked} onChange={(e) => set(key, e.target.value as never)} aria-invalid={!!err(key)} />
+      <Input value={String(f[key])} placeholder={props.placeholder} disabled={props.locked} aria-invalid={!!err(key)}
+             onChange={(e) => {
+               const el = e.target;
+               if (props.lowercase && el.value !== el.value.toLowerCase()) {   // "EngineX" is "enginex": changed in place, so the cursor stays
+                 const at = el.selectionStart;
+                 el.value = el.value.toLowerCase();
+                 el.setSelectionRange(at, at);
+               }
+               set(key, el.value as never);
+             }} />
       {(err(key) ?? props.hint) && <small className={err(key) ? "error" : "muted"}>{err(key) ?? props.hint}</small>}
     </label>
   );
@@ -288,7 +297,7 @@ export function NewApp({ graph }: { graph: Graph }) {
       <form onSubmit={plan}>
         <h2>App</h2>
         <div className="grid">
-          {field("App ID", "appId", { hint: "e.g. whoami-test. Names stacks/<id>, the Komodo stack and the inventory entry" })}
+          {field("App ID", "appId", { lowercase: true, hint: "e.g. whoami-test (any case is made lowercase). Names stacks/<id>, the Komodo stack and the inventory entry" })}
           <label className="field">
             <span>Server</span>
             <NativeSelect value={f.server} onChange={(e) => set("server", e.target.value)}>{servers.map((s) => <option key={s}>{s}</option>)}</NativeSelect>

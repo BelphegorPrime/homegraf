@@ -9,7 +9,8 @@ const ID = /^[a-z0-9][a-z0-9-]{1,40}$/;
 const VAR = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export const planInput = z.object({
-  appId: z.string().regex(ID, "lowercase letters, digits and dashes, 2-41 characters"),
+  /** Typed in any case ("EngineX"): it is used in lowercase everywhere. */
+  appId: z.string().toLowerCase().regex(ID, "letters, digits and dashes, 2-41 characters"),
   server: z.string().regex(/^[A-Za-z0-9._-]+$/),
   image: z.string().regex(/^[\w./:@-]+$/, "image with a fixed tag, e.g. traefik/whoami:v1.11.0").optional(),
   containerPort: z.number().int().min(1).max(65535).optional(),

@@ -5,7 +5,7 @@ fills the placeholders; after that the repository is yours: apps, inventory and 
 
 | Path | Comes from | |
 | --- | --- | --- |
-| `homelab.py`, `infra/graph`, `infra/homelab`, `infra/infisical`, `infra/ingress-controller`, `infra/komodo/{komodo_api,create_stack,rebuild,run_ingressctl}.py` | the author's homelab repository, synced | the tools homegraf runs; **do not edit here**, the next sync overwrites them |
+| `homelab.py`, `infra/graph`, `infra/homelab`, `infra/infisical`, `infra/ingress-controller`, `infra/stackctl`, `infra/komodo/{komodo_api,create_stack,rebuild,run_ingressctl}.py` | the homegraf repository (its `TOOLS` list), copied once by the bootstrap | the tools homegraf runs; improvements belong upstream, in the homegraf repository |
 | `inventory/*.yaml`, `stacks/`, this file | this repository | the skeleton, edited here |
 
 ## Placeholders

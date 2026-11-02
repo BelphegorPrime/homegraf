@@ -2,7 +2,6 @@
 #   pull request           tests, builds and scans; nothing is published
 #   push to main           also publishes ghcr.io/<owner>/homegraf:main and :sha-<commit>
 #   tag v1.2.3             publishes :1.2.3, :1.2 and :latest
-# This file belongs to the mirror (only app/ and docs/app.md are synced from the author's homelab repository).
 name: image
 
 on:

@@ -2,7 +2,7 @@
 """Stacks that build their own image from the repo are redeployed after every push: stage "Build" of the Komodo
 procedure update-all (webhook on push) runs DeployStack for each of them, after the repos are pulled.
 
-DeployStackIfChanged compares compose and env files only, so a change in the app's sources (e.g. stacks/mcp-hub)
+DeployStackIfChanged compares compose and env files only, so a change in the app's sources (e.g. stacks/<app>/src)
 would otherwise wait for a manual deploy. `docker compose up --build` is quick when nothing changed (build cache, no
 container is recreated), the same pattern as ingress-apply for ingressctl.
 

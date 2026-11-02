@@ -7,4 +7,4 @@
 - [ ] docs updated where the behaviour changed
 - [ ] no real names, addresses, keys or tokens in tests, docs or examples
 
-<!-- The tools in seed/ (homelab.py, infra/...) are synced from the author's homelab repository: see CONTRIBUTING.md. -->
+<!-- The tools in seed/ (the paths in TOOLS) are developed here and taken over by the author's homelab repository from a tag: keep the JSON of their commands compatible, see CONTRIBUTING.md. -->

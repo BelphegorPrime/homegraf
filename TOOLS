@@ -1,0 +1,13 @@
+# The command-line tools of this repository that other repositories use (paths below seed/, one per line).
+# They are developed here; the author's homelab repository takes a tagged version of exactly these paths with
+# infra/tools/update-tools.sh over there. A tool that is not listed is not part of what is exposed.
+homelab.py
+infra/graph
+infra/homelab
+infra/infisical
+infra/ingress-controller
+infra/stackctl
+infra/komodo/komodo_api.py
+infra/komodo/create_stack.py
+infra/komodo/rebuild.py
+infra/komodo/run_ingressctl.py

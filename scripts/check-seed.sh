@@ -66,6 +66,16 @@ cat >> inventory/stacks.yaml <<'EOF'
 EOF
 git init -q . && git remote add origin ssh://git@forge.example/admin/infrastructure.git
 
+step "TOOLS lists what exists, and the tools name no real homelab"
+tools=$(grep -v '^#' "$here/TOOLS" | grep -v '^$')
+for p in $tools; do [ -e "$p" ] || { echo "TOOLS lists $p, which is not in seed/" >&2; exit 1; }; done
+if grep -rInE -e '(^|[^0-9.])192\.168\.[0-9]+\.[0-9]+' -e '/home/[a-z]' --include='*.py' --include='*.yaml' --include='*.yml' --include='*.cfg' --include='*.ini' \
+     --include='*.md' --include='*.sh' --include='*.toml' --exclude-dir=__pycache__ $tools; then
+  echo "the lines above name a private address or a home folder: tools, templates and tests use neutral names (10.0.0.x, lab.example)" >&2
+  exit 1
+fi
+echo "$(echo "$tools" | wc -l) tool paths, all generic"
+
 step "the tools"
 $py homelab.py --help >/dev/null && echo "homelab.py --help"
 $py homelab.py stacks --json | $py -c "import sys,json; d=json.load(sys.stdin); assert [s['id'] for s in d]==['sample'], d; print('stacks --json:', d[0]['id'])"

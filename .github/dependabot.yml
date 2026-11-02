@@ -1,8 +1,33 @@
-# The app (app/) is synced from the author's homelab repository, where its dependencies are kept current; here only what
-# lives in this repository itself.
+# The app (app/) and the tools in seed/ (TOOLS) are developed here, so their dependencies are kept current here: the images of the
+# templates and building blocks, the base image and the Python dependencies of ingressctl.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    schedule:
+      interval: weekly
+  # Images of the templates for new apps and of the building blocks (databases, caches). A new major version of a database
+  # needs a dump and restore first, so those are never proposed.
+  - package-ecosystem: docker-compose
+    directories:
+      - /seed/infra/homelab/templates/*
+      - /seed/infra/homelab/addons
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: mariadb
+        update-types: ["version-update:semver-major"]
+      - dependency-name: mongo
+        update-types: ["version-update:semver-major"]
+      - dependency-name: mysql
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
+    directory: /seed/infra/ingress-controller
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /seed/infra/ingress-controller
     schedule:
       interval: weekly

@@ -244,8 +244,8 @@ Not verified: a second host on another machine (firewall, real network), and a h
 `seed/` is the initial content of **your own infrastructure repository** in Forgejo, the one homegraf reads and changes by pull request.
 The bootstrap (phase 2) pushes it there once and fills its placeholders; after that the repository is yours.
 
-- **The tools** (`homelab.py`, the graph builder, the wizard, the Komodo and Infisical helpers, `ingressctl`) come from the author's
-  homelab repository and are synced here; they carry nothing of that homelab. What is specific to one installation (the domain of the
+- **The tools** (`homelab.py`, the graph builder, the wizard, the Komodo and Infisical helpers, `ingressctl`; the list is `TOOLS` at the root) are developed in
+  this repository and copied here; they carry nothing of any one homelab. What is specific to one installation (the domain of the
   apps, the repository on the forge, the Infisical address, which stacks are the platform) is read from `inventory/homegraf.yaml`.
 - **The skeleton** (`inventory/*.yaml`, `stacks/`, `seed/README.md`) is written here, with `@@PLACEHOLDERS@@` documented in
   `seed/README.md`. The hardware layer is optional: the skeleton has no `network.yaml`, so the map has no Network tab until you add one
@@ -260,5 +260,5 @@ The bootstrap (phase 2) pushes it there once and fills its placeholders; after t
 | --- | --- | --- |
 | 1 | `compose.yaml`, `setup.sh`, `.env.example`: all services, healthy, and the three ways names reach the host | **done** |
 | 2 | the `bootstrap` container: Forgejo, Komodo, Nginx Proxy Manager, Infisical, AdGuard Home configured against each other; homegraf is handed what it needs | **done** (needs the seed of phase 3 for a full map, see above) |
-| 3 | a seed repository for the bootstrap to push into Forgejo: the tools (`homelab.py`, the graph builder, the wizard) made independent of one homelab's domain and server names, with an inventory skeleton | **done**: `seed/`, synced tools, proven by `scripts/check-seed.sh` (see The seed) |
+| 3 | a seed repository for the bootstrap to push into Forgejo: the tools (`homelab.py`, the graph builder, the wizard) made independent of one homelab's domain and server names, with an inventory skeleton | **done**: `seed/` with the tools, proven by `scripts/check-seed.sh` (see The seed) |
 | 4 | a private certificate authority in Infisical and automatic certificates for the proxy hosts (`ingressctl`), instead of plain HTTP or Let's Encrypt; the optional services as compose profiles (Forgejo runner, Renovate, Komodo backup, Uptime Kuma) | **done** (see What the bootstrap does and Optional services) |

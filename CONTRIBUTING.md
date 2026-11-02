@@ -34,6 +34,7 @@ scripts/check-seed.sh
 Two checks use Docker and take minutes; run the one that matches what you touched:
 
 - `scripts/e2e-stack.sh`: the whole life of an installation: a fresh stack, certificates against your own CA, an app created, merged, reached over HTTPS, removed.
+- `scripts/e2e-host.sh`: a second host (a container with its own Docker daemon) added with `scripts/add-host.sh`, an app created, run and removed there.
 - `scripts/e2e-restore.sh`: the restore of Forgejo's, Infisical's and Komodo's databases from the backup profile's dumps.
 
 Both use their own project name and a temporary data directory, and clean up. Do not run them with a `.env` of a real installation in the directory.

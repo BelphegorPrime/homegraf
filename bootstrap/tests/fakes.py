@@ -71,6 +71,7 @@ class FakeForgejo:
         self.users: dict[str, str] = {}              # other users, created through the admin API: name -> password
         self.user_tokens: dict[str, dict] = {}
         self.oauth_apps: list[dict] = []
+        self.puts: list[tuple] = []
         self.app_n = 0
         self.n = 0
 
@@ -156,6 +157,13 @@ class FakeForgejo:
                 if path not in repo["files"]:
                     return 404, {"message": "not found"}
                 return 200, {"content": repo["files"][path], "sha": f"sha-{len(repo['files'][path])}"}
+            if rest[:1] == ["contents"] and req.method == "PUT":
+                path = "/".join(rest[1:])
+                if path not in repo["files"] or req.json.get("sha") != f"sha-{len(repo['files'][path])}":
+                    return 409, {"message": "sha does not match"}
+                repo["files"][path] = req.json["content"]
+                self.puts.append((path, req.json["message"], req.json["branch"]))
+                return 200, {"commit": {"sha": "def"}}
             if rest[:2] == ["actions", "secrets"] and req.method == "PUT":
                 repo.setdefault("secrets", {})[rest[2]] = req.json["data"]
                 repo.setdefault("events", []).append("secret")
@@ -181,6 +189,8 @@ class FakeKomodo:
         self.procedures: dict[str, dict] = {"Backup Core Database": {}}
         self.updates: dict[str, dict] = {}
         self.stacks: dict[str, dict] = {}
+        self.servers: dict[str, dict] = {}                 # other hosts: name -> {id, config, state}
+        self.new_server_state = "Ok"
         self.ingress_calls: list[list[str]] = []
         self.ingress_ok = True
         self.n = 0
@@ -215,7 +225,16 @@ class FakeKomodo:
         if p == "/read/ListApiKeys":
             return 200, [{"key": k["key"], "secret": "", "name": k["name"]} for k in self.keys]
         if p == "/read/ListServers":
-            return 200, [{"id": "s1", "name": "Local", "info": {"state": self.server_state}}]
+            return 200, [{"id": "s1", "name": "Local", "info": {"state": self.server_state}}] + [
+                {"id": s["id"], "name": n, "info": {"state": s["state"]}} for n, s in self.servers.items()]
+        if p == "/write/CreateServer":
+            self.servers[body["name"]] = {"id": f"s{len(self.servers) + 2}", "config": dict(body["config"]), "state": self.new_server_state}
+            return 200, {}
+        if p == "/read/GetServer":
+            return 200, {"config": self.servers[body["server"]]["config"]}
+        if p == "/write/UpdateServer":
+            next(s for s in self.servers.values() if s["id"] == body["id"])["config"].update(body["config"])
+            return 200, {}
         if p == "/read/ListGitProviderAccounts":
             return 200, self.accounts
         if p == "/write/CreateGitProviderAccount":

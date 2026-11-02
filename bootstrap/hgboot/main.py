@@ -8,6 +8,7 @@ from . import handoff, seed
 from .adguard import AdGuard
 from .config import Config, ConfigError
 from .forgejo import Forgejo
+from .hosts import Hosts, agent_compose, check_address, check_name
 from .http import Unreachable
 from .infisical import Infisical
 from .ingress import Ingress
@@ -74,6 +75,40 @@ def run(env=os.environ) -> int:
     return 0
 
 
+def agent_compose_cmd(argv: list[str], env=os.environ) -> int:
+    """agent-compose NAME: the compose file for the agent on a new host, on stdout (it holds the passkey: the caller keeps it private)."""
+    try:
+        if len(argv) != 1:
+            print("usage: python -m hgboot agent-compose NAME", file=sys.stderr)
+            return 2
+        print(agent_compose(Config.from_env(env), check_name(argv[0])), end="")
+        return 0
+    except (ConfigError, StepError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+def add_host_cmd(argv: list[str], env=os.environ) -> int:
+    """add-host NAME ADDRESS: registers the agent of another host, clones the repository there, lists the host in the repository."""
+    if len(argv) != 2:
+        print("usage: python -m hgboot add-host NAME ADDRESS", file=sys.stderr)
+        return 2
+    try:
+        cfg = Config.from_env(env)
+        name, address = check_name(argv[0]), check_address(argv[1])
+    except (ConfigError, StepError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    state = State(f"{cfg.state_dir}/state.json")
+    forgejo, komodo = Forgejo(cfg, state), Komodo(cfg, state)
+    try:
+        Hosts(cfg, state, komodo, forgejo, wait=komodo.wait).add(name, address)
+    except (StepError, Unreachable, TimeoutError, ValueError) as e:
+        print(f"\nerror: {e}\nNothing that is done is undone: fix the cause and run it again.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def show(what: str, env=os.environ) -> int:
     state = State(f"{env.get('STATE_DIR') or '/state'}/state.json")
     if what == "infisical-password":
@@ -90,7 +125,11 @@ def main(argv: list[str] | None = None) -> int:
         return show(argv[1] if len(argv) > 1 else "")
     if argv[:1] == ["certificates"]:
         return certificates()
+    if argv[:1] == ["agent-compose"]:
+        return agent_compose_cmd(argv[1:])
+    if argv[:1] == ["add-host"]:
+        return add_host_cmd(argv[1:])
     if argv and argv[0] != "run":
-        print("usage: python -m hgboot [run | certificates | show infisical-password]", file=sys.stderr)
+        print("usage: python -m hgboot [run | certificates | show infisical-password | agent-compose NAME | add-host NAME ADDRESS]", file=sys.stderr)
         return 2
     return run()

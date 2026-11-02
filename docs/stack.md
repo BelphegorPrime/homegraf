@@ -70,7 +70,28 @@ generated one was used.
    an identity with the organisation role Admin and Universal Auth, its client id and secret into `.env` as `INFISICAL_CLIENT_ID` / `INFISICAL_CLIENT_SECRET`).
 4. **The tools and the inventory skeleton in your repository** come with the seed (phase 3). Until then the image carries a stub: a README and an empty
    inventory, so the map is empty and homegraf says its tools are missing. See *The seed*.
-5. **Other servers** (Komodo agents on more hosts) are added in Komodo and `inventory/servers.yaml`; this stack runs on one host.
+5. **Other hosts:** the stack runs on one host; another Docker host joins with `./scripts/add-host.sh NAME ADDRESS` (see *More hosts* below).
+
+## More hosts
+
+```
+./scripts/add-host.sh worker-1 10.0.0.12      # on the host of the stack: NAME, and the address of the new host as this host reaches it
+```
+
+The script writes `worker-1.periphery.yaml`, the compose file of the Komodo agent for the new host (it holds the passkey of the stack:
+mode 600, kept out of git). Copy it to the new host and start it there (`docker compose -f worker-1.periphery.yaml up -d`); the script waits up to
+ten minutes for the agent to answer on port 8120 and then:
+
+- registers the agent as the Komodo server `worker-1`,
+- makes a repository resource of its own for that server (`infrastructure-worker-1`, one clone per agent) and clones your repository there,
+- adds that clone to the stage *Pull* of `update-all`, so every push pulls it,
+- lists the host in `inventory/servers.yaml` of your repository (a commit on `main`): the address the proxy reaches its apps at.
+
+From then on `worker-1` is a server to choose in the wizard. What it needs: Docker with compose on the new host; the same path for
+`DATA_DIR` as here (the tools build the run directory of every stack from one `repos_dir`); port 8120 of the new host reachable from the stack's host
+(from there only: the agent is root on its host); Forgejo reachable from the new host at `HOST_IP:PORT_FORGEJO`, so not with `BIND_ADDRESS=127.0.0.1`.
+Run it again after a failure; nothing that is done is repeated. Not covered, and not tried: Infisical projects for the stack secrets of the new host
+(`secrets: infisical`), and certificates for apps whose address is on it.
 
 ## The seed
 
@@ -213,7 +234,10 @@ Run for real on a clean Docker host (Docker 29, Compose 5), project `hgboot`, wi
 - **The image:** Trivy reports no HIGH or CRITICAL finding; the 49 unit tests (fake servers for every step, the whole run, idempotency, failure messages, no secret in the output)
   pass on Python 3.11 and 3.12.
 
-Not verified: a second host, and a host where port 53 is taken.
+- **A second host** (`scripts/e2e-host.sh`): a container with its own Docker daemon plays the host. `add-host.sh` registered it, an app was created on it
+  through homegraf's API, merged, ran in that Docker and answered, and was removed in both halves.
+
+Not verified: a second host on another machine (firewall, real network), and a host where port 53 is taken.
 
 ## The seed
 

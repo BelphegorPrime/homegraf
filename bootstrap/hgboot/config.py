@@ -45,6 +45,7 @@ class Config:
     credentials_volume: str = "homegraf-ingressctl-credentials"
     state_volume: str = "homegraf-ingressctl-state"
     credentials_dir: str = "/credentials"  # where the bootstrap mounts that volume
+    komodo_passkey: str = ""          # KOMODO_PASSKEY: what an agent on another host needs to accept this stack's Komodo
     forgejo_admin: str = ""            # FORGEJO_ADMIN_USER, which setup.sh writes; the same name the forgejo-admin service creates
 
     @property
@@ -100,7 +101,7 @@ class Config:
                   domain=need("DOMAIN"), host_ip=need("HOST_IP"), dns_mode=env.get("DNS_MODE") or "external", data_dir=need("DATA_DIR"),
                   webhook_secret=need("KOMODO_WEBHOOK_SECRET"), state_dir=env.get("STATE_DIR") or "/state",
                   seed_dir=env.get("SEED_DIR") or "/seed", bind_address=env.get("BIND_ADDRESS") or "0.0.0.0",
-                  forgejo_admin=(env.get("FORGEJO_ADMIN_USER") or "").strip(),
+                  forgejo_admin=(env.get("FORGEJO_ADMIN_USER") or "").strip(), komodo_passkey=(env.get("KOMODO_PASSKEY") or "").strip(),
                   profiles=tuple(p for p in (env.get("COMPOSE_PROFILES") or "").replace(" ", "").split(",") if p), network=env.get("COMPOSE_NETWORK") or "homegraf-net",
                   credentials_volume=env.get("CREDENTIALS_VOLUME") or "homegraf-ingressctl-credentials",
                   state_volume=env.get("STATE_VOLUME") or "homegraf-ingressctl-state", credentials_dir=env.get("CREDENTIALS_DIR") or "/credentials")

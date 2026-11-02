@@ -108,17 +108,18 @@ class Komodo:
         self.server_id = s["id"]
         return s["id"], s["name"]
 
-    def ensure_git_account(self, token: str) -> None:
-        user = self.cfg.forgejo_user
-        have = next((a for a in self.call("read", "ListGitProviderAccounts") or [] if a["domain"] == self.git_domain and a["username"] == user), None)
+    def ensure_git_account(self, token: str, domain: str | None = None) -> None:
+        """The account the agents clone with; `domain` is Forgejo as that agent reaches it (the agent here: forgejo:3000)."""
+        user, domain = self.cfg.forgejo_user, domain or self.git_domain
+        have = next((a for a in self.call("read", "ListGitProviderAccounts") or [] if a["domain"] == domain and a["username"] == user), None)
         if have and have.get("token") == token:
-            log(STEP, f"git account {user}@{self.git_domain}: already there")
+            log(STEP, f"git account {user}@{domain}: already there")
         elif have:
             self.call("write", "UpdateGitProviderAccount", {"id": have["_id"]["$oid"], "account": {"token": token}})
-            log(STEP, f"git account {user}@{self.git_domain}: token updated")
+            log(STEP, f"git account {user}@{domain}: token updated")
         else:
-            self.call("write", "CreateGitProviderAccount", {"account": {"domain": self.git_domain, "https": False, "username": user, "token": token}})
-            log(STEP, f"git account {user}@{self.git_domain}: created")
+            self.call("write", "CreateGitProviderAccount", {"account": {"domain": domain, "https": False, "username": user, "token": token}})
+            log(STEP, f"git account {user}@{domain}: created")
 
     def ensure_repository(self, server_id: str) -> None:
         wanted = {"server_id": server_id, "git_provider": self.git_domain, "git_https": False, "git_account": self.cfg.forgejo_user,

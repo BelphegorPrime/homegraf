@@ -88,11 +88,12 @@ def main(argv=None) -> int:
                 if not old.get("isClientSecretRevoked"):
                     api.call("POST", f"{ua_path}/client-secrets/{old['id']}/revoke")
             secret = api.call("POST", f"{ua_path}/client-secrets", {"description": "reconcile_stacks.py"})["clientSecret"]
+            client_id, url = ua["clientId"], direct_url()
             path.write_text(  # at once: Infisical shows the secret only once
-                f'# Infisical machine identity "{NAME}" (member of the stacks-* projects), for infra/komodo/reconcile_stacks.py.\n'
+                f"# Infisical machine identity {NAME} (member of the stacks-* projects), for infra/komodo/reconcile_stacks.py.\n"
                 "# Created by infra/infisical/provisioner.py; kept in the repo by decision of the operator.\n"
-                f"export INFISICAL_URL={direct_url()}\n"
-                f"export INFISICAL_PROVISIONER_CLIENT_ID={ua['clientId']}\n"
+                f"export INFISICAL_URL={url}\n"
+                f"export INFISICAL_PROVISIONER_CLIENT_ID={client_id}\n"
                 f"export INFISICAL_PROVISIONER_CLIENT_SECRET={secret}\n")
             path.chmod(0o600)
             print(f"credentials written to {FILE}")

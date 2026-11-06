@@ -60,6 +60,8 @@ Push `stacks/<id>/compose.yaml` and `stacks/<id>/ingress.yaml` to `main` and not
 stage *Reconcile* of `update-all` runs `infra/komodo/reconcile_stacks.py` (also `./homelab.py reconcile`, a dry run without `--yes`) and, for each such
 stack, only what is missing: its `${VAR}` secrets generated in Infisical, the Komodo stack with the Infisical wrapper, a first deploy (and a deploy on
 every push for a stack that builds its own image). The last stage of `update-all`, `ingress-apply`, then gives it a proxy host and a certificate.
+A failing stack deploy stops `update-all` before that last stage, so the procedure `ingress-sync` (made by the bootstrap) applies the `ingress.yaml` files
+on its own every 15 minutes, without an alert: proxy hosts and certificates keep following the repository while a stack is broken.
 
 A host added later with `add-host.sh` gets its own `stacks-<server>` project the same way, and `INFISICAL_API_URL` becomes the address of this host
 (`http://<HOST_IP>:<PORT_INFISICAL>`), because the compose wrapper runs on that host, where the name `infisical` does not resolve. For the same reason

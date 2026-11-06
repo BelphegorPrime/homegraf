@@ -276,3 +276,16 @@ class ServerSecretsTests(unittest.TestCase):
         self.assertIn("stack-provisioner", [i["name"] for i in s.infisical.identities.values()])
         self.assertIn("infra/secrets/provisioner.env", s.forgejo.repos["owner/infrastructure"]["files"])
         self.assertIn("Reconcile", [st["name"] for st in s.komodo.procedures["update-all"]["stages"]])
+
+    def test_ingress_sync_applies_the_manifests_on_a_schedule_without_alerts(self):
+        s = Stack()
+        self.addCleanup(s.close)
+        s.run()
+        s.certificates()
+        sync = s.komodo.procedures["ingress-sync"]
+        self.assertEqual((sync["schedule"], sync["schedule_enabled"], sync["failure_alert"], sync["webhook_enabled"]),
+                         ("0 7,22,37,52 * * * *", True, False, False))
+        params = sync["stages"][0]["executions"][0]["execution"]["params"]
+        self.assertEqual((params["stack"], params["service"], params["command"]), ("ingressctl", "ingressctl", ["apply", "--root", "/repo", "--all"]))
+        s.certificates()                                              # again: not created twice
+        self.assertEqual(sum(1 for n in s.komodo.procedures if n == "ingress-sync"), 1)

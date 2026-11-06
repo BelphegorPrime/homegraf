@@ -44,6 +44,7 @@ def certificates(env=os.environ) -> int:
         komodo.ensure_provisioner_key()
         Provisioner(cfg, state, forgejo).run()
         komodo.reconcile_in_update_all()
+        komodo.ensure_ingress_sync()
         if problem is not None:
             raise problem
     except (StepError, Unreachable, TimeoutError, ValueError, OSError) as e:

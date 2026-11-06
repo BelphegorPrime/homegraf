@@ -14,6 +14,7 @@ REPO_NAME = "infrastructure"
 PROCEDURE = "update-all"
 INGRESS_STACK = "ingressctl"            # builds from infra/ingress-controller and runs ingressctl once per call
 INGRESS_PROCEDURE = "ingress-apply"
+INGRESS_SYNC = "ingress-sync"
 INGRESS_DIR = "infra/ingress-controller"
 # The compose file of the seed that connects ingressctl to this stack's network and credentials; relative to INGRESS_DIR
 INGRESS_COMPOSE = ["compose.yaml", "../../inventory/ingressctl.compose.yaml"]
@@ -188,6 +189,23 @@ class Komodo:
                                                                   "no_deps": True, "no_tty": True}), f"ingressctl {argv[0]}", seconds=900)
         out = "".join((lg.get("stdout") or "") + (lg.get("stderr") or "") for lg in u.get("logs") or [])
         return not ('"result": "error"' in out or "BLOCKER" in out or "FEHLER" in out), out
+
+    def ensure_ingress_sync(self) -> None:
+        """A procedure that only applies the ingress.yaml files, every 15 minutes. A failing stack deploy stops update-all before its
+        last stage (ingress-apply), so the proxy hosts and certificates would wait for that stack; this keeps them converging.
+        No alert: an upstream that is not up yet is an expected state, ingress-apply reports real errors."""
+        if not any(s["name"] == INGRESS_STACK for s in self.call("read", "ListStacks")):
+            log(STEP, f"stack {INGRESS_STACK} does not exist yet: the procedure {INGRESS_SYNC} waits for it")
+            return
+        if any(p["name"] == INGRESS_SYNC for p in self.call("read", "ListProcedures")):
+            log(STEP, f"procedure {INGRESS_SYNC}: already there")
+            return
+        self.call("write", "CreateProcedure", {"name": INGRESS_SYNC, "config": {
+            "stages": [{"name": "apply", "enabled": True, "executions": [{"execution": {"type": "RunStackService", "params": {
+                "stack": INGRESS_STACK, "service": "ingressctl", "command": ["apply", "--root", "/repo", "--all"], "no_deps": True}}, "enabled": True}]}],
+            "schedule_format": "Cron", "schedule": "0 7,22,37,52 * * * *", "schedule_timezone": "Etc/UTC", "schedule_enabled": True,
+            "schedule_alert": False, "failure_alert": False, "webhook_enabled": False}})
+        log(STEP, f"procedure {INGRESS_SYNC}: created (applies the ingress.yaml files every 15 minutes, whatever update-all did)")
 
     def reconcile_in_update_all(self) -> None:
         """update-all gets a stage right after the pull that sets up the stacks which are only a folder with an ingress.yaml

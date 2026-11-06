@@ -508,3 +508,45 @@ class FakeAdGuard:
             self.rewrites = [r for r in self.rewrites if r != req.json]
             return 200, None
         return 404, None
+
+
+class FakeTechnitium:
+    """Technitium's HTTP API as the bootstrap uses it: every call is a GET with query parameters and answers 200 with a `status`."""
+
+    def __init__(self, password="pw-correct-1234"):
+        self.password = password
+        self.tokens: set[str] = set()
+        self.zones: set[str] = set()
+        self.records: list[dict] = []
+        self.created_tokens = 0
+
+    def __call__(self, req):
+        import urllib.parse
+        path, _, query = req.path.partition("?")
+        params = {k: v[0] for k, v in urllib.parse.parse_qs(query).items()}
+        if path == "/api/status":
+            return 200, {"status": "ok", "server": "dns.home.lab"}
+        if path == "/api/user/createToken":
+            if params.get("user") == "admin" and params.get("pass") == self.password and params.get("tokenName"):
+                self.created_tokens += 1
+                token = f"tok-{self.created_tokens}"
+                self.tokens.add(token)
+                return 200, {"status": "ok", "username": "admin", "tokenName": params["tokenName"], "token": token}
+            return 200, {"status": "error", "errorMessage": "Invalid username or password."}
+        if req.headers.get("authorization", "").removeprefix("Bearer ") not in self.tokens:
+            return 200, {"status": "invalid-token", "errorMessage": "Invalid token or session expired."}
+        if path == "/api/zones/list":
+            return 200, {"status": "ok", "response": {"zones": [{"name": z, "type": "Primary"} for z in sorted(self.zones)]}}
+        if path == "/api/zones/create":
+            if params["zone"] in self.zones:
+                return 200, {"status": "error", "errorMessage": "Zone already exists."}
+            self.zones.add(params["zone"])
+            return 200, {"status": "ok", "response": {"domain": params["zone"]}}
+        if path == "/api/zones/records/add":
+            if params["zone"] not in self.zones:
+                return 200, {"status": "error", "errorMessage": "No such zone."}
+            if params.get("overwrite") == "true":
+                self.records = [r for r in self.records if (r["domain"], r["type"]) != (params["domain"], params["type"])]
+            self.records.append({k: params[k] for k in ("zone", "domain", "type", "ipAddress", "ttl") if k in params})
+            return 200, {"status": "ok"}
+        return 404, None

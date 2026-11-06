@@ -31,10 +31,12 @@ def summary(cfg, state, notes: list[str]) -> str:
     for sub, _, _, label in cfg.services:
         lines.append(f"  {label:22} http://{sub}.{d}    or http://{ip}:{ports[sub]}")
     lines += ["", "Sign in:",
-              f"  homegraf, Komodo, AdGuard Home   user {cfg.admin_user}, password ADMIN_PASSWORD from .env",
+              f"  homegraf, Komodo{', AdGuard Home' if cfg.dns_mode == 'adguard' else ''}   user {cfg.admin_user}, password ADMIN_PASSWORD from .env",
               f"  homegraf                         also the button \"Forgejo\": the Forgejo administrator {cfg.forgejo_user} is its first administrator",
               f"  Forgejo                          {cfg.admin_email} or the user name {cfg.forgejo_user} (it owns the repository), same password",
               f"  Nginx Proxy Manager              {cfg.admin_email}, same password",
+              *([f"  Technitium DNS                   http://{ip}:{p['DNS_ADMIN']}, user admin (not the e-mail address), same password; the bootstrap made an API token for the tools"]
+                if cfg.dns_mode == "technitium" else []),
               f"  Infisical                        {cfg.admin_email}, " + ("a generated password: docker compose run --rm bootstrap show infisical-password"
                                                                          if state.get("infisical", "admin_password") else "same password"),
               "", f"Your repository: http://git.{d}/{cfg.repository}  or  http://{ip}:{p['FORGEJO']}/{cfg.repository}",
@@ -50,7 +52,7 @@ def next_steps(cfg) -> list[str]:
     notes = []
     if cfg.dns_mode == "external":
         notes.append(f"names: create the wildcard entry *.{cfg.domain} -> {cfg.host_ip} in your DNS")
-    elif cfg.dns_mode == "adguard":
+    elif cfg.dns_mode in ("technitium", "adguard"):
         notes.append(f"names: point your router's DHCP (or each device) at {cfg.host_ip} as DNS server; Android wants a second DNS server")
     else:
         notes.append("names: nothing, sslip.io answers (your devices need internet DNS)")

@@ -16,6 +16,7 @@ from .komodo import Komodo
 from .npm import Npm
 from .provisioner import Provisioner
 from .serversecrets import ServerSecrets
+from .technitium import Technitium
 from .renovate import Renovate
 from .state import State, write_env_file
 from .steps import StepError, log, warn
@@ -79,6 +80,8 @@ def run(env=os.environ) -> int:
         Infisical(cfg, state).run()
         if cfg.dns_mode == "adguard":
             AdGuard(cfg, state).run()
+        elif cfg.dns_mode == "technitium":
+            Technitium(cfg, state).run()
         write_env_file(f"{cfg.state_dir}/homegraf.env", handoff.homegraf_env(cfg, state))
         log("handoff", f"homegraf's settings written to {cfg.state_dir}/homegraf.env (homegraf reads it at start)")
     except (StepError, Unreachable, TimeoutError, ValueError) as e:

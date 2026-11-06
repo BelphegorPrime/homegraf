@@ -38,6 +38,7 @@ class Config:
     infisical_url: str = "http://infisical:8080"
     adguard_setup_url: str = "http://dns:3000"
     adguard_url: str = "http://dns:80"
+    technitium_url: str = "http://technitium:5380"
     ports: dict = field(default_factory=dict)
     bind_address: str = "0.0.0.0"
     profiles: tuple = ()                    # COMPOSE_PROFILES: which optional services are started
@@ -106,11 +107,12 @@ class Config:
                   credentials_volume=env.get("CREDENTIALS_VOLUME") or "homegraf-ingressctl-credentials",
                   state_volume=env.get("STATE_VOLUME") or "homegraf-ingressctl-state", credentials_dir=env.get("CREDENTIALS_DIR") or "/credentials")
         for attr, name in (("forgejo_url", "FORGEJO_URL"), ("komodo_url", "KOMODO_URL"), ("npm_url", "NPM_URL"), ("npm_proxy_url", "NPM_PROXY_URL"),
-                           ("infisical_url", "INFISICAL_URL"), ("adguard_setup_url", "ADGUARD_SETUP_URL"), ("adguard_url", "ADGUARD_URL")):
+                           ("infisical_url", "INFISICAL_URL"), ("adguard_setup_url", "ADGUARD_SETUP_URL"), ("adguard_url", "ADGUARD_URL"),
+                           ("technitium_url", "TECHNITIUM_URL")):
             if env.get(name):
                 setattr(cfg, attr, env[name].rstrip("/"))
         cfg.ports = {k: env.get(f"PORT_{k}") or d for k, d in (("HTTP", "80"), ("NPM_ADMIN", "81"), ("FORGEJO", "3000"), ("KOMODO", "9120"),
                                                                  ("INFISICAL", "8079"), ("HOMEGRAF", "8097"), ("DNS_ADMIN", "8053"), ("KUMA", "3001"))}
-        if cfg.dns_mode not in ("sslip", "adguard", "external"):
-            raise ConfigError(f"DNS_MODE must be sslip, adguard or external, not {cfg.dns_mode!r}")
+        if cfg.dns_mode not in ("sslip", "technitium", "adguard", "external"):
+            raise ConfigError(f"DNS_MODE must be technitium, adguard, sslip or external, not {cfg.dns_mode!r}")
         return cfg

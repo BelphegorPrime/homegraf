@@ -366,6 +366,36 @@ services:
       start_period: 10s
     logging: *logging
 
+  # --- Technitium DNS Server: DNS for the domain (optional: only with DNS_MODE=technitium, the default, which setup.sh turns on as
+  # COMPOSE_PROFILES=technitium; AdGuard Home above is the alternative, never both) ---
+  # The bootstrap makes the zone ${DOMAIN} with the wildcard *.${DOMAIN} -> ${HOST_IP}, so every future app is reachable without another DNS
+  # step, and an API token for the tools (Technitium has real API tokens, AdGuard Home has only the login). Everything else is forwarded to
+  # DNS_FORWARDERS. The admin console is on PORT_DNS_ADMIN, user admin, password ADMIN_PASSWORD.
+  # DNS is bound to DNS_BIND (the LAN address) only: that avoids the clash with systemd-resolved, which holds 127.0.0.53:53.
+  technitium:
+    image: docker.io/technitium/dns-server:15.6.2
+    container_name: ${PROJECT_PREFIX:-homegraf}-technitium
+    profiles: [technitium]
+    restart: unless-stopped
+    environment:
+      DNS_SERVER_DOMAIN: dns.${DOMAIN:-homegraf.lan}
+      DNS_SERVER_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?run ./setup.sh}
+      DNS_SERVER_FORWARDERS: ${DNS_FORWARDERS:-1.1.1.1,9.9.9.9}
+      DNS_SERVER_FORWARDER_PROTOCOL: Udp
+    ports:
+      - ${DNS_BIND:-0.0.0.0}:${PORT_DNS:-53}:53/tcp
+      - ${DNS_BIND:-0.0.0.0}:${PORT_DNS:-53}:53/udp
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_DNS_ADMIN:-8053}:5380/tcp
+    volumes:
+      - technitium-config:/etc/dns
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5380/api/status | grep -q '\"status\":\"ok\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *logging
+
   # --- the bootstrap: configures the services against each other, once; safe to run again --------------------------------
   # Forgejo has no setting for its first administrator, only a command. This one-shot runs it in a container of its own that shares
   # Forgejo's data volume, so nothing needs the Docker socket. The name "admin" is not allowed by Forgejo: setup.sh picks FORGEJO_ADMIN_USER.
@@ -574,6 +604,9 @@ services:
       dns:
         condition: service_healthy
         required: false
+      technitium:
+        condition: service_healthy
+        required: false
     logging: *logging
 
   # The private certificate authority and ingressctl, after everything else is up: ingressctl checks the upstream of every proxy host, and
@@ -627,3 +660,4 @@ volumes:
   proxy-letsencrypt:
   dns-work:
   dns-conf:
+  technitium-config:

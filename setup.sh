@@ -2,14 +2,16 @@
 # Writes .env for the homegraf stack: how names reach this host, the administrator and random secrets for every service.
 #
 #   ./setup.sh                    asks a few questions (the host's address, how names reach it, the administrator)
-#   DNS_MODE=sslip ADMIN_EMAIL=me@example.org ./setup.sh --yes     no questions, for scripts (HOST_IP, DOMAIN, ... from the environment)
+#   DNS_MODE=adguard ADMIN_EMAIL=me@example.org ./setup.sh --yes   no questions, for scripts (HOST_IP, DOMAIN, ... from the environment)
 #
 # Names: the services are reached as <name>.<DOMAIN> (git, komodo, secrets, proxy, homegraf), and the proxy routes by that name, so
-# the names must reach this host. DNS_MODE says how:
-#   sslip      zero configuration: DOMAIN becomes <host address with dashes>.sslip.io, a public service that answers with the
-#              address inside the name. Good for trying it out (needs internet DNS on the clients); no private CA.
+# the names must reach this host. DNS_MODE says how (the default is technitium):
+#   technitium Technitium DNS Server runs in this stack (compose profile "technitium"): the bootstrap makes the zone, the wildcard to this
+#              host and an API token for the tools; everything else is forwarded (DNS_FORWARDERS). Point your router's DHCP at it.
 #   adguard    AdGuard Home runs in this stack (compose profile "dns") and answers for the domain; point your router's DHCP at it.
 #   external   you already have DNS (router, Pi-hole, your own AdGuard): create the one wildcard entry this script prints.
+#   sslip      zero configuration: DOMAIN becomes <host address with dashes>.sslip.io, a public service that answers with the
+#              address inside the name. Good for trying it out (needs internet DNS on the clients); no private CA.
 #
 # Optional services are compose profiles: OPTIONAL_SERVICES="renovate backup status runner" (or answer the question) writes them into
 # COMPOSE_PROFILES. renovate: dependency updates as pull requests (brings the Actions runner along); runner: Forgejo Actions runner
@@ -69,11 +71,12 @@ if $interactive; then
   host_ip=${answer:-$host_ip}
   if [ -z "$dns_mode" ]; then
     echo "How should names like git.<domain> reach this host?"
-    echo "  1) sslip     zero configuration, for trying it out (names like git.${host_ip//./-}.sslip.io)"
-    echo "  2) adguard   AdGuard Home runs in this stack and answers for your domain (you point your router at it)"
-    echo "  3) external  you already have DNS and add one wildcard entry"
+    echo "  1) technitium  Technitium DNS Server runs in this stack: zone, wildcard to this host and an API token for the tools (you point your router at it)"
+    echo "  2) adguard     AdGuard Home runs in this stack and answers for your domain (you point your router at it)"
+    echo "  3) external    you already have DNS and add one wildcard entry"
+    echo "  4) sslip       zero configuration, for trying it out (names like git.${host_ip//./-}.sslip.io)"
     read -r -p "Choice [1]: " answer
-    case "${answer:-1}" in 1) dns_mode=sslip ;; 2) dns_mode=adguard ;; 3) dns_mode=external ;; *) die "choose 1, 2 or 3" ;; esac
+    case "${answer:-1}" in 1) dns_mode=technitium ;; 2) dns_mode=adguard ;; 3) dns_mode=external ;; 4) dns_mode=sslip ;; *) die "choose 1, 2, 3 or 4" ;; esac
   fi
   if [ "$dns_mode" != sslip ] && [ -z "$domain" ]; then
     read -r -p "Domain, as <name>.<domain> [homegraf.lan]: " domain
@@ -85,8 +88,8 @@ if $interactive; then
   fi
 fi
 
-dns_mode=${dns_mode:-sslip}
-case "$dns_mode" in sslip | adguard | external) ;; *) die "DNS_MODE is sslip, adguard or external, not '$dns_mode'" ;; esac
+dns_mode=${dns_mode:-technitium}
+case "$dns_mode" in technitium | adguard | external | sslip) ;; *) die "DNS_MODE is technitium, adguard, external or sslip, not '$dns_mode'" ;; esac
 [ -n "$host_ip" ] || die "the address of this host in your LAN is needed: set HOST_IP (the wildcard and the proxy hosts use it)"
 printf '%s' "$host_ip" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || die "HOST_IP is an IPv4 address like 192.168.1.10, not '$host_ip'"
 if [ "$dns_mode" = sslip ]; then
@@ -111,16 +114,17 @@ case "$password$domain$email$user" in
   *[\"\'\\\$\`\ ]*) die "no spaces, quotes, backslashes, \$ or backticks in the domain, e-mail, user or password (they go into .env and URLs)" ;;
 esac
 
-# AdGuard answers on the LAN address only, so that systemd-resolved (127.0.0.53:53) and a router on the same host do not collide.
+# The DNS server answers on the LAN address only, so that systemd-resolved (127.0.0.53:53) and a router on the same host do not collide.
 dns_port=${PORT_DNS:-53}
-if [ "$dns_mode" = adguard ]; then
+if [ "$dns_mode" = adguard ] || [ "$dns_mode" = technitium ]; then
+  dns_name=AdGuard; [ "$dns_mode" = technitium ] && dns_name=Technitium
   state=$(port_state "$host_ip" "$dns_port")
   if [ "$state" = busy ]; then
     echo "Port $dns_port on $host_ip is already in use (see: ss -lntup 'sport = :$dns_port')." >&2
     echo "Clients can only use a DNS server on port 53, so free it, or set DNS_MODE=external and use the DNS that holds it." >&2
     echo "If it is dnsmasq or similar, stop it; systemd-resolved alone is no problem, it listens on 127.0.0.53 only." >&2
     $yes_mode && exit 1
-    read -r -p "Continue anyway with port $dns_port (AdGuard will then not start until it is free)? [y/N] " answer
+    read -r -p "Continue anyway with port $dns_port ($dns_name will then not start until it is free)? [y/N] " answer
     case "$answer" in y | Y) ;; *) exit 1 ;; esac
   fi
 fi
@@ -136,6 +140,7 @@ if $interactive && [ -z "$optional" ]; then
 fi
 profiles=""
 [ "$dns_mode" != adguard ] || profiles="dns"
+[ "$dns_mode" != technitium ] || profiles="technitium"
 for o in $optional; do
   case "$o" in renovate | runner | backup | status) ;; *) die "unknown optional service '$o' (renovate, runner, backup, status)" ;; esac
   case ",$profiles," in *,"$o",*) ;; *) profiles="${profiles:+$profiles,}$o" ;; esac
@@ -154,7 +159,7 @@ mkdir -p data/periphery data/backups
   echo "FORGEJO_ADMIN_USER=$forgejo_user"
   echo "DATA_DIR=$PWD/data"
   [ -z "$profiles" ] || echo "COMPOSE_PROFILES=$profiles"
-  [ "$dns_mode" != adguard ] || echo "DNS_BIND=$host_ip"
+  [ "$dns_mode" != adguard ] && [ "$dns_mode" != technitium ] || echo "DNS_BIND=$host_ip"
   echo
   echo "FORGEJO_DB_PASSWORD=$(alnum 32)"
   echo "FORGEJO_SECRET_KEY=$(hex 32)"
@@ -168,7 +173,7 @@ mkdir -p data/periphery data/backups
   echo "RUNNER_SECRET=$(hex 20)"
   echo
   for knob in TZ BIND_ADDRESS PROJECT_PREFIX HOMEGRAF_IMAGE PORT_HTTP PORT_HTTPS PORT_NPM_ADMIN PORT_FORGEJO PORT_FORGEJO_SSH \
-              PORT_KOMODO PORT_INFISICAL PORT_HOMEGRAF PORT_DNS PORT_DNS_SETUP PORT_DNS_ADMIN REPO_DIR BOOTSTRAP_IMAGE \
+              PORT_KOMODO PORT_INFISICAL PORT_HOMEGRAF PORT_DNS PORT_DNS_SETUP PORT_DNS_ADMIN DNS_FORWARDERS REPO_DIR BOOTSTRAP_IMAGE \
               UNIFI_URL UNIFI_USER UNIFI_PASSWORD UNIFI_FINGERPRINT; do
     [ -z "${!knob:-}" ] || echo "$knob=${!knob}"
   done
@@ -181,6 +186,12 @@ fi
 case "$dns_mode" in
   sslip)
     echo "Names like git.$domain reach $host_ip through the public sslip.io service: nothing to set up (the clients need internet DNS)."
+    ;;
+  technitium)
+    echo "DNS: Technitium DNS Server starts with the stack and the bootstrap sets it up: the zone $domain, the record  *.$domain -> $host_ip"
+    echo "     and an API token for the tools. Then point your router's DHCP (or each device) at $host_ip."
+    echo "     Its console: http://$host_ip:${PORT_DNS_ADMIN:-8053}, user admin (not the e-mail address), the administrator password."
+    echo "     Android's private DNS wants two DNS servers: give it a second address that also reaches Technitium."
     ;;
   adguard)
     echo "DNS: AdGuard Home starts with the stack and the bootstrap sets it up, including the rewrite  *.$domain -> $host_ip."

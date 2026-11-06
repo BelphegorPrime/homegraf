@@ -12,7 +12,7 @@ from hgboot import main as hgmain
 from hgboot.http import wait_for
 from hgboot.state import State
 
-from .fakes import FakeAdGuard, FakeForgejo, FakeInfisical, FakeKomodo, FakeNpm, Server
+from .fakes import FakeAdGuard, FakeForgejo, FakeInfisical, FakeKomodo, FakeNpm, FakeTechnitium, Server
 from .helpers import PASSWORD
 
 
@@ -36,7 +36,9 @@ services:
 class Stack:
     def __init__(self, dns_mode="external"):
         self.forgejo, self.komodo, self.npm, self.infisical, self.adguard = FakeForgejo(password=PASSWORD), FakeKomodo(password=PASSWORD), FakeNpm(), FakeInfisical(), FakeAdGuard(password=PASSWORD)
-        self.servers = [Server(self.forgejo), Server(self.komodo), Server(self.npm), Server(self.npm.proxy), Server(self.infisical), Server(self.adguard)]
+        self.technitium = FakeTechnitium(password=PASSWORD)
+        self.servers = [Server(self.forgejo), Server(self.komodo), Server(self.npm), Server(self.npm.proxy), Server(self.infisical), Server(self.adguard),
+                        Server(self.technitium)]
         self.state_dir = tempfile.mkdtemp()
         shutil.copytree(pathlib.Path(__file__).parent.parent / "seed-stub", self.state_dir + "/seed-stub")      # /seed-stub in the image
         seed = pathlib.Path(self.state_dir) / "seed"
@@ -45,10 +47,10 @@ class Stack:
         (seed / "inventory/ingress.yaml").write_text(INGRESS_YAML)
         (seed / "external").mkdir()
         (seed / "external/ingress.yaml").write_text(EXTERNAL_YAML)
-        f, k, n, p, i, a = (s.url for s in self.servers)
+        f, k, n, p, i, a, t = (s.url for s in self.servers)
         self.env = {"ADMIN_USER": "admin", "ADMIN_EMAIL": "admin@example.org", "ADMIN_PASSWORD": PASSWORD, "DOMAIN": "home.lab", "HOST_IP": "192.168.1.10",
                     "DNS_MODE": dns_mode, "DATA_DIR": "/srv/hg", "KOMODO_WEBHOOK_SECRET": "hook-secret", "STATE_DIR": self.state_dir, "SEED_DIR": self.state_dir + "/seed", "CREDENTIALS_DIR": self.state_dir + "/credentials",
-                    "FORGEJO_URL": f, "KOMODO_URL": k, "NPM_URL": n, "NPM_PROXY_URL": p, "INFISICAL_URL": i, "ADGUARD_URL": a, "ADGUARD_SETUP_URL": a}
+                    "FORGEJO_URL": f, "KOMODO_URL": k, "NPM_URL": n, "NPM_PROXY_URL": p, "INFISICAL_URL": i, "ADGUARD_URL": a, "ADGUARD_SETUP_URL": a, "TECHNITIUM_URL": t}
 
     def close(self):
         for s in self.servers:
@@ -123,6 +125,23 @@ class RunTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(s.adguard.rewrites, [{"domain": "*.home.lab", "answer": "192.168.1.10"}])
         self.assertIn("point your router's DHCP", out)
+
+    def test_technitium_mode_sets_up_the_dns_and_says_how_to_sign_in(self):
+        s = self.stack(dns_mode="technitium")
+        code, out, _ = s.run()
+        self.assertEqual(code, 0)
+        self.assertEqual(s.technitium.zones, {"home.lab"})
+        self.assertEqual([(r["domain"], r["ipAddress"]) for r in s.technitium.records], [("*.home.lab", "192.168.1.10")])
+        self.assertEqual(s.adguard.rewrites, [])                       # the other DNS server is not touched
+        self.assertIn("point your router's DHCP", out)
+        self.assertIn("Technitium DNS", out)
+        self.assertIn("user admin (not the e-mail address)", out)
+
+    def test_other_modes_leave_technitium_alone(self):
+        for mode in ("external", "adguard"):
+            s = self.stack(dns_mode=mode)
+            self.assertEqual(s.run()[0], 0)
+            self.assertEqual((s.technitium.zones, s.technitium.tokens), (set(), set()))
 
     def test_a_failing_step_stops_with_the_cause_and_leaves_what_is_done(self):
         s = self.stack()

@@ -68,7 +68,7 @@ The goal: start from zero with a stack like the author's by answering a few ques
 Infisical, Nginx Proxy Manager and homegraf together, and a bootstrap container configures them against each other.
 
 ```bash
-./setup.sh                  # the host's address, how names reach it (sslip.io, AdGuard Home in the stack, or your own DNS), the administrator
+./setup.sh                  # the host's address, how names reach it (Technitium DNS in the stack, the default; AdGuard Home; your own DNS; or sslip.io), the administrator
 docker compose up -d --wait # about a minute; then: docker compose logs bootstrap
 ```
 

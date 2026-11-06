@@ -33,7 +33,7 @@ services:
     entrypoint:
       - /bin/sh
       - -c
-      - . /repo/infra/secrets/provisioner.env && exec python /repo/infra/komodo/reconcile_stacks.py "$$@"
+      - '[ -f /repo/infra/secrets/provisioner.env ] || { echo "no infra/secrets/provisioner.env (infra/infisical/provisioner.py --apply): reconcile skipped"; exit 0; }; . /repo/infra/secrets/provisioner.env && exec python /repo/infra/komodo/reconcile_stacks.py "$$@"
       - reconcile
     command: ["--apply"]
     environment:

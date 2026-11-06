@@ -62,7 +62,7 @@ def fixtures(tmp_path, komodo, build=False):
     d = tmp_path / "stacks/mlflow"
     d.mkdir(parents=True)
     (d / "compose.yaml").write_text(
-        "services: {a: {image: x, environment: [P=${POSTGRES_PASSWORD}, Q=${OPT:-d}, R=$${ESC}]}}\n")
+        "services: {a: {image: x, environment: [P=${POSTGRES_PASSWORD}, P2=${POSTGRES_PASSWORD}, Q=${OPT:-d}, R=$${ESC}]}}\n")
 
     def create_stack(entry, config):
         komodo.stacks[entry["komodo_stack"]] = dict(config)

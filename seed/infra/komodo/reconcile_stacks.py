@@ -50,7 +50,9 @@ def required_vars(root: pathlib.Path, entry: dict) -> list[str]:
     for name in entry["compose_files"]:
         path = root / entry["path"] / name
         if path.is_file():
-            found += [v for v in _REQUIRED.findall(path.read_text()) if v not in found]
+            for v in _REQUIRED.findall(path.read_text()):
+                if v not in found:
+                    found.append(v)
     return found
 
 

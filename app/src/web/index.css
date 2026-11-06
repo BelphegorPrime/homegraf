@@ -156,13 +156,9 @@
 }
 
 @layer components {
-  .app { @apply flex h-full flex-col; }
-  .app > header { @apply flex flex-wrap items-center gap-3 border-b bg-card px-4 py-2; }
-  .app > header h1 { @apply m-0 text-base font-semibold tracking-tight; }
-  .app > header nav { @apply flex flex-1 flex-wrap gap-1; }
   .toolbar { @apply flex flex-wrap items-center gap-4 px-4 py-2 text-muted-foreground; }
   .muted { @apply text-muted-foreground; }
-  main { @apply flex min-h-0 flex-1; }
+  .workspace { @apply flex min-h-0 flex-1; }
   .canvas { @apply relative min-w-0 flex-1 overflow-auto; }
   .empty { @apply px-4 py-6 text-muted-foreground; }
   .warning { @apply m-0 px-4 py-2 text-warn; }
@@ -181,16 +177,6 @@
   .t-machine { border-left-color: var(--t-machine); } .t-stack { border-left-color: var(--t-stack); } .t-container { border-left-color: var(--t-container); }
   .t-domain { border-left-color: var(--t-domain); } .t-infra { border-left-color: var(--t-infra); } .t-service { border-left-color: var(--t-service); }
   .t-isp, .t-router, .t-switch, .t-device { border-left-color: var(--t-net); }
-  .react-flow { --xy-background-color: var(--background); --xy-edge-stroke: var(--muted-foreground); }
-  .react-flow__edge-path { stroke: var(--muted-foreground); }
-  .react-flow__edge-text { fill: var(--muted-foreground); font-size: 11px; font-family: var(--font-mono); }
-  .react-flow__edge-textbg { fill: var(--background); }
-  .react-flow__arrowhead polyline { stroke: var(--muted-foreground); fill: var(--muted-foreground); }
-  .react-flow__controls-button { @apply border-border bg-card text-foreground hover:bg-muted; }
-  .react-flow__controls-button svg { fill: currentColor; }
-  .react-flow__minimap { @apply rounded-md border bg-card; }
-  .react-flow__minimap-node { fill: var(--muted-foreground); stroke: none; }
-  .react-flow__node { font-family: var(--font-mono); }
 
   /* lists */
   .list { @apply px-4 pb-8 pt-2; }
@@ -218,7 +204,7 @@
   .detail a { @apply text-primary; }
   .close { @apply absolute right-2 top-2; }
   .link { @apply cursor-pointer border-0 bg-transparent p-0 text-primary underline underline-offset-4; font: inherit; }
-  @media (max-width: 720px) { .detail { @apply fixed inset-x-0 bottom-0 top-auto max-h-[55%] w-auto border-l-0 border-t; } .app > header { @apply gap-2; } }
+  @media (max-width: 720px) { .detail { @apply fixed inset-x-0 bottom-0 top-auto max-h-[55%] w-auto border-l-0 border-t; } }
 
   /* New app */
   .grid { @apply grid items-start gap-x-4 gap-y-3; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
@@ -275,3 +261,25 @@
   .template-note-head { @apply mb-1 flex flex-wrap items-center gap-2; }
   .template-actions { @apply mt-3 flex flex-wrap gap-2; }
 }
+
+/* React Flow's own stylesheet is not in a layer, so theming it from @layer components loses: these stay outside. */
+.react-flow {
+  --xy-background-color: var(--background);
+  --xy-edge-stroke: var(--muted-foreground);
+  --xy-minimap-background-color: var(--card);
+  --xy-minimap-mask-background-color: color-mix(in oklch, var(--background) 70%, transparent);
+  --xy-minimap-node-background-color: var(--muted-foreground);
+  --xy-controls-button-background-color: var(--card);
+  --xy-controls-button-background-color-hover: var(--muted);
+  --xy-controls-button-color: var(--foreground);
+  --xy-controls-button-color-hover: var(--foreground);
+  --xy-controls-button-border-color: var(--border);
+}
+.react-flow__edge-path { stroke: var(--muted-foreground); }
+.react-flow__edge-text { fill: var(--muted-foreground); font-size: 11px; font-family: var(--font-mono); }
+.react-flow__edge-textbg { fill: var(--background); }
+.react-flow__arrowhead polyline { stroke: var(--muted-foreground); fill: var(--muted-foreground); }
+.react-flow__controls-button svg { fill: currentColor; }
+.react-flow__minimap { border: 1px solid var(--border); border-radius: var(--radius-md); }
+.react-flow__minimap-node { stroke: none; }
+.react-flow__node { font-family: var(--font-mono); }

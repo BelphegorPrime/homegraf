@@ -23,6 +23,25 @@ services:
       - ../..:/repo:ro                                    # Checkout (Komodo-Repo-Klon)
       - state:/var/lib/ingressctl   # SQLite-State, Locks, Pending-Schlüssel (sichern!); Rechte aus dem Image (uid 10001)
 
+  # Stage 1 of ingress-apply: stacks that exist only as a folder with ingress.yaml get their secrets, Komodo stack and
+  # first deploy (infra/komodo/reconcile_stacks.py). Same image; needs infra/secrets/provisioner.env.
+  reconcile:
+    image: ingressctl:local
+    profiles: [reconcile]   # not started by DeployStack, only by RunStackService
+    restart: "no"
+    working_dir: /repo
+    entrypoint:
+      - /bin/sh
+      - -c
+      - . /repo/infra/secrets/provisioner.env && exec python /repo/infra/komodo/reconcile_stacks.py "$$@"
+      - reconcile
+    command: ["--apply"]
+    environment:
+      HOMELAB_ROOT: /repo
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ../..:/repo:ro
+
 volumes:
   state:
     name: ingressctl-state

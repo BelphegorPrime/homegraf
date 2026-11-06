@@ -8,21 +8,29 @@ export interface ViewDef {
   hint: string;
   /** Graph views are drawn with React Flow; the others are lists or a form. */
   kind: "graph" | "list" | "form";
+  /** The sidebar icon: the name of a lucide icon (see ICONS in App.tsx). */
+  icon: string;
+  /** The sidebar group it is listed under. */
+  group: ViewGroup;
 }
 
+/** The sidebar's groups, in order: what is there, how it hangs together, what you can change. */
+export type ViewGroup = "Overview" | "Maps" | "Manage";
+export const VIEW_GROUPS: ViewGroup[] = ["Overview", "Maps", "Manage"];
+
 export const VIEWS: ViewDef[] = [
-  { id: "catalog", label: "Catalog", hint: "Every service with its links", kind: "list" },
-  { id: "hosting", label: "Hosting", hint: "Which machine runs which stack", kind: "graph" },
-  { id: "network", label: "Network", hint: "ISP, router, switches and machines", kind: "graph" },
-  { id: "request", label: "Request path", hint: "Domain, proxy and the container that answers", kind: "graph" },
-  { id: "dependencies", label: "Dependencies", hint: "What depends on what", kind: "graph" },
-  { id: "platform", label: "Platform", hint: "Komodo, Infisical, proxy and CA and who uses them", kind: "graph" },
-  { id: "status", label: "Status", hint: "Everything that is not healthy", kind: "list" },
-  { id: "certificates", label: "Certificates", hint: "When each domain's certificate ends", kind: "list" },
-  { id: "new", label: "New app", hint: "Plan a new app: compose, Komodo stack, domain and secrets", kind: "form" },
-  { id: "remove", label: "Remove app", hint: "Destroy an app's stack, remove its files, routing and secrets", kind: "form" },
-  { id: "stacks", label: "Stacks", hint: "Redeploy a stack and manage its secrets", kind: "form" },
-  { id: "users", label: "Users", hint: "Who may create apps and manage users", kind: "form" },
+  { id: "catalog", label: "Catalog", hint: "Every service with its links", kind: "list", icon: "LayoutGrid", group: "Overview" },
+  { id: "hosting", label: "Hosting", hint: "Which machine runs which stack", kind: "graph", icon: "Server", group: "Maps" },
+  { id: "network", label: "Network", hint: "ISP, router, switches and machines", kind: "graph", icon: "Network", group: "Maps" },
+  { id: "request", label: "Request path", hint: "Domain, proxy and the container that answers", kind: "graph", icon: "Route", group: "Maps" },
+  { id: "dependencies", label: "Dependencies", hint: "What depends on what", kind: "graph", icon: "Workflow", group: "Maps" },
+  { id: "platform", label: "Platform", hint: "Komodo, Infisical, proxy and CA and who uses them", kind: "graph", icon: "Layers", group: "Maps" },
+  { id: "status", label: "Status", hint: "Everything that is not healthy", kind: "list", icon: "Activity", group: "Overview" },
+  { id: "certificates", label: "Certificates", hint: "When each domain's certificate ends", kind: "list", icon: "ShieldCheck", group: "Overview" },
+  { id: "new", label: "New app", hint: "Plan a new app: compose, Komodo stack, domain and secrets", kind: "form", icon: "PlusCircle", group: "Manage" },
+  { id: "remove", label: "Remove app", hint: "Destroy an app's stack, remove its files, routing and secrets", kind: "form", icon: "Trash2", group: "Manage" },
+  { id: "stacks", label: "Stacks", hint: "Redeploy a stack and manage its secrets", kind: "form", icon: "Boxes", group: "Manage" },
+  { id: "users", label: "Users", hint: "Who may create apps and manage users", kind: "form", icon: "Users", group: "Manage" },
 ];
 
 export interface Sub {

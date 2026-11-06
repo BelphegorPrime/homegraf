@@ -14,6 +14,7 @@ import { domainOfLog, type CreationStore, type CreationTracker } from "./creatio
 import type { Authenticator, Denied, Principal } from "./auth.js";
 import { cookieValue, SESSION_COOKIE, STATE_COOKIE, type Oidc } from "./oidc.js";
 import { ADMIN, UserError, type UserStore } from "./users.js";
+import { createSessions, LOGIN_COOKIE } from "./sessions.js";
 import { PERMISSIONS, type Permission, type UserInfo } from "../shared/types.js";
 
 export interface CreateDeps {
@@ -63,6 +64,8 @@ const refusal: Record<Denied, [401 | 429 | 503, string]> = {
   disabled: [503, "signing in is off: HOMEGRAF_PASSWORD is not set"],
 };
 
+const basicHeader = (name: string, password: string) => `Basic ${Buffer.from(`${name}:${password}`).toString("base64")}`;
+
 type Env = { Variables: { principal: Principal } };
 
 export interface Deps {
@@ -89,25 +92,42 @@ export interface Deps {
 export function createApp({ loadGraph, status, webDir, plan, preview, addons, templates, unifi, certificates, create, users, removal, creations, hosts, stacks, sso }: Deps) {
   const app = new Hono<Env>();
 
-  /** Signs the request in (a cookie session of the identity provider, else name and password), and, when a permission is named, checks that the user has it. */
-  const authorize = (permission?: Permission) => createMiddleware<Env>(async (c, next) => {
-    const session = sso?.oidc?.principal(cookieValue(c.req.header("cookie"), SESSION_COOKIE));
+  const sessions = createSessions({ users: users.store, admin: users.admin });
+  const isSecure = (c: Context) => c.req.header("x-forwarded-proto") === "https" || c.req.url.startsWith("https:");
+
+  /** Who the request is: a cookie session (the login page, or the identity provider), else name and password in the Authorization header (scripts). */
+  const identify = async (c: Context): Promise<{ ok: true; principal: Principal } | { ok: false; status: 401 | 429 | 503; error: string } | { ok: false; status: 403; error: string }> => {
+    const cookies = c.req.header("cookie");
+    const session = sso?.oidc?.principal(cookieValue(cookies, SESSION_COOKIE)) ?? sessions.principal(cookieValue(cookies, LOGIN_COOKIE));
     if (session) {
       // A cookie goes along with every request a page of another site makes; the token only this page knows keeps those out.
       if (!["GET", "HEAD"].includes(c.req.method) && c.req.header("x-csrf-token") !== session.csrf) {
-        return c.json({ error: "this page's session token is missing: reload the page and try again" }, 403);
+        return { ok: false, status: 403, error: "this page's session token is missing: reload the page and try again" };
       }
-      if (permission && !session.principal.permissions.includes(permission)) return c.json({ error: `${session.principal.name} may not do this (needs ${permission})` }, 403);
-      c.set("principal", session.principal);
-      return next();
+      return { ok: true, principal: session.principal };
     }
     const result = await users.authenticate(c.req.header("authorization"));
     if (!result.ok) {
       const [status, error] = refusal[result.reason];
-      return c.json({ error }, status);
+      return { ok: false, status, error } as { ok: false; status: 401 | 429 | 503; error: string };
     }
-    if (permission && !result.principal.permissions.includes(permission)) return c.json({ error: `${result.principal.name} may not do this (needs ${permission})` }, 403);
-    c.set("principal", result.principal);
+    return { ok: true, principal: result.principal };
+  };
+
+  /** Signs the request in and, when a permission is named, checks that the user has it. */
+  const authorize = (permission?: Permission) => createMiddleware<Env>(async (c, next) => {
+    const who = await identify(c);
+    if (!who.ok) return c.json({ error: who.error }, who.status);
+    if (permission && !who.principal.permissions.includes(permission)) return c.json({ error: `${who.principal.name} may not do this (needs ${permission})` }, 403);
+    c.set("principal", who.principal);
+    await next();
+  });
+
+  // Everything behind the sign-in: only the health probe and the sign-in itself are open (the page is served to anybody, it is only a login form then).
+  app.use("/api/*", async (c, next) => {
+    if (c.req.path === "/api/health" || c.req.path.startsWith("/api/auth/")) return next();
+    const who = await identify(c);
+    if (!who.ok) return c.json({ error: who.error }, who.status);
     await next();
   });
 
@@ -116,9 +136,26 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
   // Single sign-on: the page asks who is signed in; /login sends the browser to the provider, /callback is where it comes back.
   app.get("/api/auth/session", (c) => {
     const oidc = sso?.oidc;
-    if (!oidc) return c.json({ enabled: false, problem: sso?.problem } satisfies SsoSession);
-    const s = oidc.principal(cookieValue(c.req.header("cookie"), SESSION_COOKIE));
-    return c.json({ enabled: true, label: oidc.cfg.label, user: s && { name: s.principal.name, permissions: s.principal.permissions, csrf: s.csrf } } satisfies SsoSession);
+    const cookies = c.req.header("cookie");
+    const s = oidc?.principal(cookieValue(cookies, SESSION_COOKIE)) ?? sessions.principal(cookieValue(cookies, LOGIN_COOKIE));
+    return c.json({
+      enabled: !!oidc, label: oidc?.cfg.label, problem: oidc ? undefined : sso?.problem,
+      password: users.enabled ? { enabled: true } : { enabled: false, reason: "HOMEGRAF_PASSWORD is not set" },
+      user: s && { name: s.principal.name, permissions: s.principal.permissions, csrf: s.csrf, source: s.principal.source },
+    } satisfies SsoSession);
+  });
+  // The login page's form: a name and a password, answered with a cookie session.
+  app.post("/api/auth/password", async (c) => {
+    const given = await c.req.json().catch(() => null) as { name?: unknown; password?: unknown } | null;
+    if (typeof given?.name !== "string" || typeof given.password !== "string") return c.json({ error: "give a user name and a password" }, 400);
+    const result = await users.authenticate(basicHeader(given.name, given.password));
+    if (!result.ok) {
+      const [status, error] = refusal[result.reason];
+      return c.json({ error }, status);
+    }
+    const id = sessions.open(result.principal);
+    c.header("Set-Cookie", sessions.cookie(id, isSecure(c)));
+    return c.json({ name: result.principal.name });
   });
   app.get("/api/auth/login", async (c) => {
     if (!sso?.oidc) return c.json({ error: "single sign-on is not set up" }, 404);
@@ -127,20 +164,22 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
       c.header("Set-Cookie", stateCookie);
       return c.redirect(location, 302);
     } catch (err) {
-      return c.redirect(`/?sso_error=${encodeURIComponent(err instanceof Error ? err.message : String(err))}#users`, 302);
+      return c.redirect(`/?sso_error=${encodeURIComponent(err instanceof Error ? err.message : String(err))}`, 302);
     }
   });
   app.get("/api/auth/callback", async (c) => {
     if (!sso?.oidc) return c.json({ error: "single sign-on is not set up" }, 404);
     const result = await sso.oidc.callback({ code: c.req.query("code"), state: c.req.query("state"), error: c.req.query("error") }, cookieValue(c.req.header("cookie"), STATE_COOKIE));
     c.header("Set-Cookie", sso.oidc.clearStateCookie(), { append: true });
-    if (!result.ok) return c.redirect(`/?sso_error=${encodeURIComponent(result.error)}#users`, 302);
+    if (!result.ok) return c.redirect(`/?sso_error=${encodeURIComponent(result.error)}`, 302);
     c.header("Set-Cookie", sso.oidc.sessionCookie(result.sessionId, result.maxAgeSeconds), { append: true });
     return c.redirect("/", 302);
   });
   app.post("/api/auth/logout", (c) => {
     sso?.oidc?.logout(cookieValue(c.req.header("cookie"), SESSION_COOKIE));
+    sessions.close(cookieValue(c.req.header("cookie"), LOGIN_COOKIE));
     if (sso?.oidc) c.header("Set-Cookie", sso.oidc.clearSessionCookie());
+    c.header("Set-Cookie", sessions.clearCookie(isSecure(c)), { append: true });
     return c.body(null, 204);
   });
 

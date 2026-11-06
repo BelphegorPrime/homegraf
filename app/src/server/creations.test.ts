@@ -7,7 +7,7 @@ import { applier, type Spawn } from "./apply.js";
 import { authenticator } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { creationStore, domainOfLog, stackStateReader } from "./creations.js";
-import { testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
+import { signedInReads, testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
 import { userStore } from "./users.js";
 
 const env = {
@@ -114,7 +114,7 @@ describe("creating an app records it for following", () => {
     const users = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
     await users.add("alice", "alice may create", ["apps:create"]);
     const creations = testCreations({ pulls: { [PR]: "open" } });
-    const app = createApp({
+    const app = signedInReads(createApp({
       loadGraph: async () => { throw new Error("unused"); },
       status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
       webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
@@ -123,7 +123,7 @@ describe("creating an app records it for following", () => {
       create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
       users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
       removal: testRemoval(), creations, hosts: testHosts(), stacks: testStacks(),
-    });
+    }), "pw-1234");
     const res = await app.request("/api/apps/create", {
       method: "POST", body: JSON.stringify(PLAN),
       headers: { "content-type": "application/json", authorization: `Basic ${Buffer.from("alice:alice may create").toString("base64")}` },

@@ -46,3 +46,17 @@ export function testCreations(
 export function testHosts(list: HostInfo[] = [], rootCa: HostsDeps["rootCa"] = () => null): HostsDeps {
   return { list: async () => list, rootCa };
 }
+
+/**
+ * The app as somebody signed in, for the read routes (GET): every route is behind the sign-in now, and those tests are about what a route
+ * answers, not about who may ask. Requests that bring their own `Authorization` or cookie, and every write, go through as they are.
+ */
+export function signedInReads<A extends { request: (path: string, init?: RequestInit) => Response | Promise<Response> }>(app: A, password: string, name = "admin"): A {
+  const auth = `Basic ${Buffer.from(`${name}:${password}`).toString("base64")}`;
+  const request = (path: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    if ((init.method ?? "GET") === "GET" && !headers.has("authorization") && !headers.has("cookie")) headers.set("authorization", auth);
+    return app.request(path, { ...init, headers });
+  };
+  return new Proxy(app, { get: (target, prop, receiver) => (prop === "request" ? request : Reflect.get(target, prop, receiver)) });
+}

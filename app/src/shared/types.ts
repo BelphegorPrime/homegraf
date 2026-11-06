@@ -331,5 +331,8 @@ export interface SsoSession {
   label?: string;
   /** Why it is off although some of its settings are there. */
   problem?: string;
-  user?: { name: string; permissions: Permission[]; /** Sent back as X-CSRF-Token with every write request. */ csrf: string };
+  /** Name and password sign-in: off without HOMEGRAF_PASSWORD. */
+  password: { enabled: boolean; reason?: string };
+  /** Who is signed in, by either way. */
+  user?: { name: string; permissions: Permission[]; /** Sent back as X-CSRF-Token with every write request. */ csrf: string; source: "builtin" | "user" | "sso" };
 }

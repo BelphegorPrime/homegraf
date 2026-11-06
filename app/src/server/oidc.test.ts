@@ -261,9 +261,9 @@ describe("the routes", () => {
   }
 
   it("says whether single sign-on is on, and why not when it is half set up", async () => {
-    expect(await (await (await build(false)).app.request("/api/auth/session")).json()).toEqual({ enabled: false, problem: "single sign-on needs OIDC_ISSUER as well" });
+    expect(await (await (await build(false)).app.request("/api/auth/session")).json()).toEqual({ enabled: false, problem: "single sign-on needs OIDC_ISSUER as well", password: { enabled: true } });
     const { app } = await build();
-    expect(await (await app.request("/api/auth/session")).json()).toEqual({ enabled: true, label: "id.example" });
+    expect(await (await app.request("/api/auth/session")).json()).toEqual({ enabled: true, label: "id.example", password: { enabled: true } });
     expect((await (await build(false)).app.request("/api/auth/login")).status).toBe(404);
   });
 
@@ -282,7 +282,7 @@ describe("the routes", () => {
     const { app } = await build();
     const res = await app.request("/api/auth/callback?code=x&state=nope");
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toMatch(/^\/\?sso_error=.*#users$/);
+    expect(res.headers.get("location")).toMatch(/^\/\?sso_error=[^#]*$/);
     expect(decodeURIComponent(res.headers.get("location")!)).toContain("start it again");
   });
 

@@ -6,12 +6,12 @@ import { createApp } from "./app.js";
 import { applier } from "./apply.js";
 import { authenticator } from "./auth.js";
 import { loadConfig } from "./config.js";
-import { testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
+import { signedInReads, testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
 import { userStore } from "./users.js";
 
 const appWith = (loadGraph: () => Promise<never>) => {
   const store = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
-  return createApp({
+  return signedInReads(createApp({
     loadGraph,
     status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
     webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
@@ -20,7 +20,7 @@ const appWith = (loadGraph: () => Promise<never>) => {
     create: { problem: undefined, applier: applier({ cfg: loadConfig({}) }) },
     users: { enabled: true, store, authenticate: authenticator({ adminPassword: "pw", users: store }) },
     removal: testRemoval(), creations: testCreations(), hosts: testHosts(), stacks: testStacks(),
-  });
+  }), "pw");
 };
 
 describe("GET /api/graph when the graph cannot be built", () => {

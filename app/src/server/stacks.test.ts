@@ -6,7 +6,7 @@ import { createApp } from "./app.js";
 import { applier, type Spawn } from "./apply.js";
 import { authenticator } from "./auth.js";
 import { loadConfig } from "./config.js";
-import { testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
+import { signedInReads, testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
 import { userStore } from "./users.js";
 
 const cfg = loadConfig({
@@ -25,7 +25,7 @@ async function build(answer?: Parameters<typeof testStacks>[1]) {
   await users.add("sam", "sam manages secrets", ["secrets:manage"]);
   await users.add("dee", "dee may deploy things", ["stacks:deploy"]);
   const tool = testStacks([paperless, aws], answer);
-  const app = createApp({
+  const app = signedInReads(createApp({
     loadGraph: async () => { throw new Error("unused"); },
     status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
     webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
@@ -34,7 +34,7 @@ async function build(answer?: Parameters<typeof testStacks>[1]) {
     create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
     users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
     removal: testRemoval(), creations: testCreations(), hosts: testHosts(), stacks: tool,
-  });
+  }), "pw-1234");
   const call = (method: string, path: string, auth?: string, body?: unknown) => app.request(path, {
     method, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
@@ -55,7 +55,7 @@ describe("secrets", () => {
   it("need secrets:manage, even to see the names", async () => {
     const { call, tool } = await build();
     for (const [m, p, b] of [["GET", "/api/stacks/paperless/secrets"], ["PUT", "/api/stacks/paperless/secrets/KEY", undefined, { value: "x" }], ["DELETE", "/api/stacks/paperless/secrets/KEY"]] as const) {
-      expect((await call(m, p, undefined, b)).status).toBe(401);
+      expect((await call(m, p, `Basic ${Buffer.from("nobody:wrong").toString("base64")}`, b)).status).toBe(401);
       expect((await call(m, p, dee, b)).status).toBe(403);
     }
     expect(tool.calls).toEqual([]);

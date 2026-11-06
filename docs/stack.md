@@ -21,7 +21,7 @@ To run next to other things change the ports and `PROJECT_PREFIX`.
 Infisical and AdGuard Home, and of Forgejo (whose own user name, `owner`, also works). Infisical's policy is the strictest, so `setup.sh` asks for
 **14 characters or more with a letter and a digit** (or special character); a generated one always fits.
 
-**Sign in with Forgejo.** homegraf's sign-in page offers "Forgejo" next to the password: the accounts of the stack's own Forgejo are the users
+**Sign in with Forgejo.** Everything of homegraf is behind its login page (the map and the status too; only `/api/health` is open for the container's health check). The page offers "Forgejo" next to the password: the accounts of the stack's own Forgejo are the users
 of homegraf. The bootstrap hands homegraf the application (`OIDC_ISSUER=http://git.<domain>`, client id and secret, `HOMEGRAF_URL`) and names the
 Forgejo administrator (`FORGEJO_ADMIN_USER`) in `OIDC_ADMINS`: at the first sign-in that account becomes an entry of the Users tab with every permission,
 bound to the Forgejo account. Everybody else is added in the Users tab by their Forgejo name, with the permissions they should have. Forgejo asks

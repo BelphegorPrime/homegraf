@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PERMISSIONS, type Permission, type UserInfo } from "../shared/types";
-import { rememberedUser, rememberUser, signedIn, useCapabilities, useSso, type Session } from "./api";
+import { signedIn, useCapabilities, useSso, type Session } from "./api";
 
 const PERMISSION_IDS = Object.keys(PERMISSIONS) as Permission[];
 
@@ -29,51 +29,12 @@ function PermissionChecks({ value, onChange, disabled }: { value: Permission[]; 
   );
 }
 
-/** Why the last single sign-on did not work, as the server put it in the address; shown once and removed from the address. */
-function ssoError(): string | null {
-  const q = new URLSearchParams(location.search);
-  const error = q.get("sso_error");
-  if (error) { q.delete("sso_error"); history.replaceState(null, "", `${location.pathname}${q.size ? `?${q}` : ""}${location.hash}`); }
-  return error;
-}
-
-export function SignIn({ onSignedIn }: { onSignedIn: (s: Session, me: Me) => void }) {
-  const sso = useSso().data;
-  const [ssoFailure] = useState(ssoError);
-  const [name, setName] = useState(rememberedUser);
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const login = useMutation({
-    mutationFn: async () => ({ session: { name: name.trim(), password }, me: await signedIn<Me>({ name: name.trim(), password }, "GET", "/api/me") }),
-    onSuccess: ({ session, me }) => { rememberUser(session.name); setPassword(""); onSignedIn(session, me); },
-    onError: (e) => { setPassword(""); setError(message(e)); },
-  });
-  return (
-    <form className="max-w-sm" onSubmit={(e) => { e.preventDefault(); setError(null); login.mutate(); }}>
-      <p className="muted">Sign in to manage users or to see what you may do. The map itself needs no sign-in.</p>
-      {(ssoFailure || sso?.problem) && <p className="warning !px-0">{ssoFailure ?? sso?.problem}</p>}
-      {sso?.enabled && (
-        <div className="actions">
-          <Button nativeButton={false} render={<a href="/api/auth/login" />}>Sign in with {sso.label ?? "single sign-on"}</Button>
-          <span className="muted">or with a name and password:</span>
-        </div>
-      )}
-      <div className="grid gap-2">
-        <Input autoComplete="username" placeholder="User name" aria-label="User name" value={name} onChange={(e) => setName(e.target.value)} />
-        <Input type="password" autoComplete="current-password" placeholder="Password" aria-label="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      </div>
-      <div className="actions"><Button type="submit" disabled={!name.trim() || !password || login.isPending}>Sign in</Button></div>
-      {error && <p className="warning !px-0">{error}</p>}
-    </form>
-  );
-}
-
-function ChangePassword({ session, onChanged }: { session: Session; onChanged: (password: string) => void }) {
+function ChangePassword({ session }: { session: Session }) {
   const [password, setPassword] = useState("");
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const change = useMutation({
     mutationFn: () => signedIn(session, "PUT", "/api/me/password", { password }),
-    onSuccess: () => { onChanged(password); setPassword(""); setNote({ ok: true, text: "Password changed." }); },
+    onSuccess: () => { setPassword(""); setNote({ ok: true, text: "Password changed." }); },
     onError: (e) => setNote({ ok: false, text: message(e) }),
   });
   return (
@@ -171,25 +132,20 @@ function Manage({ session }: { session: Session }) {
   );
 }
 
-export function Users({ session, onSession }: { session: Session | null; onSession: (s: Session | null) => void }) {
+export function Users({ session }: { session: Session }) {
   const caps = useCapabilities().data?.users;
-  const me = useQuery({ queryKey: ["me", session?.name, !!session?.sso], enabled: !!session, retry: false, queryFn: () => signedIn<Me>(session!, "GET", "/api/me") });
+  const me = useQuery({ queryKey: ["me", session.name], retry: false, queryFn: () => signedIn<Me>(session, "GET", "/api/me") });
   if (caps && !caps.enabled) return <div className="list"><p className="muted">Users are off{caps.reason ? ` (${caps.reason})` : ""}.</p></div>;
   return (
     <div className="list">
       {caps?.reason && <p className="warning !px-0">{caps.reason}</p>}
-      {!session || !me.data ? (
-        <>
-          {me.isError && <p className="warning !px-0">{message(me.error)}</p>}
-          <SignIn onSignedIn={(s) => onSession(s)} />
-        </>
-      ) : (
+      {me.isError && <p className="warning !px-0">{message(me.error)}</p>}
+      {me.data && (
         <>
           <p>
-            Signed in as <strong>{me.data.name}</strong>{me.data.source === "sso" ? " through single sign-on" : ""}. May: {me.data.permissions.length ? me.data.permissions.map((p) => <Badge key={p} variant="outline" className="mr-1" title={PERMISSIONS[p]}>{p}</Badge>) : <span className="muted">look only</span>}{" "}
-            <Button type="button" variant="ghost" size="sm" onClick={() => onSession(null)}>Sign out</Button>
+            Signed in as <strong>{me.data.name}</strong>{me.data.source === "sso" ? " through single sign-on" : ""}. May: {me.data.permissions.length ? me.data.permissions.map((p) => <Badge key={p} variant="outline" className="mr-1" title={PERMISSIONS[p]}>{p}</Badge>) : <span className="muted">look only</span>}
           </p>
-          {me.data.source === "user" && <ChangePassword session={session} onChanged={(password) => onSession({ ...session, password })} />}
+          {me.data.source === "user" && <ChangePassword session={session} />}
           {me.data.permissions.includes("users:manage") && <Manage session={session} />}
         </>
       )}

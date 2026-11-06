@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import type { ManagedStack, SecretKey } from "../shared/types";
 import { signedIn, startJob, useCapabilities, useStacks, type Session } from "./api";
-import { SignIn, type Me } from "./Users";
+import type { Me } from "./Users";
 import { useJob } from "./useJob";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -102,30 +102,22 @@ function Secrets({ stack, session, changed }: { stack: ManagedStack; session: Se
   );
 }
 
-export function Stacks({ session, onSession }: { session: Session | null; onSession: (s: Session | null) => void }) {
+export function Stacks({ session }: { session: Session }) {
   const caps = useCapabilities().data;
   const stacks = useStacks();
   const { job, follow } = useJob();
   const [stackId, setStackId] = useState("");
   const [changes, setChanges] = useState<string[]>([]);
   const stack = stacks.data?.find((s) => s.id === stackId);
-  const me = useQuery({ queryKey: ["me", session?.name], enabled: !!session, retry: false, queryFn: () => signedIn<Me>(session!, "GET", "/api/me") });
+  const me = useQuery({ queryKey: ["me", session.name], retry: false, queryFn: () => signedIn<Me>(session, "GET", "/api/me") });
 
   if (caps && !caps.create.enabled) return <div className="list"><p className="muted">Managing stacks from here is off{caps.create.reason ? ` (${caps.create.reason})` : ""}.</p></div>;
-  if (!session || !me.data) {
-    return (
-      <div className="list">
-        <p className="muted max-w-3xl">Redeploy a stack and manage its secrets. Needs the permissions <code>stacks:deploy</code> and <code>secrets:manage</code>.</p>
-        {me.isError && <p className="warning !px-0">{message(me.error)}</p>}
-        <SignIn onSignedIn={(s) => onSession(s)} />
-      </div>
-    );
-  }
+  if (!me.data) return <div className="list">{me.isError && <p className="warning !px-0">{message(me.error)}</p>}</div>;
   const can = (p: string) => me.data.permissions.includes(p as never);
   const startJobLog = (jobId: string) => follow(jobId, () => undefined);
   return (
     <div className="list">
-      <p>Signed in as <strong>{me.data.name}</strong>. <Button type="button" variant="ghost" size="sm" onClick={() => { onSession(null); setChanges([]); }}>Sign out</Button></p>
+      <p className="muted max-w-3xl">Redeploy a stack and manage its secrets. Needs the permissions <code>stacks:deploy</code> and <code>secrets:manage</code>.</p>
       {stacks.isError && <p className="warning !px-0">{stacks.error.message}</p>}
       <div className="max-w-xl">
         <Select aria-label="Stack" className="w-full" value={stackId} onValueChange={(v) => { setStackId(v); setChanges([]); }}

@@ -7,7 +7,7 @@ import { applier, type Spawn } from "./apply.js";
 import { authenticator } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { pullStateReader, removalStore } from "./removals.js";
-import { testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
+import { signedInReads, testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
 import { userStore } from "./users.js";
 
 const env = {
@@ -33,7 +33,7 @@ async function build(pulls: Record<string, "open" | "merged" | "closed" | "unkno
   await store.add("alice", "alice may remove apps", ["apps:remove"]);
   await store.add("bob", "bob may only create", ["apps:create"]);
   const removal = testRemoval([demo], pulls);
-  const app = createApp({
+  const app = signedInReads(createApp({
     loadGraph: async () => { throw new Error("unused"); },
     status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
     webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
@@ -43,7 +43,7 @@ async function build(pulls: Record<string, "open" | "merged" | "closed" | "unkno
     users: { enabled: true, store, authenticate: authenticator({ adminPassword: "pw-1234", users: store }) },
     removal, creations: testCreations(), hosts: testHosts(),
     stacks: testStacks(),
-  });
+  }), "pw-1234");
   const post = (path: string, body: unknown, auth?: string) => app.request(path, {
     method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
   });

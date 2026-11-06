@@ -95,7 +95,7 @@ describe("POST /api/apps/plan", () => {
     removal: testRemoval(), creations: testCreations(), hosts: testHosts(),
     stacks: testStacks(),
     create: { problem: undefined, applier: applier({ cfg: loadConfig({}) }) },
-    users: { enabled: true, authenticate: async () => ({ ok: false, reason: "missing" }), store: userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json")) },
+    users: { enabled: true, authenticate: async () => ({ ok: true, principal: { name: "admin", permissions: [], source: "builtin" } }), store: userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json")) },
   });
   const post = (body: unknown) => app.request("/api/apps/plan", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 
@@ -307,7 +307,7 @@ describe("preview and addons routes", () => {
     removal: testRemoval(), creations: testCreations(), hosts: testHosts(),
     stacks: testStacks(),
     create: { problem: undefined, applier: applier({ cfg: loadConfig({}) }) },
-    users: { enabled: true, authenticate: async () => ({ ok: false, reason: "missing" }), store: userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json")) },
+    users: { enabled: true, authenticate: async () => ({ ok: true, principal: { name: "admin", permissions: [], source: "builtin" } }), store: userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json")) },
   });
   const post = (body: unknown) => app.request("/api/apps/preview", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 

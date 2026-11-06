@@ -7,7 +7,7 @@ import { applier, type Spawn } from "./apply.js";
 import { authenticator } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { caBundlePath, describeBundle, rootCaSource } from "./rootCa.js";
-import { testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
+import { signedInReads, testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
 import { userStore } from "./users.js";
 import type { HostInfo } from "../shared/types.js";
 
@@ -75,7 +75,7 @@ async function build(rootCa: ReturnType<typeof rootCaSource> = () => null) {
   const users = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
   await users.add("alice", "alice may edit hosts", ["hosts:edit"]);
   await users.add("bob", "bob may only create", ["apps:create"]);
-  const app = createApp({
+  const app = signedInReads(createApp({
     loadGraph: async () => { throw new Error("unused"); },
     status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
     webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
@@ -84,7 +84,7 @@ async function build(rootCa: ReturnType<typeof rootCaSource> = () => null) {
     create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
     users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
     removal: testRemoval(), creations: testCreations(), hosts: testHosts([TDARR, PVE], rootCa), stacks: testStacks(),
-  });
+  }), "pw-1234");
   const post = (body: unknown, auth?: string) => app.request("/api/hosts/force-https", {
     method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
   });
@@ -94,7 +94,7 @@ async function build(rootCa: ReturnType<typeof rootCaSource> = () => null) {
 describe("downloading the CA certificate", () => {
   const withCa = rootCaSource(repoWith(ISSUERS("ca.pem"), { "ca.pem": CA }));
 
-  it("needs no sign-in: the file and what is in it", async () => {
+  it("serves the file and what is in it", async () => {
     const { app } = await build(withCa);
     const pem = await app.request("/api/ca.pem");
     expect(pem.status).toBe(200);

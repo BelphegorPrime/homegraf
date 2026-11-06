@@ -26,7 +26,7 @@ It is one container (a Hono API, a React app, and the Python tools that read the
 
 ## What it changes
 
-Every write action needs a signed-in user with the matching permission, and nothing reaches your main branch without a merge:
+Everything is behind a login page: nobody sees the map, the status or any API route without signing in (name and password, or an identity provider). Every write action then needs the matching permission, and nothing reaches your main branch without a merge. Someone signed in without any permission may look and nothing else:
 
 | Permission | Allows |
 | --- | --- |
@@ -44,15 +44,16 @@ The platform stacks (secrets store, proxy, homegraf itself, Komodo's own) are ne
 ```bash
 docker run -d --name homegraf --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
   -p 8080:8080 -v /path/to/your/infrastructure-checkout:/repo:ro \
+  -e HOMEGRAF_PASSWORD=choose-a-long-password \
   ghcr.io/belphegorprime/homegraf:main
 ```
 
-With only a repository mounted at `/repo` you get the map. The more of this you set, the more it does:
+With a repository mounted at `/repo` and a password you get the map; sign in as `admin` (`HOMEGRAF_ADMIN` renames it). Without `HOMEGRAF_PASSWORD` the login page says that signing in is off and nothing else is served. The more of this you set, the more it does:
 
 | Environment | Turns on |
 | --- | --- |
 | `KOMODO_URL`, `KOMODO_API_KEY`, `KOMODO_API_SECRET` | live status |
-| `HOMEGRAF_PASSWORD` | sign-in: the password of the built-in administrator; more users are added in the UI (kept in the `/data` volume) |
+| `HOMEGRAF_PASSWORD` | sign-in: the password of the built-in administrator; without it nobody gets past the login page; more users are added in the UI (kept in the `/data` volume) |
 | `HOMEGRAF_ADMIN` | the name of that administrator (default `admin`; the stack sets it to your e-mail address) |
 | `FORGEJO_TOKEN`, `HOMEGRAF_CLONE_URL`, `INFISICAL_URL`, `INFISICAL_BOOTSTRAP_CLIENT_ID`, `INFISICAL_BOOTSTRAP_CLIENT_SECRET` (plus the Komodo ones) | the write actions; they run in their own clone in the `/work` volume |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `HOMEGRAF_URL` | sign-in through an OpenID Connect provider (Forgejo, Keycloak, Authentik, ...) next to the password; who may do what is set by name in the UI |

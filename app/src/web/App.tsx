@@ -1,13 +1,16 @@
+import { ActivityIcon, BoxesIcon, LayersIcon, LayoutGridIcon, LogOutIcon, NetworkIcon, PlusCircleIcon, RouteIcon, ServerIcon, ShieldCheckIcon, Trash2Icon, UsersIcon, WorkflowIcon, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import {
-  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
+  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { useAuth, useCapabilities, useCertificates, useGraph, useStatus, type Session } from "./api";
+import { useAuth, useSso, useCapabilities, useCertificates, useGraph, useStatus, type Session } from "./api";
 import { certHealth } from "./certificateHealth";
 import { Detail } from "./Detail";
+import { Login } from "./Login";
 import { GraphView } from "./GraphView";
 import { Certificates } from "./Certificates";
 import { Catalog, StatusList } from "./Lists";
@@ -16,7 +19,7 @@ import { RemoveApp } from "./RemoveApp";
 import { Stacks } from "./Stacks";
 import { Users } from "./Users";
 import { ThemeToggle } from "./ThemeToggle";
-import { buildView, defaultOptions, VIEWS, type ViewId } from "./views";
+import { buildView, defaultOptions, VIEW_GROUPS, VIEWS, type ViewId } from "./views";
 
 const saved = (): ViewId => {
   try {
@@ -27,7 +30,18 @@ const saved = (): ViewId => {
   }
 };
 
-export function App() {
+/** The sidebar icon of each view (the names in views.ts). */
+const ICONS: Record<string, LucideIcon> = {
+  LayoutGrid: LayoutGridIcon, Activity: ActivityIcon, ShieldCheck: ShieldCheckIcon, Server: ServerIcon, Network: NetworkIcon, Route: RouteIcon,
+  Workflow: WorkflowIcon, Layers: LayersIcon, PlusCircle: PlusCircleIcon, Trash2: Trash2Icon, Boxes: BoxesIcon, Users: UsersIcon,
+};
+
+function ViewIcon({ name }: { name: string }) {
+  const Icon = ICONS[name];
+  return Icon ? <Icon /> : null;
+}
+
+function Main({ session, signOut }: { session: Session; signOut: () => Promise<void> }) {
   const graphQ = useGraph();
   const status = useStatus();
   const unifi = useCapabilities().data?.unifi;
@@ -39,8 +53,6 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [containers, setContainers] = useState(false);
   const [focus, setFocus] = useState(defaultOptions.focus);
-  const { session, setTyped, signOut } = useAuth();
-  const onSession = (s: Session | null) => (s ? setTyped(s) : void signOut());
 
   const graph = graphQ.data;
   // The hardware layer is optional: without a router, switch or access point (no UniFi, no inventory/network.yaml) there is no Network tab.
@@ -58,17 +70,23 @@ export function App() {
     <SidebarProvider className="h-svh min-h-0">
       <Sidebar>
         <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu aria-label="Main menu">
-                {VIEWS.filter((v) => v.id !== "network" || hasNetwork).map((v) => (
-                  <SidebarMenuItem key={v.id}>
-                    <SidebarMenuButton isActive={v.id === view} title={v.hint} onClick={() => go(v.id)}>{v.label}</SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          {VIEW_GROUPS.map((group) => {
+            const views = VIEWS.filter((v) => v.group === group && (v.id !== "network" || hasNetwork));
+            return (
+              <SidebarGroup key={group}>
+                <SidebarGroupLabel>{group}</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu aria-label={group}>
+                    {views.map((v) => (
+                      <SidebarMenuItem key={v.id}>
+                        <SidebarMenuButton isActive={v.id === view} title={v.hint} onClick={() => go(v.id)}><ViewIcon name={v.icon} /><span>{v.label}</span></SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            );
+          })}
         </SidebarContent>
       </Sidebar>
 
@@ -95,6 +113,8 @@ export function App() {
           <Badge variant="outline" className={status.source === "komodo" ? "border-ok text-ok" : status.source === "error" ? "border-warn text-warn" : "text-muted-foreground"} title={status.error ?? ""}>
             {status.source === "disabled" ? "status off" : status.source === "error" ? "status stale" : `live ${status.updated ? new Date(status.updated).toLocaleTimeString() : "…"}`}
           </Badge>
+          <span className="muted text-sm" title="signed in">{session.name}</span>
+          <Button variant="ghost" size="icon" aria-label="Sign out" title="Sign out" onClick={() => void signOut()}><LogOutIcon /></Button>
           <ThemeToggle />
         </div>
       </header>
@@ -123,8 +143,8 @@ export function App() {
           {graph && view === "certificates" && <Certificates onSelect={setSelected} />}
           {graph && view === "new" && <NewApp graph={graph} />}
           {view === "remove" && <RemoveApp />}
-          {view === "stacks" && <Stacks session={session} onSession={onSession} />}
-          {view === "users" && <Users session={session} onSession={onSession} />}
+          {view === "stacks" && <Stacks session={session} />}
+          {view === "users" && <Users session={session} />}
           {graph && def.kind === "graph" && <GraphView sub={sub} status={status} query={query} selected={selected} onSelect={setSelected} />}
         </div>
         {graph && selected && <Detail graph={graph} status={status} id={selected} onSelect={setSelected} onClose={() => setSelected(null)} />}
@@ -134,4 +154,14 @@ export function App() {
       </SidebarInset>
     </SidebarProvider>
   );
+}
+
+/** Nothing but the login page for somebody who is not signed in: the map, the status and every other route are behind the session. */
+export function App() {
+  const sso = useSso();
+  const { session, signOut } = useAuth();
+  if (sso.isPending) return <p className="empty">Loading…</p>;
+  if (sso.isError) return <p className="warning">{sso.error.message}</p>;
+  if (!session) return <Login />;
+  return <Main session={session} signOut={signOut} />;
 }

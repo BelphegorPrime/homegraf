@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
+import { signedInReads, testCreations, testHosts, testRemoval, testStacks } from "./testing.js";
 import { createApp } from "./app.js";
 import { applier, type Spawn } from "./apply.js";
 import { authenticator } from "./auth.js";
@@ -139,7 +139,7 @@ describe("create routes", () => {
     const store = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
     await store.add("alice", "alice has apps rights", ["apps:create"]);
     await store.add("bob", "bob can only look", []);
-    const app = createApp({
+    const app = signedInReads(createApp({
       loadGraph: async () => { throw new Error("unused"); },
       status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
       webDir: "dist/web",
@@ -153,7 +153,7 @@ describe("create routes", () => {
     stacks: testStacks(),
       create: { problem, applier: applier(opts(spawn)) },
       users: { enabled: true, store, authenticate: authenticator({ adminPassword: "pw-1234", users: store, maxFailures }) },
-    });
+    }), "pw-1234");
     const post = (body: unknown, auth?: string) => app.request("/api/apps/create", {
       method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
     });

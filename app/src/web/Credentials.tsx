@@ -22,7 +22,7 @@ export type Credentials = ReturnType<typeof useCredentials>;
 
 /** The fields for it: nothing to type while signed in through the provider. */
 export function CredentialFields({ c, className = "flex flex-wrap gap-2" }: { c: Credentials; className?: string }) {
-  if (c.sso) return <p className="muted">Signed in as <strong>{c.sso.name}</strong> through single sign-on.</p>;
+  if (c.sso) return <p className="muted">Acting as <strong>{c.sso.name}</strong>.</p>;
   return (
     <div className={className}>
       <Input className="w-40" autoComplete="username" placeholder="User" aria-label="User" value={c.user} onChange={(e) => c.setUser(e.target.value)} />

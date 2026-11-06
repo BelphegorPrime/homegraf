@@ -5,7 +5,7 @@ import type { Capabilities, CertificatesSnapshot, Graph, HostInfo, ManagedStack,
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error((body as { error?: string }).error ?? `HTTP ${res.status}`), { status: res.status });
   return body as T;
 }
 
@@ -60,7 +60,7 @@ export async function signedIn<T>(session: Session, method: string, url: string,
 export const useSso = () =>
   useQuery({ queryKey: ["sso"], queryFn: () => getJson<SsoSession>("/api/auth/session"), refetchInterval: 5 * 60_000 });
 
-/** The session of the person signed in through the identity provider, in the form every request takes. */
+/** The session of the person signed in (cookie; the token goes in a header on writes), in the form every request takes. */
 export const ssoSession = (user: NonNullable<SsoSession["user"]>): Session => ({ name: user.name, password: "", sso: { csrf: user.csrf } });
 
 /** The last user name typed, a convenience only (never the password). */
@@ -108,23 +108,24 @@ export const useStacks = () =>
   useQuery({ queryKey: ["stacks"], queryFn: () => getJson<ManagedStack[]>("/api/stacks"), refetchInterval: 5 * 60_000 });
 
 /**
- * The session the Stacks and Users tabs act with: the one of the identity provider when somebody is signed in through it, otherwise the
- * name and password typed into the sign-in (kept in memory only, so a reload signs out). `signOut` ends whichever it is.
+ * Who is signed in, by a cookie session (the login page, or the identity provider): `session` is what every request takes, `null` while
+ * nobody is. `signIn` opens a session with a name and password; `signOut` ends whichever it is and drops everything fetched for it.
  */
 export function useAuth() {
   const sso = useSso();
   const client = useQueryClient();
-  const [typed, setTyped] = useState<Session | null>(null);
-  const session = sso.data?.user ? ssoSession(sso.data.user) : typed;
+  const session = sso.data?.user ? ssoSession(sso.data.user) : null;
   return {
     session,
-    setTyped,
+    async signIn(name: string, password: string) {
+      const res = await fetch("/api/auth/password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, password }) });
+      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
+      await client.invalidateQueries({ queryKey: ["sso"] });
+    },
     async signOut() {
-      if (sso.data?.user) {
-        await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
-        await client.invalidateQueries({ queryKey: ["sso"] });
-      }
-      setTyped(null);
+      await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+      client.removeQueries({ predicate: (q) => q.queryKey[0] !== "sso" });
+      await client.invalidateQueries({ queryKey: ["sso"] });
     },
   };
 }

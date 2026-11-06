@@ -78,6 +78,7 @@ def stack_config(entry: dict, repos_dir: str | None = None) -> dict:
         config["project_name"] = entry["project_name"]
     if builds_image(entry):
         config["run_build"] = True   # without it a redeploy would not rebuild the image from the changed sources
+        config["auto_pull"] = False  # `compose pull` would look for the locally built image in a registry and fail
     return config
 
 

@@ -154,6 +154,14 @@ def setup_stack(entry: dict, komodo, inf, create, apply: bool, root: pathlib.Pat
                     "compose_cmd_wrapper": wanted, "compose_cmd_wrapper_include": ss.WRAP_INCLUDE}})
             done.append("wrapper")
 
+    if create.builds_image(entry, root) and (exists or apply):
+        live = komodo.read("GetStack", {"stack": entry["komodo_stack"]})["config"]
+        if live.get("auto_pull", True):   # a stack made by an older version: `compose pull` fails for the image built here
+            say(f"turn off auto_pull of {entry['komodo_stack']} (it builds its own image)")
+            if apply:
+                komodo.write("UpdateStack", {"id": entry["komodo_stack"], "config": {"auto_pull": False}})
+            done.append("auto_pull")
+
     # A stack that builds its own image is deployed on every run: `up --build` is quick when nothing changed (build cache,
     # no container is recreated), and it replaces stage Build of update-all, which cannot be edited from inside that
     # procedure ("Procedure busy").

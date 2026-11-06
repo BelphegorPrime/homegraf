@@ -68,7 +68,7 @@ def write_compose(tmp_path):
 def run(tmp_path, komodo, inf, apply=True, build=False):
     write_compose(tmp_path)
     create = types.SimpleNamespace(
-        stack_config=lambda e: {"run_directory": RUN_DIR},
+        stack_config=lambda e: {"run_directory": RUN_DIR} | ({"auto_pull": False} if build else {}),
         create=lambda e, c: komodo.stacks.__setitem__(e["komodo_stack"], dict(c)) or [],
         builds_image=lambda e, r: build)
     return rs.setup_stack(ENTRY, komodo, inf, create, apply, tmp_path, say=lambda m: None)
@@ -103,6 +103,16 @@ def test_a_stack_that_builds_its_image_is_deployed_on_every_run(tmp_path):
     komodo.calls.clear()
     assert run(tmp_path, komodo, inf, build=True) == "deploy"
     assert [c[0] for c in komodo.calls] == ["DeployStack"]
+
+
+def test_a_build_stack_made_by_an_older_version_gets_auto_pull_turned_off(tmp_path):
+    komodo, inf = Komodo(), Inf()
+    run(tmp_path, komodo, inf, build=False)          # created without auto_pull: false
+    inf.have = set(inf.made)
+    komodo.calls.clear()
+    assert run(tmp_path, komodo, inf, build=True) == "auto_pull, deploy"
+    assert komodo.stacks["mlflow"]["auto_pull"] is False
+    assert [c[0] for c in komodo.calls] == ["UpdateStack", "DeployStack"]
 
 
 def test_dry_run_changes_nothing(tmp_path):

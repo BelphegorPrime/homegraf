@@ -55,7 +55,7 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <h1>homegraf</h1>
+        <h1>homegraf <span className="text-xs font-normal text-muted-foreground" title="version">{__APP_VERSION__}</span></h1>
         <nav>
           {VIEWS.filter((v) => v.id !== "network" || hasNetwork).map((v) => (
             <Button key={v.id} variant={v.id === view ? "default" : "ghost"} size="sm" title={v.hint} onClick={() => go(v.id)}>{v.label}</Button>

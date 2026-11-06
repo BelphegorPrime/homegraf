@@ -52,6 +52,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      # The version shown in the UI: the tag on a release (v1.2.3), the placeholder "dev" on every other build.
+      - id: version
+        run: echo "version=$(git describe --tags --exact-match 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
 
       # The registry wants a lower case name; the repository's owner may not be written that way.
       - name: Image name
@@ -91,6 +96,7 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: homegraf:scan
+          build-args: APP_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha,scope=homegraf
           cache-to: type=gha,scope=homegraf,mode=max
 
@@ -112,6 +118,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: APP_VERSION=${{ steps.version.outputs.version }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true

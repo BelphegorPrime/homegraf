@@ -5,7 +5,9 @@ COPY app/package.json app/package-lock.json ./
 RUN npm ci
 COPY app/tsconfig.server.json app/tsconfig.web.json app/vite.config.ts ./
 COPY app/src src
-RUN npm run build && npm prune --omit=dev
+# The version shown in the UI: the release tag, or "dev" (set by the image workflow).
+ARG APP_VERSION=dev
+RUN APP_VERSION=$APP_VERSION npm run build && npm prune --omit=dev
 
 # The command-line tools (the paths listed in TOOLS, without their tests): the app runs them against the repository it is
 # given, and `docker exec homegraf homelab.py ...` runs them by hand.

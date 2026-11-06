@@ -56,6 +56,20 @@ def required_vars(root: pathlib.Path, entry: dict) -> list[str]:
     return found
 
 
+def one_shot_services(root: pathlib.Path, entry: dict) -> list[str]:
+    """The services that run once and exit (`restart: "no"`, e.g. a job that creates a bucket): Komodo counts an exited container as
+    unhealthy, so the stack would show as unhealthy for good unless these are in its `ignore_services`."""
+    import yaml
+    found: list[str] = []
+    for name in entry["compose_files"]:
+        try:
+            services = (yaml.safe_load((root / entry["path"] / name).read_text()) or {}).get("services") or {}
+        except (OSError, yaml.YAMLError):
+            continue
+        found += [n for n, svc in services.items() if isinstance(svc, dict) and str(svc.get("restart")) in ("no", "False") and n not in found]
+    return found
+
+
 class Infisical:
     """What the provisioner needs from Infisical: find a stack's folder, create it, create missing secrets."""
 
@@ -163,6 +177,16 @@ def setup_stack(entry: dict, komodo, inf, create, apply: bool, root: pathlib.Pat
             if apply:
                 komodo.write("UpdateStack", {"id": entry["komodo_stack"], "config": {"auto_pull": False}})
             done.append("auto_pull")
+
+    once = one_shot_services(root, entry)
+    if once and (exists or apply):
+        live = komodo.read("GetStack", {"stack": entry["komodo_stack"]})["config"]
+        ignored = live.get("ignore_services") or []
+        if any(s not in ignored for s in once):
+            say(f"ignore the one-shot services {once} in the state of {entry['komodo_stack']}")
+            if apply:
+                komodo.write("UpdateStack", {"id": entry["komodo_stack"], "config": {"ignore_services": sorted(set(ignored) | set(once))}})
+            done.append("ignore_services")
 
     # A stack that builds its own image is deployed on every run: `up --build` is quick when nothing changed (build cache,
     # no container is recreated), and it replaces stage Build of update-all, which cannot be edited from inside that

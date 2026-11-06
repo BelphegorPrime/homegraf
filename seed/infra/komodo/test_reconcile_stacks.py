@@ -58,15 +58,16 @@ class Inf:
         self.made[key] = value
 
 
-def write_compose(tmp_path):
+def write_compose(tmp_path, once=False):
     d = tmp_path / "stacks/mlflow"
     d.mkdir(parents=True, exist_ok=True)
     (d / "compose.yaml").write_text(
-        "services: {a: {image: x, environment: [P=${POSTGRES_PASSWORD}, P2=${POSTGRES_PASSWORD}, Q=${OPT:-d}, R=$${ESC}]}}\n")
+        "services:\n  a:\n    image: x\n    environment:\n      - P=${POSTGRES_PASSWORD}\n      - P2=${POSTGRES_PASSWORD}\n      - Q=${OPT:-d}\n      - R=$${ESC}\n"
+        + ('  job: {image: x, restart: "no"}\n' if once else ""))
 
 
-def run(tmp_path, komodo, inf, apply=True, build=False):
-    write_compose(tmp_path)
+def run(tmp_path, komodo, inf, apply=True, build=False, once=False):
+    write_compose(tmp_path, once)
     create = types.SimpleNamespace(
         stack_config=lambda e: {"run_directory": RUN_DIR} | ({"auto_pull": False} if build else {}),
         create=lambda e, c: komodo.stacks.__setitem__(e["komodo_stack"], dict(c)) or [],
@@ -113,6 +114,15 @@ def test_a_build_stack_made_by_an_older_version_gets_auto_pull_turned_off(tmp_pa
     assert run(tmp_path, komodo, inf, build=True) == "auto_pull, deploy"
     assert komodo.stacks["mlflow"]["auto_pull"] is False
     assert [c[0] for c in komodo.calls] == ["UpdateStack", "DeployStack"]
+
+
+def test_one_shot_services_are_ignored_in_the_state_of_the_stack(tmp_path):
+    komodo, inf = Komodo(), Inf()
+    assert run(tmp_path, komodo, inf, once=True) == "secrets, stack, wrapper, ignore_services, deploy"
+    assert komodo.stacks["mlflow"]["ignore_services"] == ["job"]       # not `a`: it keeps running
+    inf.have = set(inf.made)
+    komodo.calls.clear()
+    assert run(tmp_path, komodo, inf, once=True) == ""                 # and only once
 
 
 def test_dry_run_changes_nothing(tmp_path):

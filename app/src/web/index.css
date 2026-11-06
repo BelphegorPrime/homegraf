@@ -60,7 +60,7 @@
     --secondary: oklch(0.967 0.001 286.375);
     --secondary-foreground: oklch(0.21 0.006 285.885);
     --muted: oklch(0.963 0.002 197.1);
-    --muted-foreground: oklch(0.44 0.025 213.5);
+    --muted-foreground: oklch(0.4 0.025 213.5);
     --accent: oklch(0.963 0.002 197.1);
     --accent-foreground: oklch(0.218 0.008 223.9);
     --destructive: oklch(0.577 0.245 27.325);
@@ -223,8 +223,9 @@
   /* New app */
   .grid { @apply grid items-start gap-x-4 gap-y-3; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
   .field { @apply flex flex-col gap-1; }
-  .field > span { @apply text-xs text-muted-foreground; }
+  .field > span { @apply text-[13px] font-medium text-foreground/80; }
   .field small, .error { @apply text-xs; }
+  .field small { @apply text-foreground/70; }
   .error { @apply text-down; }
   .check { @apply flex items-center gap-2; }
   .check input[type=checkbox], .addon input[type=checkbox] { @apply size-4 accent-primary; }

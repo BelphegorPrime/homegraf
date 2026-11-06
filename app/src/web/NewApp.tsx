@@ -4,7 +4,7 @@ import type { AddonInfo, Capabilities, Graph, JobSnapshot, PlanResult, PreviewRe
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CredentialFields, useCredentials } from "./Credentials";
 import { authHeaders, rememberUser } from "./api";
@@ -300,7 +300,7 @@ export function NewApp({ graph }: { graph: Graph }) {
           {field("App ID", "appId", { lowercase: true, hint: "e.g. whoami-test (any case is made lowercase). Names stacks/<id>, the Komodo stack and the inventory entry" })}
           <label className="field">
             <span>Server</span>
-            <NativeSelect value={f.server} onChange={(e) => set("server", e.target.value)}>{servers.map((s) => <option key={s}>{s}</option>)}</NativeSelect>
+            <Select value={f.server} onValueChange={(v) => set("server", v)} options={servers.map((s) => ({ value: s }))} />
           </label>
         </div>
         {!existing && (templates.data?.length ?? 0) > 0 && (
@@ -340,11 +340,8 @@ export function NewApp({ graph }: { graph: Graph }) {
             <Input value={f.memory} placeholder="no limit" disabled={locked} onChange={(e) => set("memory", e.target.value)} aria-invalid={f.memory !== "" && !memoryOk} />
             <small className={f.memory !== "" && !memoryOk ? "error" : "muted"}>e.g. 512m or 2g</small></label>
           <label className="field"><span>GPU</span>
-            <NativeSelect value={f.gpu} disabled={locked} onChange={(e) => set("gpu", e.target.value)}>
-              <option value="">none</option>
-              <option value="nvidia">NVIDIA (all GPUs)</option>
-              <option value="dri">Intel / AMD (/dev/dri)</option>
-            </NativeSelect>
+            <Select value={f.gpu} disabled={locked} onValueChange={(v) => set("gpu", v)}
+                    options={[{ value: "", label: "none" }, { value: "nvidia", label: "NVIDIA (all GPUs)" }, { value: "dri", label: "Intel / AMD (/dev/dri)" }]} />
             <small className="muted">NVIDIA needs the container toolkit on the server; /dev/dri passes the render device through</small></label>
         </div>
 
@@ -387,9 +384,8 @@ export function NewApp({ graph }: { graph: Graph }) {
             {ports.length > 1 && (
               <label className="field">
                 <span>Web interface</span>
-                <NativeSelect value={webHost} onChange={(e) => setWebPort(e.target.value)}>
-                  {ports.map((p) => <option key={`${p.service}${p.host}`} value={p.host}>{p.service}: port {p.host} → {p.container}</option>)}
-                </NativeSelect>
+                <Select value={String(webHost)} onValueChange={setWebPort}
+                        options={ports.map((p) => ({ value: String(p.host), label: `${p.service}: port ${p.host} → ${p.container}` }))} />
                 <small className="muted">the compose file publishes several ports</small>
               </label>
             )}

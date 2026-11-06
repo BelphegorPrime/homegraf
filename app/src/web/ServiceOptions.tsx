@@ -1,7 +1,7 @@
 import { PlusIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import type { NetworkRow, VolumeRow } from "../shared/types";
 
 export interface EnvRow { key: string; value: string }
@@ -43,9 +43,8 @@ export function VolumesEditor({ rows, onChange, disabled }: Common & { rows: Vol
         const bad = v.target !== "" && !volumeComplete(v);
         return (
           <div className="row" key={i}>
-            <NativeSelect aria-label="Kind of volume" value={v.kind} disabled={disabled} onChange={(e) => set(i, { kind: e.target.value as VolumeRow["kind"], source: "", size: "" })}>
-              {KINDS.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
-            </NativeSelect>
+            <Select aria-label="Kind of volume" value={v.kind} disabled={disabled} onValueChange={(k) => set(i, { kind: k as VolumeRow["kind"], source: "", size: "" })}
+                    options={KINDS.map((k) => ({ value: k.kind, label: k.label }))} />
             {v.kind === "tmpfs"
               ? <Input aria-label="Size" placeholder="size, e.g. 512m (optional)" value={v.size} disabled={disabled} onChange={(e) => set(i, { size: e.target.value })} />
               : <Input aria-label="Source" placeholder={kind.source} value={v.source} disabled={disabled} onChange={(e) => set(i, { source: e.target.value })} aria-invalid={bad} />}

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import type { ManagedStack, SecretKey } from "../shared/types";
 import { signedIn, startJob, useCapabilities, useStacks, type Session } from "./api";
 import { SignIn, type Me } from "./Users";
@@ -128,10 +128,8 @@ export function Stacks({ session, onSession }: { session: Session | null; onSess
       <p>Signed in as <strong>{me.data.name}</strong>. <Button type="button" variant="ghost" size="sm" onClick={() => { onSession(null); setChanges([]); }}>Sign out</Button></p>
       {stacks.isError && <p className="warning !px-0">{stacks.error.message}</p>}
       <div className="max-w-xl">
-        <NativeSelect aria-label="Stack" value={stackId} onChange={(e) => { setStackId(e.target.value); setChanges([]); }}>
-          <option value="">Choose a stack…</option>
-          {stacks.data?.map((s) => <option key={s.id} value={s.id}>{s.id} ({s.server})</option>)}
-        </NativeSelect>
+        <Select aria-label="Stack" className="w-full" value={stackId} onValueChange={(v) => { setStackId(v); setChanges([]); }}
+                options={[{ value: "", label: "Choose a stack…" }, ...(stacks.data ?? []).map((s) => ({ value: s.id, label: `${s.id} (${s.server})` }))]} />
       </div>
       <p className="muted max-w-3xl">The platform stacks (secrets store, reverse proxy, this UI, Komodo's own) are not listed.</p>
       {stack && (

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import type { Graph, GraphNode, StatusSnapshot } from "../shared/types";
 import { catalogTiles } from "./views";
 
@@ -25,10 +25,7 @@ export function Catalog({ graph, status, query, selected, onSelect }: { graph: G
     <div className="list">
       <div className="toolbar">
         <label className="check">Group by
-          <NativeSelect size="sm" value={groupBy} onChange={(e) => setGroupBy(e.target.value as "machine" | "category")}>
-            <option value="machine">machine</option>
-            <option value="category">category</option>
-          </NativeSelect>
+          <Select size="sm" value={groupBy} onValueChange={(v) => setGroupBy(v as "machine" | "category")} options={[{ value: "machine" }, { value: "category" }]} />
         </label>
         <span className="legend"><span className="url-pill">managed</span> <span className="url-pill manual">manual NPM host</span></span>
         <label className="check"><input type="checkbox" checked={withoutUrl} onChange={(e) => setWithoutUrl(e.target.checked)} /> include stacks without URL</label>

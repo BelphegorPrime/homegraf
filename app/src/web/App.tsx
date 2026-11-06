@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import { useAuth, useCapabilities, useCertificates, useGraph, useStatus, type Session } from "./api";
 import { certHealth } from "./certificateHealth";
 import { Detail } from "./Detail";
@@ -90,9 +90,8 @@ export function App() {
           )}
           {view === "platform" && graph && (
             <label className="check">show dependents of
-              <NativeSelect size="sm" value={focus} onChange={(e) => setFocus(e.target.value)}>
-                {graph.nodes.filter((n) => n.type === "infra").map((n) => <option key={n.id} value={n.id}>{n.label}</option>)}
-              </NativeSelect>
+              <Select size="sm" value={focus} onValueChange={setFocus}
+                      options={graph.nodes.filter((n) => n.type === "infra").map((n) => ({ value: n.id, label: n.label }))} />
             </label>
           )}
         </div>

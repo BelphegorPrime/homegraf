@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import type { PendingRemoval } from "../shared/types";
 import { useJob } from "./useJob";
 import { CredentialFields, useCredentials } from "./Credentials";
@@ -87,10 +87,8 @@ export function RemoveApp() {
       <h2>Remove an app</h2>
       {apps.isError && <p className="warning !px-0">{apps.error.message}</p>}
       <div className="max-w-xl">
-        <NativeSelect aria-label="App" value={appId} onChange={(e) => { setAppId(e.target.value); setConfirm(""); }}>
-          <option value="">Choose an app…</option>
-          {apps.data?.map((a) => <option key={a.id} value={a.id}>{a.id} ({a.server})</option>)}
-        </NativeSelect>
+        <Select aria-label="App" className="w-full" value={appId} onValueChange={(v) => { setAppId(v); setConfirm(""); }}
+                options={[{ value: "", label: "Choose an app…" }, ...(apps.data ?? []).map((a) => ({ value: a.id, label: `${a.id} (${a.server})` }))]} />
       </div>
       {app && (
         <form className="mt-3 max-w-3xl" onSubmit={(e) => { e.preventDefault(); void act("/api/apps/remove", { appId: app.id, confirm }); }}>

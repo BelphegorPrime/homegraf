@@ -35,6 +35,8 @@ CODE = HERE.parents[1]                                          # where the tool
 ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)   # the repository they work on
 ENV = "prod"
 ROLE = "viewer"  # built-in project role: read secrets, change nothing
+PROVISIONER = "stack-provisioner"   # made by infra/infisical/provisioner.py or by the bootstrap; member of every stacks-* project
+PROVISIONER_ROLE = "member"         # the narrowest built-in role that can create secrets
 TOKEN_TTL = 600  # seconds; the wrapper needs the token for one compose call only
 WRAP_INCLUDE = ["config", "build", "pull", "up", "run"]  # every compose call that resolves ${VAR}
 
@@ -203,6 +205,14 @@ def sync(inf, komodo, stacks: list[dict], api_url: str, imports: dict[str, dict[
             if apply:
                 inf.call("PATCH", f"/api/v1/projects/{pid}/identity-memberships/{iid}",
                          {"roles": [{"role": ROLE, "isTemporary": False}]})
+
+        # the identity of the reconcile step of update-all (infra/komodo/reconcile_stacks.py) creates the secrets of new stacks
+        prov = identities.get(PROVISIONER)
+        if prov and not any((m.get("identity") or {}).get("id") == prov for m in
+                            inf.call("GET", f"/api/v1/projects/{pid}/identity-memberships").get("identityMemberships", [])):
+            say(f"{slug}: {PROVISIONER} as project member with role {PROVISIONER_ROLE}")
+            if apply:
+                inf.call("POST", f"/api/v1/projects/{pid}/identity-memberships/{prov}", {"role": PROVISIONER_ROLE})
 
     server_names = {s["id"]: s["name"] for s in komodo.read("ListServers")}
     for s in stacks:

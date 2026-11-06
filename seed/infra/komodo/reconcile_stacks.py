@@ -178,7 +178,8 @@ def derived_stacks(root: pathlib.Path) -> list[dict]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--apply", action="store_true", help="do it; without it only print what would happen")
+    ap.add_argument("--apply", "--yes", dest="apply", action="store_true",
+                    help="do it; without it only print what would happen")
     ap.add_argument("--stack", action="append", help="only this stack (repeatable)")
     args = ap.parse_args(argv)
 
@@ -190,12 +191,14 @@ def main(argv=None) -> int:
     import create_stack as create
     import rebuild
     komodo.load_env()
-    need = ("INFISICAL_URL", "INFISICAL_PROVISIONER_CLIENT_ID", "INFISICAL_PROVISIONER_CLIENT_SECRET")
-    if any(not os.environ.get(n) for n in need):
-        print(f"set {', '.join(need)}", file=sys.stderr)
+    # the provisioner identity (inside ingress-apply), or the org-admin identity the other tools use (by hand)
+    for prefix in ("INFISICAL_PROVISIONER", "INFISICAL_BOOTSTRAP"):
+        if all(os.environ.get(n) for n in ("INFISICAL_URL", f"{prefix}_CLIENT_ID", f"{prefix}_CLIENT_SECRET")):
+            break
+    else:
+        print("set INFISICAL_URL and INFISICAL_PROVISIONER_CLIENT_ID/_SECRET (or INFISICAL_BOOTSTRAP_CLIENT_ID/_SECRET)", file=sys.stderr)
         return 1
-    inf = Infisical(os.environ["INFISICAL_URL"], os.environ["INFISICAL_PROVISIONER_CLIENT_ID"],
-                    os.environ["INFISICAL_PROVISIONER_CLIENT_SECRET"])
+    inf = Infisical(os.environ["INFISICAL_URL"], os.environ[f"{prefix}_CLIENT_ID"], os.environ[f"{prefix}_CLIENT_SECRET"])
     failed = 0
     for entry in stacks:
         prefix = "" if args.apply else "[dry run] "

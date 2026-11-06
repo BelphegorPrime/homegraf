@@ -12,6 +12,7 @@
   ./homelab.py status [STACK ...]                # Komodo state (read-only)
   ./homelab.py logs STACK [--tail N] [--grep T]  # container logs (read-only)
   ./homelab.py deploy STACK [--yes]              # DeployStack, e.g. after a secret change
+  ./homelab.py reconcile [--stack ID] [--yes]    # set up stacks that are only a folder with ingress.yaml (secrets, Komodo stack, deploy)
 
 Agent mode: every question comes from a flag or its default; a missing answer fails with the flag to pass.
 Without --yes the run stops before the first outward step (Komodo, Infisical, git push) and changes nothing.
@@ -206,6 +207,14 @@ def parse_args(argv=None) -> argparse.Namespace:
                        epilog="example: ./homelab.py deploy paperless --yes")
     p.add_argument("stack")
     p.add_argument("--yes", action="store_true", help="apply; without it only the current state is shown")
+
+    p = sub.add_parser("reconcile", help="set up the stacks that exist only as a folder with compose.yaml and ingress.yaml",
+                       description="For each stacks/<id>/ with a compose file and an ingress.yaml but no entry in inventory/stacks.yaml: "
+                                   "generate its ${VAR} secrets in Infisical, create the Komodo stack with the Infisical wrapper, "
+                                   "and deploy it. Only what is missing; the same step runs inside ingress-apply after every push.",
+                       epilog="example: ./homelab.py reconcile --stack mlflow --yes")
+    p.add_argument("--stack", action="append", metavar="ID", help="only this stack, repeatable")
+    p.add_argument("--yes", action="store_true", help="apply; without it only print what would happen")
     return ap.parse_args(argv)
 
 
@@ -287,6 +296,9 @@ def main(argv=None) -> int:
             return stackops.logs(komodo_api, args.stack, args.tail, args.grep, args.service)
         if args.cmd == "deploy":
             return stackops.deploy(komodo_api, args.stack)
+        if args.cmd == "reconcile":
+            import reconcile_stacks
+            return reconcile_stacks.main([*(["--yes"] if args.yes else []), *[a for s in args.stack or [] for a in ("--stack", s)]])
         run = newapp.run if args.cmd == "new-app" else removeapp.run
         return 0 if run(infisical, komodo_api, preset(args)) else 1
     except ui.DryRun as e:

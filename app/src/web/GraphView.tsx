@@ -92,7 +92,7 @@ export function GraphView({ sub, status, query, selected, onSelect }: Props) {
     >
       <Background variant={BackgroundVariant.Dots} gap={20} color="var(--border)" />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable maskColor="color-mix(in oklch, var(--background) 70%, transparent)" />
+      <MiniMap pannable zoomable />
     </ReactFlow>
   );
 }

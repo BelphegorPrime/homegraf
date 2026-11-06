@@ -1,11 +1,11 @@
 # The bootstrap of the homegraf stack: a one-shot container (standard library only) that configures the services against each other.
 # Build from the repository root:  docker build -f bootstrap/Dockerfile -t homegraf-bootstrap .
 # The seed (the initial content of the user's repository) is the folder seed/ when the repository has it, else the stub.
-FROM python:3.15-slim-bookworm@sha256:4e03260adeeebafccd084f3584e6b84823aba5651cfb53ef8a078ed441ddf9cd AS seed
+FROM python:3.15-slim-bookworm@sha256:96599df822d0e1c6bb700014a05c7f3c8cabc6e0f7ff3c4f9f69cee033b4b5d9 AS seed
 COPY . /ctx
 RUN mkdir /out-seed && if [ -n "$(ls -A /ctx/seed 2>/dev/null)" ]; then cp -r /ctx/seed/. /out-seed/; fi
 
-FROM python:3.15-slim-bookworm@sha256:4e03260adeeebafccd084f3584e6b84823aba5651cfb53ef8a078ed441ddf9cd
+FROM python:3.15-slim-bookworm@sha256:96599df822d0e1c6bb700014a05c7f3c8cabc6e0f7ff3c4f9f69cee033b4b5d9
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 # Only the standard library runs here: pip, setuptools and wheel (and the libraries pip bundles, which scanners flag) are build tools.
 RUN python3 -m pip uninstall -y pip setuptools wheel >/dev/null 2>&1; \

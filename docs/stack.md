@@ -250,6 +250,8 @@ Run for real on a clean Docker host (Docker 29, Compose 5), project `hgboot`, wi
 
 - **A second host** (`scripts/e2e-host.sh`): a container with its own Docker daemon plays the host. `add-host.sh` registered it, an app was created on it
   through homegraf's API, merged, ran in that Docker and answered, and was removed in both halves.
+- **A new app is a folder** (`scripts/e2e-folder.sh`): the same two hosts; one push of `stacks/<id>/compose.yaml` + `ingress.yaml` for an app on each host (nothing
+  else) gave each a generated secret, a Komodo stack, a deploy on its own host, a proxy host and a certificate; both answer over https, verified against the CA of the stack.
 
 Not verified: a second host on another machine (firewall, real network), and a host where port 53 is taken.
 

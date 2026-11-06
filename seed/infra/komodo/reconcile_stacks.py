@@ -103,7 +103,9 @@ def provision_secrets(inf, entry: dict, keys: list[str], apply: bool, say) -> bo
     project = inf.project(slug)
     if project is None:
         raise RuntimeError(f"Infisical project {slug} does not exist or the provisioner is not a member; "
-                           f"create it once with infra/infisical/stack_secrets.py --apply")
+                           f"create it and add the provisioner once with infra/infisical/stack_secrets.py --apply "
+                           f"(infra/infisical/provisioner.py --apply creates the identity); on a stack made by the homegraf bootstrap, "
+                           f"run its certificates step again: docker compose up -d certificates")
     have: set[str] = set()
     if inf.has_folder(project, ss.ENV, entry["id"]):
         have = inf.keys(project, ss.ENV, "/" + entry["id"])

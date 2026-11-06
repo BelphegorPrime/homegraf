@@ -6,8 +6,8 @@ A push of such a folder is all it takes. Per stack, in this order, and only what
   1. its ${VAR} secrets, generated, in Infisical (project stacks-<server>, folder /<id>); existing values stay
   2. the Komodo stack on the server of the manifest's upstream (files_on_host in the server's clone)
   3. the Infisical wrapper of that stack (compose_cmd_wrapper), so a deploy resolves ${VAR}
-  4. stage Build of update-all, when a compose service has `build:`
-  5. a deploy, when the stack or a secret was just created
+  4. a deploy, when the stack or a secret was just created, and on every run when a compose service has `build:`
+     (the build cache makes that quick; it takes the place of stage Build of update-all)
 
 Runs as the first stage of the Komodo procedure ingress-apply (RunStackService ingressctl, after the repos were
 pulled), so the files are in the clone. It changes nothing for stacks that have an entry in inventory/stacks.yaml.
@@ -119,7 +119,7 @@ def provision_secrets(inf, entry: dict, keys: list[str], apply: bool, say) -> bo
     return bool(missing)
 
 
-def setup_stack(entry: dict, komodo, inf, create, rebuild, apply: bool, root: pathlib.Path = ROOT, say=print) -> str:
+def setup_stack(entry: dict, komodo, inf, create, apply: bool, root: pathlib.Path = ROOT, say=print) -> str:
     """Everything one stack still needs; returns what was done, '' if nothing."""
     import stack_secrets as ss
     done = []
@@ -154,16 +154,13 @@ def setup_stack(entry: dict, komodo, inf, create, rebuild, apply: bool, root: pa
                     "compose_cmd_wrapper": wanted, "compose_cmd_wrapper_include": ss.WRAP_INCLUDE}})
             done.append("wrapper")
 
-    if create.builds_image(entry, root):
-        if apply:
-            if rebuild.add(entry["komodo_stack"]):
-                say(f"update-all: stage Build now deploys {entry['komodo_stack']}")
-                done.append("rebuild")
-        elif entry["komodo_stack"] not in rebuild.stacks():
-            say(f"update-all: add {entry['komodo_stack']} to stage Build")
-
-    if apply and ("stack" in done or "secrets" in done):
-        say(f"deploy {entry['komodo_stack']}")
+    # A stack that builds its own image is deployed on every run: `up --build` is quick when nothing changed (build cache,
+    # no container is recreated), and it replaces stage Build of update-all, which cannot be edited from inside that
+    # procedure ("Procedure busy").
+    rebuilds = create.builds_image(entry, root)
+    if "stack" in done or "secrets" in done or rebuilds:
+        say(f"deploy {entry['komodo_stack']}" + ("" if "stack" in done or "secrets" in done else " (builds its own image)"))
+    if apply and ("stack" in done or "secrets" in done or rebuilds):
         update = komodo.execute_and_poll("DeployStack", {"stack": entry["komodo_stack"]}, timeout=1800)
         if not update.get("success"):
             raise RuntimeError(f"deploy of {entry['komodo_stack']} failed, see update {update.get('id')} in Komodo")
@@ -189,7 +186,6 @@ def main(argv=None) -> int:
         return 0
     import komodo_api as komodo
     import create_stack as create
-    import rebuild
     komodo.load_env()
     # the provisioner identity (inside ingress-apply), or the org-admin identity the other tools use (by hand)
     for prefix in ("INFISICAL_PROVISIONER", "INFISICAL_BOOTSTRAP"):
@@ -204,7 +200,7 @@ def main(argv=None) -> int:
         prefix = "" if args.apply else "[dry run] "
         print(f"== {entry['id']} on {entry['server']}")
         try:
-            done = setup_stack(entry, komodo, inf, create, rebuild, args.apply, ROOT, lambda m: print(prefix + m))
+            done = setup_stack(entry, komodo, inf, create, args.apply, ROOT, lambda m: print(prefix + m))
             print(f"   {done or 'nothing to do'}")
         except (RuntimeError, SystemExit) as e:
             failed += 1

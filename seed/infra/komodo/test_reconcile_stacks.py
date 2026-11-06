@@ -58,39 +58,31 @@ class Inf:
         self.made[key] = value
 
 
-def fixtures(tmp_path, komodo, build=False):
+def write_compose(tmp_path):
     d = tmp_path / "stacks/mlflow"
-    d.mkdir(parents=True)
+    d.mkdir(parents=True, exist_ok=True)
     (d / "compose.yaml").write_text(
         "services: {a: {image: x, environment: [P=${POSTGRES_PASSWORD}, P2=${POSTGRES_PASSWORD}, Q=${OPT:-d}, R=$${ESC}]}}\n")
 
-    def create_stack(entry, config):
-        komodo.stacks[entry["komodo_stack"]] = dict(config)
-        return []
-    create = types.SimpleNamespace(stack_config=lambda e: {"run_directory": RUN_DIR}, create=create_stack,
-                                   builds_image=lambda e, r: build)
-    rebuild = types.SimpleNamespace(add=lambda s: True, stacks=lambda: [])
-    return create, rebuild
-
 
 def run(tmp_path, komodo, inf, apply=True, build=False):
-    create, rebuild = fixtures(tmp_path, komodo, build) if not (tmp_path / "stacks/mlflow").exists() else (
-        types.SimpleNamespace(stack_config=lambda e: {"run_directory": RUN_DIR},
-                              create=lambda e, c: komodo.stacks.__setitem__(e["komodo_stack"], dict(c)) or [],
-                              builds_image=lambda e, r: build),
-        types.SimpleNamespace(add=lambda s: True, stacks=lambda: []))
-    return rs.setup_stack(ENTRY, komodo, inf, create, rebuild, apply, tmp_path, say=lambda m: None)
+    write_compose(tmp_path)
+    create = types.SimpleNamespace(
+        stack_config=lambda e: {"run_directory": RUN_DIR},
+        create=lambda e, c: komodo.stacks.__setitem__(e["komodo_stack"], dict(c)) or [],
+        builds_image=lambda e, r: build)
+    return rs.setup_stack(ENTRY, komodo, inf, create, apply, tmp_path, say=lambda m: None)
 
 
 def test_required_vars_skips_defaults_and_escapes(tmp_path):
-    fixtures(tmp_path, Komodo())
+    write_compose(tmp_path)
     assert rs.required_vars(tmp_path, ENTRY) == ["POSTGRES_PASSWORD"]
 
 
 def test_new_stack_gets_secrets_stack_wrapper_and_deploy(tmp_path):
     komodo, inf = Komodo(), Inf()
-    assert run(tmp_path, komodo, inf, build=True) == "secrets, stack, wrapper, rebuild, deploy"
-    assert len(inf.made["POSTGRES_PASSWORD"]) == 48
+    assert run(tmp_path, komodo, inf) == "secrets, stack, wrapper, deploy"
+    assert list(inf.made) == ["POSTGRES_PASSWORD"] and len(inf.made["POSTGRES_PASSWORD"]) == 48
     assert "compose-wrap.sh /mlflow" in komodo.stacks["mlflow"]["compose_cmd_wrapper"]
     assert komodo.calls[-1][0] == "DeployStack"
 
@@ -102,6 +94,15 @@ def test_second_run_does_nothing(tmp_path):
     komodo.calls.clear()
     assert run(tmp_path, komodo, inf) == ""
     assert komodo.calls == []
+
+
+def test_a_stack_that_builds_its_image_is_deployed_on_every_run(tmp_path):
+    komodo, inf = Komodo(), Inf()
+    run(tmp_path, komodo, inf, build=True)
+    inf.have = set(inf.made)
+    komodo.calls.clear()
+    assert run(tmp_path, komodo, inf, build=True) == "deploy"
+    assert [c[0] for c in komodo.calls] == ["DeployStack"]
 
 
 def test_dry_run_changes_nothing(tmp_path):

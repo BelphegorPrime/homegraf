@@ -13,41 +13,84 @@ export const planInput = z.object({
   /** Typed in any case ("EngineX"): it is used in lowercase everywhere. */
   appId: z.string().toLowerCase().regex(ID, "letters, digits and dashes, 2-41 characters"),
   server: z.string().regex(/^[A-Za-z0-9._-]+$/),
-  image: z.string().regex(/^[\w./:@-]+$/, "image with a fixed tag, e.g. traefik/whoami:v1.11.0").optional(),
+  image: z
+    .string()
+    .regex(/^[\w./:@-]+$/, "image with a fixed tag, e.g. traefik/whoami:v1.11.0")
+    .optional(),
   containerPort: z.number().int().min(1).max(65535).optional(),
   hostPort: z.number().int().min(1).max(65535).optional(),
-  mount: z.string().regex(/^\/[\w./-]*$/, "absolute path inside the container").optional(),
+  mount: z
+    .string()
+    .regex(/^\/[\w./-]*$/, "absolute path inside the container")
+    .optional(),
   secretVars: z.array(z.string().regex(VAR)).max(20).default([]),
   routing: z.boolean().default(true),
-  domain: z.string().regex(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/).optional(),
+  domain: z
+    .string()
+    .regex(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/)
+    .optional(),
   websockets: z.boolean().default(false),
   forceHttps: z.boolean().default(true),
-  healthPath: z.string().regex(/^\/[\w./%-]*$/).optional(),
-  statuses: z.string().regex(/^\d{3}(,\d{3})*$/).optional(),
+  healthPath: z
+    .string()
+    .regex(/^\/[\w./%-]*$/)
+    .optional(),
+  statuses: z
+    .string()
+    .regex(/^\d{3}(,\d{3})*$/)
+    .optional(),
   /** Volumes of the app: data = below /srv/docker/<id>, bind = host path, named, tmpfs, repo = path in this repository. */
-  volumes: z.array(z.object({
-    kind: z.enum(["data", "bind", "named", "tmpfs", "repo"]),
-    source: z.string().max(300).default(""),
-    target: z.string().regex(/^\/[\w./@+-]*$/, "absolute path inside the container"),
-    readOnly: z.boolean().default(false),
-    size: z.string().regex(/^(\d+(\.\d+)?[kKmMgG]?[bB]?)?$/, "e.g. 512m").default(""),
-  })).max(20).default([]),
+  volumes: z
+    .array(
+      z.object({
+        kind: z.enum(["data", "bind", "named", "tmpfs", "repo"]),
+        source: z.string().max(300).default(""),
+        target: z.string().regex(/^\/[\w./@+-]*$/, "absolute path inside the container"),
+        readOnly: z.boolean().default(false),
+        size: z
+          .string()
+          .regex(/^(\d+(\.\d+)?[kKmMgG]?[bB]?)?$/, "e.g. 512m")
+          .default(""),
+      }),
+    )
+    .max(20)
+    .default([]),
   /** Networks to join besides the stack's default one; external = an existing Docker network. */
-  networks: z.array(z.object({ name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/, "letters, digits, - _ ."), external: z.boolean().default(false) })).max(10).default([]),
-  cpus: z.string().regex(/^(\d+(\.\d+)?)?$/, "a number, e.g. 1.5").default(""),
-  memory: z.string().regex(/^([1-9]\d*[kKmMgG])?$/, "e.g. 512m or 2g").default(""),
+  networks: z
+    .array(z.object({ name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/, "letters, digits, - _ ."), external: z.boolean().default(false) }))
+    .max(10)
+    .default([]),
+  cpus: z
+    .string()
+    .regex(/^(\d+(\.\d+)?)?$/, "a number, e.g. 1.5")
+    .default(""),
+  memory: z
+    .string()
+    .regex(/^([1-9]\d*[kKmMgG])?$/, "e.g. 512m or 2g")
+    .default(""),
   gpu: z.enum(["", "nvidia", "dri"]).default(""),
   /** Plain environment variables (secrets are secretVars). */
   env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "letters, digits and _"), z.string().max(2000)).default({}),
   /** Start from a template (nginx, httpd, haproxy): the files its volumes mount from the repo are written with the app. */
-  template: z.string().regex(/^[a-z0-9-]{1,30}$/).optional(),
+  template: z
+    .string()
+    .regex(/^[a-z0-9-]{1,30}$/)
+    .optional(),
   /** Further templates in the same compose file: each is the service <id>-<template>, with building blocks and secrets of its own. */
-  extraTemplates: z.array(z.string().regex(/^[a-z0-9-]{1,30}$/)).max(8).optional(),
+  extraTemplates: z
+    .array(z.string().regex(/^[a-z0-9-]{1,30}$/))
+    .max(8)
+    .optional(),
   /** Edited copies of the template's files (path below the template folder -> text). */
-  files: z.record(z.string().regex(/^(?!.*\.\.)[\w.@+-]+(\/[\w.@+-]+)*$/, "a relative path"), z.string().max(200_000)).default({})
+  files: z
+    .record(z.string().regex(/^(?!.*\.\.)[\w.@+-]+(\/[\w.@+-]+)*$/, "a relative path"), z.string().max(200_000))
+    .default({})
     .refine((f) => Object.keys(f).length <= 20 && Object.values(f).reduce((n, s) => n + s.length, 0) <= 400_000, "too many or too large files"),
   /** Ready-made services next to the app (ids from `homelab.py addons`); the tool rejects unknown ones. */
-  addons: z.array(z.string().regex(/^[a-z0-9-]{1,30}$/)).max(8).default([]),
+  addons: z
+    .array(z.string().regex(/^[a-z0-9-]{1,30}$/))
+    .max(8)
+    .default([]),
   /** The compose file as shown and edited in the UI; used as it is instead of generating one. */
   compose: z.string().min(1).max(200_000).optional(),
   /** Published host port of the web UI when the compose file has several. */
@@ -134,6 +177,8 @@ export const shellCommand = (args: string[]) => `./homelab.py ${[...args, "--yes
 
 export type Runner = (file: string, args: string[], root?: string) => Promise<{ code: number; out: string }>;
 
+// the escape character is the point: this strips terminal colours
+// oxlint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 
 export const spawnRunner: Runner = (file, args, root) =>
@@ -142,7 +187,11 @@ export const spawnRunner: Runner = (file, args, root) =>
       "python3",
       ["-I", file, ...args],
       // A clean environment: the plan must not see credentials, and the tool loads what it needs from the repo.
-      { timeout: 60_000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1", ...(root ? toolRoot(root) : {}) } },
+      {
+        timeout: 60_000,
+        maxBuffer: 1024 * 1024,
+        env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1", ...(root ? toolRoot(root) : {}) },
+      },
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
         resolve({ code, out: `${stdout}${stderr}` });
@@ -167,29 +216,47 @@ function serial() {
 export function planner(repoDir: string, run: Runner = spawnRunner) {
   const queue = serial();
   return (input: PlanInput): Promise<PlanResult> =>
-    queue(() => withWorkFiles(input, async ({ composeFile, filesDir }) => {
-      const { code, out } = await run(toolPath(repoDir, "homelab.py"), newAppArgs({ ...input, ...NO_VALUES }, composeFile, filesDir), repoDir);
-      // The command to run by hand: the compose file and the template files are then next to it.
-      const command = shellCommand(newAppArgs({ ...input, ...NO_VALUES }, input.compose ? "compose.yaml" : undefined,
-        Object.keys(input.files).length ? "files" : undefined));
-      return { ok: code === 0, exitCode: code, output: out.replace(ANSI, "").trim(), command };
-    }));
+    queue(() =>
+      withWorkFiles(input, async ({ composeFile, filesDir }) => {
+        const { code, out } = await run(toolPath(repoDir, "homelab.py"), newAppArgs({ ...input, ...NO_VALUES }, composeFile, filesDir), repoDir);
+        // The command to run by hand: the compose file and the template files are then next to it.
+        const command = shellCommand(
+          newAppArgs({ ...input, ...NO_VALUES }, input.compose ? "compose.yaml" : undefined, Object.keys(input.files).length ? "files" : undefined),
+        );
+        return { ok: code === 0, exitCode: code, output: out.replace(ANSI, "").trim(), command };
+      }),
+    );
 }
 
 /** What the tool would use as compose file, with the secrets and ports in it (`--print-compose`); changes nothing. */
 export function previewer(repoDir: string, run: Runner = spawnRunner) {
   const queue = serial();
   return (input: PlanInput): Promise<PreviewResult> =>
-    queue(() => withWorkFiles(input, async ({ composeFile, filesDir }) => {
-      const { code, out } = await run(toolPath(repoDir, "homelab.py"), [...newAppArgs({ ...input, ...NO_VALUES }, composeFile, filesDir), "--print-compose"], repoDir);
-      const text = out.replace(ANSI, "").trim();
-      if (code !== 0) return { ok: false, error: text.replace(/^error: /m, "").split("\n").filter(Boolean).pop() ?? `exit ${code}` };
-      try {
-        return { ok: true, ...(JSON.parse(text) as Omit<PreviewResult, "ok">) };
-      } catch {
-        return { ok: false, error: "the tool's answer was not readable" };
-      }
-    }));
+    queue(() =>
+      withWorkFiles(input, async ({ composeFile, filesDir }) => {
+        const { code, out } = await run(
+          toolPath(repoDir, "homelab.py"),
+          [...newAppArgs({ ...input, ...NO_VALUES }, composeFile, filesDir), "--print-compose"],
+          repoDir,
+        );
+        const text = out.replace(ANSI, "").trim();
+        if (code !== 0)
+          return {
+            ok: false,
+            error:
+              text
+                .replace(/^error: /m, "")
+                .split("\n")
+                .filter(Boolean)
+                .pop() ?? `exit ${code}`,
+          };
+        try {
+          return { ok: true, ...(JSON.parse(text) as Omit<PreviewResult, "ok">) };
+        } catch {
+          return { ok: false, error: "the tool's answer was not readable" };
+        }
+      }),
+    );
 }
 
 /** What a `homelab.py <command> --json` lists. Building blocks and templates only change with the tool, so their answer is kept a minute;
@@ -223,8 +290,13 @@ export function secretTool(repoDir: string, env: Record<string, string>): Secret
   return (args, stdin) =>
     new Promise((resolve) => {
       const child = execFile(
-        "python3", ["-I", toolPath(repoDir, "homelab.py"), "secrets", ...args],
-        { timeout: 60_000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1", HOME: "/tmp", ...toolRoot(repoDir), ...env } },
+        "python3",
+        ["-I", toolPath(repoDir, "homelab.py"), "secrets", ...args],
+        {
+          timeout: 60_000,
+          maxBuffer: 1024 * 1024,
+          env: { PATH: process.env.PATH ?? "", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1", HOME: "/tmp", ...toolRoot(repoDir), ...env },
+        },
         (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, out: `${stdout}${stderr}`.replace(ANSI, "") }),
       );
       child.stdin?.end(stdin ?? "");

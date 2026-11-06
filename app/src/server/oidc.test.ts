@@ -12,7 +12,16 @@ import { testCreations, testHosts, testRemoval, testStacks } from "./testing.js"
 import { userStore } from "./users.js";
 
 const ISSUER = "https://id.example";
-const cfg: OidcConfig = { issuer: ISSUER, clientId: "homegraf", clientSecret: "client-secret", publicUrl: "https://map.example", scopes: "openid profile", usernameClaim: "preferred_username", label: "id.example", sessionHours: 8 };
+const cfg: OidcConfig = {
+  issuer: ISSUER,
+  clientId: "homegraf",
+  clientSecret: "client-secret",
+  publicUrl: "https://map.example",
+  scopes: "openid profile",
+  usernameClaim: "preferred_username",
+  label: "id.example",
+  sessionHours: 8,
+};
 const jwt = (claims: object) => ["e30", Buffer.from(JSON.stringify(claims)).toString("base64url"), "sig"].join(".");
 
 /** A provider that answers discovery, the token endpoint (checking PKCE and the client) and userinfo. */
@@ -20,16 +29,36 @@ function provider(change: { claims?: Record<string, unknown>; token?: Response; 
   const seen = { nonce: "", challenge: "", tokens: [] as URLSearchParams[], userinfo: 0 };
   const fetchFn = (async (url: string, init?: RequestInit) => {
     if (url === `${ISSUER}/.well-known/openid-configuration`) {
-      return new Response(JSON.stringify({ issuer: ISSUER, authorization_endpoint: `${ISSUER}/authorize`, token_endpoint: `${ISSUER}/token`, userinfo_endpoint: `${ISSUER}/userinfo` }));
+      return new Response(
+        JSON.stringify({
+          issuer: ISSUER,
+          authorization_endpoint: `${ISSUER}/authorize`,
+          token_endpoint: `${ISSUER}/token`,
+          userinfo_endpoint: `${ISSUER}/userinfo`,
+        }),
+      );
     }
     if (url === `${ISSUER}/token`) {
       const body = new URLSearchParams(String(init?.body));
       seen.tokens.push(body);
       if (change.token) return change.token;
-      const ok = body.get("code") === "good-code" && body.get("client_secret") === "client-secret" && body.get("grant_type") === "authorization_code"
-        && createHash("sha256").update(body.get("code_verifier") ?? "").digest("base64url") === seen.challenge;
+      const ok =
+        body.get("code") === "good-code" &&
+        body.get("client_secret") === "client-secret" &&
+        body.get("grant_type") === "authorization_code" &&
+        createHash("sha256")
+          .update(body.get("code_verifier") ?? "")
+          .digest("base64url") === seen.challenge;
       if (!ok) return new Response("{}", { status: 400 });
-      const claims = { iss: ISSUER, aud: "homegraf", exp: Math.floor(Date.now() / 1000) + 600, sub: "u-1", nonce: seen.nonce, preferred_username: "Alice", ...change.claims };
+      const claims = {
+        iss: ISSUER,
+        aud: "homegraf",
+        exp: Math.floor(Date.now() / 1000) + 600,
+        sub: "u-1",
+        nonce: seen.nonce,
+        preferred_username: "Alice",
+        ...change.claims,
+      };
       return new Response(JSON.stringify({ id_token: jwt(claims), access_token: "at-1" }));
     }
     if (url === `${ISSUER}/userinfo`) {
@@ -64,7 +93,11 @@ describe("starting a sign-in", () => {
     const url = new URL(location);
     expect(`${url.origin}${url.pathname}`).toBe(`${ISSUER}/authorize`);
     expect(Object.fromEntries(url.searchParams)).toMatchObject({
-      response_type: "code", client_id: "homegraf", redirect_uri: "https://map.example/api/auth/callback", scope: "openid profile", code_challenge_method: "S256",
+      response_type: "code",
+      client_id: "homegraf",
+      redirect_uri: "https://map.example/api/auth/callback",
+      scope: "openid profile",
+      code_challenge_method: "S256",
     });
     expect(url.searchParams.get("state")).toHaveLength(43);
     expect(stateCookie).toContain(`hg_oidc=${url.searchParams.get("state")}`);
@@ -73,8 +106,11 @@ describe("starting a sign-in", () => {
 
   it("says why when the provider cannot be reached or is somebody else", async () => {
     const users = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
-    await expect(createOidc({ cfg, users, fetchFn: (async () => new Response("", { status: 502 })) as unknown as typeof fetch }).login()).rejects.toThrow(/HTTP 502/);
-    const other = (async () => new Response(JSON.stringify({ issuer: "https://other.example", authorization_endpoint: "x", token_endpoint: "y" }))) as unknown as typeof fetch;
+    await expect(createOidc({ cfg, users, fetchFn: (async () => new Response("", { status: 502 })) as unknown as typeof fetch }).login()).rejects.toThrow(
+      /HTTP 502/,
+    );
+    const other = (async () =>
+      new Response(JSON.stringify({ issuer: "https://other.example", authorization_endpoint: "x", token_endpoint: "y" }))) as unknown as typeof fetch;
     await expect(createOidc({ cfg, users, fetchFn: other }).login()).rejects.toThrow(/not https:\/\/id\.example/);
   });
 });
@@ -105,13 +141,21 @@ describe("coming back from the provider", () => {
     const { oidc } = setup({}, () => now);
     const { location, stateCookie } = await oidc.login();
     now += 11 * 60_000;
-    expect(await oidc.callback({ code: "good-code", state: new URL(location).searchParams.get("state")! }, cookieValue(stateCookie, "hg_oidc"))).toMatchObject({ ok: false });
+    expect(await oidc.callback({ code: "good-code", state: new URL(location).searchParams.get("state")! }, cookieValue(stateCookie, "hg_oidc"))).toMatchObject({
+      ok: false,
+    });
   });
 
   it("passes on what the provider says when it refuses or the token endpoint fails", async () => {
-    expect(await setup().oidc.callback({ error: "access_denied" }, undefined)).toEqual({ ok: false, error: "the provider refused the sign-in (access_denied)" });
+    expect(await setup().oidc.callback({ error: "access_denied" }, undefined)).toEqual({
+      ok: false,
+      error: "the provider refused the sign-in (access_denied)",
+    });
     expect(await setup({ token: new Response("", { status: 500 }) }).signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/HTTP 500/) });
-    expect(await setup({ token: new Response(JSON.stringify({ access_token: "at" })) }).signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/no id token/) });
+    expect(await setup({ token: new Response(JSON.stringify({ access_token: "at" })) }).signIn()).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/no id token/),
+    });
     expect(await setup().signIn("wrong-code")).toMatchObject({ ok: false, error: expect.stringMatching(/HTTP 400/) });
   });
 
@@ -134,7 +178,10 @@ describe("coming back from the provider", () => {
     const result = await signIn();
     expect(p.seen.userinfo).toBe(1);
     expect(oidc.principal((result as { sessionId: string }).sessionId)?.principal.name).toBe("bob");
-    expect(await setup({ claims: { preferred_username: undefined } }).signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/no "preferred_username"/) });
+    expect(await setup({ claims: { preferred_username: undefined } }).signIn()).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/no "preferred_username"/),
+    });
   });
 
   it("gives the names in OIDC_ADMINS every permission at their first sign-in, and binds them like any entry", async () => {
@@ -142,7 +189,14 @@ describe("coming back from the provider", () => {
     const result = await signIn();
     expect(result).toMatchObject({ ok: true });
     expect(users.get("owner")).toMatchObject({ sso: true, sub: "u-1" });
-    expect(oidc.principal((result as { sessionId: string }).sessionId)?.principal.permissions).toEqual(["apps:create", "apps:remove", "hosts:edit", "stacks:deploy", "secrets:manage", "users:manage"]);
+    expect(oidc.principal((result as { sessionId: string }).sessionId)?.principal.permissions).toEqual([
+      "apps:create",
+      "apps:remove",
+      "hosts:edit",
+      "stacks:deploy",
+      "secrets:manage",
+      "users:manage",
+    ]);
   });
 
   it("gives nobody else anything, and leaves an entry as the Users tab has it", async () => {
@@ -158,7 +212,10 @@ describe("coming back from the provider", () => {
 
   it("never lets a provider account become the built-in administrator, and refuses names it cannot use", async () => {
     expect(await setup({ claims: { preferred_username: "Admin" } }).signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/reserved/) });
-    expect(await setup({ claims: { preferred_username: "Boss" } }, Date.now, cfg, "boss").signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/"boss" is reserved/) });
+    expect(await setup({ claims: { preferred_username: "Boss" } }, Date.now, cfg, "boss").signIn()).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/"boss" is reserved/),
+    });
     expect(await setup({ claims: { preferred_username: "a" } }).signIn()).toMatchObject({ ok: false, error: expect.stringMatching(/not a name/) });
     expect(await setup({ claims: { preferred_username: "x y" } }).signIn()).toMatchObject({ ok: false });
   });
@@ -226,24 +283,43 @@ describe("the cookie header", () => {
 
 describe("the routes", () => {
   const env = {
-    KOMODO_URL: "http://komodo:9120", KOMODO_API_KEY: "kkey", KOMODO_API_SECRET: "ksecret",
-    HOMEGRAF_PASSWORD: "pw-1234", HOMEGRAF_CLONE_URL: "https://git.example/o/r.git", FORGEJO_TOKEN: "ftoken",
-    INFISICAL_URL: "https://inf.example", INFISICAL_BOOTSTRAP_CLIENT_ID: "iid", INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
+    KOMODO_URL: "http://komodo:9120",
+    KOMODO_API_KEY: "kkey",
+    KOMODO_API_SECRET: "ksecret",
+    HOMEGRAF_PASSWORD: "pw-1234",
+    HOMEGRAF_CLONE_URL: "https://git.example/o/r.git",
+    FORGEJO_TOKEN: "ftoken",
+    INFISICAL_URL: "https://inf.example",
+    INFISICAL_BOOTSTRAP_CLIENT_ID: "iid",
+    INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
   };
   async function build(withSso = true) {
-    const { users, oidc, signIn, p } = setup();
+    const { users, oidc, p } = setup();
     await users.addSso("carol", ["users:manage"]);
     await users.addSso("erin", []);
     await users.add("pat", "pat has a long password", ["users:manage"]);
     const app = createApp({
-      loadGraph: async () => { throw new Error("unused"); },
+      loadGraph: async () => {
+        throw new Error("unused");
+      },
       status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
-      webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
-      addons: async () => [], templates: async () => [], unifi: () => ({ enabled: false }),
+      webDir: "dist/web",
+      plan: async () => {
+        throw new Error("unused");
+      },
+      preview: async () => {
+        throw new Error("unused");
+      },
+      addons: async () => [],
+      templates: async () => [],
+      unifi: () => ({ enabled: false }),
       certificates: { get: async () => ({ updated: null, certificates: [] }) },
       create: { problem: undefined, applier: applier({ cfg: loadConfig(env), spawn: async () => 0, exists: () => true, login: async () => "o" }) },
       users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
-      removal: testRemoval(), creations: testCreations(), hosts: testHosts(), stacks: testStacks(),
+      removal: testRemoval(),
+      creations: testCreations(),
+      hosts: testHosts(),
+      stacks: testStacks(),
       sso: withSso ? { oidc } : { problem: "single sign-on needs OIDC_ISSUER as well" },
     });
     /** Goes through /login and /callback like a browser and returns the cookies it ends up with. */
@@ -261,7 +337,11 @@ describe("the routes", () => {
   }
 
   it("says whether single sign-on is on, and why not when it is half set up", async () => {
-    expect(await (await (await build(false)).app.request("/api/auth/session")).json()).toEqual({ enabled: false, problem: "single sign-on needs OIDC_ISSUER as well", password: { enabled: true } });
+    expect(await (await (await build(false)).app.request("/api/auth/session")).json()).toEqual({
+      enabled: false,
+      problem: "single sign-on needs OIDC_ISSUER as well",
+      password: { enabled: true },
+    });
     const { app } = await build();
     expect(await (await app.request("/api/auth/session")).json()).toEqual({ enabled: true, label: "id.example", password: { enabled: true } });
     expect((await (await build(false)).app.request("/api/auth/login")).status).toBe(404);
@@ -304,7 +384,12 @@ describe("the routes", () => {
 
   it("lets a session read, and write only with the token and the permission", async () => {
     const { app, session, csrf } = await signedIn();
-    const post = (headers: Record<string, string>) => app.request("/api/users", { method: "POST", body: JSON.stringify({ name: "dave", sso: true, permissions: [] }), headers: { "content-type": "application/json", cookie: session, ...headers } });
+    const post = (headers: Record<string, string>) =>
+      app.request("/api/users", {
+        method: "POST",
+        body: JSON.stringify({ name: "dave", sso: true, permissions: [] }),
+        headers: { "content-type": "application/json", cookie: session, ...headers },
+      });
     expect((await app.request("/api/users", { headers: { cookie: session } })).status).toBe(200);
     const noToken = await post({});
     expect(noToken.status).toBe(403);
@@ -317,14 +402,22 @@ describe("the routes", () => {
 
   it("turns a session without the permission away", async () => {
     const { app, session, csrf } = await signedIn("erin");
-    const res = await app.request("/api/users", { method: "POST", body: JSON.stringify({ name: "dave", sso: true }), headers: { "content-type": "application/json", cookie: session, "x-csrf-token": csrf } });
+    const res = await app.request("/api/users", {
+      method: "POST",
+      body: JSON.stringify({ name: "dave", sso: true }),
+      headers: { "content-type": "application/json", cookie: session, "x-csrf-token": csrf },
+    });
     expect(res.status).toBe(403);
     expect((await res.json()).error).toMatch(/needs users:manage/);
   });
 
   it("does not let a session change a password it does not have", async () => {
     const { app, session, csrf } = await signedIn();
-    const res = await app.request("/api/me/password", { method: "PUT", body: JSON.stringify({ password: "a new long password" }), headers: { "content-type": "application/json", cookie: session, "x-csrf-token": csrf } });
+    const res = await app.request("/api/me/password", {
+      method: "PUT",
+      body: JSON.stringify({ password: "a new long password" }),
+      headers: { "content-type": "application/json", cookie: session, "x-csrf-token": csrf },
+    });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/identity provider/);
   });
@@ -352,7 +445,11 @@ describe("the routes", () => {
     await expect(users.update("carol", { password: "a new long password" })).rejects.toThrow(/no password/);
     const off = await build(false);
     const admin = `Basic ${Buffer.from("admin:pw-1234").toString("base64")}`;
-    const res = await off.app.request("/api/users", { method: "POST", body: JSON.stringify({ name: "dave", sso: true }), headers: { "content-type": "application/json", authorization: admin } });
+    const res = await off.app.request("/api/users", {
+      method: "POST",
+      body: JSON.stringify({ name: "dave", sso: true }),
+      headers: { "content-type": "application/json", authorization: admin },
+    });
     expect(res.status).toBe(400);
   });
 });

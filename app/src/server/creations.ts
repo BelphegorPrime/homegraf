@@ -52,29 +52,43 @@ export function creationTracker({ store, pullState, stackState, probe, now = Dat
     const hit = certificates.get(domain);
     if (hit && now() - hit.at < 10_000) return hit.result;
     const cert: CertificateInfo = await probe(domain).catch((e: unknown) => ({ domain, error: e instanceof Error ? e.message : String(e) }));
-    const result = cert.error ? { ok: false, detail: cert.error } : cert.matches ? { ok: true } : { ok: false, detail: "the proxy serves a certificate for another name yet" };
+    const result = cert.error
+      ? { ok: false, detail: cert.error }
+      : cert.matches
+        ? { ok: true }
+        : { ok: false, detail: "the proxy serves a certificate for another name yet" };
     certificates.set(domain, { at: now(), result });
     return result;
   }
 
   return {
     async list(): Promise<PendingCreation[]> {
-      const out = await Promise.all(store.list().map(async (r): Promise<PendingCreation | undefined> => {
-        const age = (since: string) => now() - Date.parse(since);
-        if (r.settled ? age(r.settled) > HOUR : age(r.at) > WEEK) {
-          try { store.remove(r.appId); } catch { /* the file is unreadable: nothing to prune */ }
-          return undefined;
-        }
-        const pr = await pullState(r.pullRequestUrl);
-        const stack = pr === "merged" ? await stackState(r.appId) : undefined;
-        const answering = stack?.health === "ok" && r.domain ? await https(r.domain) : undefined;
-        const done = pr === "merged" && stack?.health === "ok" && (!r.domain || !!answering?.ok);
-        if (done && !r.settled) {
-          try { store.add({ ...r, settled: new Date(now()).toISOString() }); } catch { /* shown anyway, kept until the file works */ }
-        }
-        const { settled: _settled, ...shown } = r;
-        return { ...shown, pr, stack, https: answering, done };
-      }));
+      const out = await Promise.all(
+        store.list().map(async (r): Promise<PendingCreation | undefined> => {
+          const age = (since: string) => now() - Date.parse(since);
+          if (r.settled ? age(r.settled) > HOUR : age(r.at) > WEEK) {
+            try {
+              store.remove(r.appId);
+            } catch {
+              /* the file is unreadable: nothing to prune */
+            }
+            return undefined;
+          }
+          const pr = await pullState(r.pullRequestUrl);
+          const stack = pr === "merged" ? await stackState(r.appId) : undefined;
+          const answering = stack?.health === "ok" && r.domain ? await https(r.domain) : undefined;
+          const done = pr === "merged" && stack?.health === "ok" && (!r.domain || !!answering?.ok);
+          if (done && !r.settled) {
+            try {
+              store.add({ ...r, settled: new Date(now()).toISOString() });
+            } catch {
+              /* shown anyway, kept until the file works */
+            }
+          }
+          const { settled: _settled, ...shown } = r;
+          return { ...shown, pr, stack, https: answering, done };
+        }),
+      );
       return out.filter((c): c is PendingCreation => !!c);
     },
   };

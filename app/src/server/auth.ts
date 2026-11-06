@@ -55,10 +55,12 @@ export function authenticator({ adminPassword, admin = ADMIN, users, now = Date.
 
     let principal: Principal | undefined;
     if (key === admin) {
-      if (timingSafeEqual(digest(given.password), digest(adminPassword))) principal = { name: admin, permissions: Object.keys(PERMISSIONS) as Permission[], source: "builtin" };
+      if (timingSafeEqual(digest(given.password), digest(adminPassword)))
+        principal = { name: admin, permissions: Object.keys(PERMISSIONS) as Permission[], source: "builtin" };
     } else {
       const user = users.get(key);
-      if (await verifyPassword(given.password, user?.hash || await DUMMY_HASH) && user && !user.sso) principal = { name: user.name, permissions: user.permissions, source: "user" };
+      if ((await verifyPassword(given.password, user?.hash || (await DUMMY_HASH))) && user && !user.sso)
+        principal = { name: user.name, permissions: user.permissions, source: "user" };
     }
     if (principal) {
       failures.delete(key);

@@ -22,7 +22,10 @@ Run what applies to your change (the same things run on GitHub):
 
 ```bash
 # the app (Node 26)
-cd app && npm ci && npm run typecheck && npm test
+cd app && npm ci && npm run typecheck && npm run lint && npm run format:check && npm test
+
+# `npm ci` also turns on the git hooks in .githooks: pre-commit checks formatting and lint of what you stage, pre-push runs all of this
+# (`--no-verify` skips them once; the pipeline runs them regardless). `npm run format` writes the Prettier style (shadcn's own files in src/web/components/ui are left alone)
 
 # the bootstrap (Python 3.11 or newer, standard library only)
 python3 -W error::ResourceWarning -m unittest discover -s bootstrap/tests -t bootstrap

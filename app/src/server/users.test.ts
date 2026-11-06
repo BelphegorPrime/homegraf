@@ -33,8 +33,8 @@ describe("userStore", () => {
 
   it("reserves the configured administrator's name instead of admin", async () => {
     const store = userStore(join(dir(), "users.json"), undefined, "boss");
-    expect((await store.add("boss", "correct horse battery", []).catch((e: unknown) => e) as UserError).message).toMatch(/"boss" is reserved/);
-    expect((await store.addSso("boss", []).catch((e: unknown) => e) as UserError).message).toMatch(/"boss" is reserved/);
+    expect(((await store.add("boss", "correct horse battery", []).catch((e: unknown) => e)) as UserError).message).toMatch(/"boss" is reserved/);
+    expect(((await store.addSso("boss", []).catch((e: unknown) => e)) as UserError).message).toMatch(/"boss" is reserved/);
     expect((await store.add("admin", "correct horse battery", [])).name).toBe("admin");
   });
 

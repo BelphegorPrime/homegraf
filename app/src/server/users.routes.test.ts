@@ -16,27 +16,45 @@ async function build() {
   const store = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
   await store.add("alice", "alice has apps rights", ["apps:create"]);
   const app = createApp({
-    loadGraph: async () => { throw new Error("unused"); },
+    loadGraph: async () => {
+      throw new Error("unused");
+    },
     status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
-    webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
-    addons: async () => [], templates: async () => [], unifi: () => ({ enabled: false }),
+    webDir: "dist/web",
+    plan: async () => {
+      throw new Error("unused");
+    },
+    preview: async () => {
+      throw new Error("unused");
+    },
+    addons: async () => [],
+    templates: async () => [],
+    unifi: () => ({ enabled: false }),
     certificates: { get: async () => ({ updated: null, certificates: [] }) },
-    removal: testRemoval(), creations: testCreations(), hosts: testHosts(),
+    removal: testRemoval(),
+    creations: testCreations(),
+    hosts: testHosts(),
     stacks: testStacks(),
     create: { problem: undefined, applier: applier({ cfg: loadConfig({}) }) },
     users: { enabled: true, store, authenticate: authenticator({ adminPassword: "pw-admin-1234", users: store }) },
   });
-  const call = (method: string, path: string, auth?: string, body?: unknown) => app.request(path, {
-    method, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
-  });
+  const call = (method: string, path: string, auth?: string, body?: unknown) =>
+    app.request(path, {
+      method,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
+    });
   return { call, store };
 }
 
 describe("who am I", () => {
   it("answers with the signed-in user and refuses everybody else", async () => {
     const { call } = await build();
-    expect(await (await call("GET", "/api/me", basic("alice", "alice has apps rights"))).json()).toEqual({ name: "alice", permissions: ["apps:create"], source: "user" });
+    expect(await (await call("GET", "/api/me", basic("alice", "alice has apps rights"))).json()).toEqual({
+      name: "alice",
+      permissions: ["apps:create"],
+      source: "user",
+    });
     expect((await call("GET", "/api/me", basic("alice", "nope"))).status).toBe(401);
     expect((await call("GET", "/api/me")).status).toBe(401);
   });
@@ -46,7 +64,12 @@ describe("user management", () => {
   it("needs users:manage for everything", async () => {
     const { call } = await build();
     const alice = basic("alice", "alice has apps rights");
-    for (const [m, p, b] of [["GET", "/api/users"], ["POST", "/api/users", { name: "x1", password: "long enough password" }], ["PATCH", "/api/users/alice", {}], ["DELETE", "/api/users/alice"]] as const)
+    for (const [m, p, b] of [
+      ["GET", "/api/users"],
+      ["POST", "/api/users", { name: "x1", password: "long enough password" }],
+      ["PATCH", "/api/users/alice", {}],
+      ["DELETE", "/api/users/alice"],
+    ] as const)
       expect((await call(m, p, alice, b)).status).toBe(403);
     expect((await call("GET", "/api/users")).status).toBe(401);
   });
@@ -78,10 +101,16 @@ describe("user management", () => {
 
   it("explains what is wrong with the input", async () => {
     const { call } = await build();
-    const refused = async (b: unknown) => { const r = await call("POST", "/api/users", ADMIN, b); return [r.status, (await r.json()).error]; };
+    const refused = async (b: unknown) => {
+      const r = await call("POST", "/api/users", ADMIN, b);
+      return [r.status, (await r.json()).error];
+    };
     expect(await refused({ name: "admin", password: "long enough password" })).toEqual([400, expect.stringMatching(/reserved/)]);
     expect(await refused({ name: "dave", password: "short" })).toEqual([400, expect.stringMatching(/at least 12/)]);
-    expect(await refused({ name: "dave", password: "long enough password", permissions: ["root"] })).toEqual([400, expect.stringMatching(/permissions must be/)]);
+    expect(await refused({ name: "dave", password: "long enough password", permissions: ["root"] })).toEqual([
+      400,
+      expect.stringMatching(/permissions must be/),
+    ]);
     expect(await refused({ name: "alice", password: "long enough password" })).toEqual([409, expect.stringMatching(/exists/)]);
   });
 

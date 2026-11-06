@@ -1,0 +1,6 @@
+dist
+node_modules
+package-lock.json
+# shadcn's own files: the CLI writes them (and writes them again on an update)
+src/web/components/ui
+src/web/hooks

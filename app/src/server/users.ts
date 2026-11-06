@@ -58,7 +58,12 @@ export interface UserStore {
 }
 
 export class UserError extends Error {
-  constructor(message: string, readonly status: 400 | 404 | 409 | 503 = 400) { super(message); }
+  constructor(
+    message: string,
+    readonly status: 400 | 404 | 409 | 503 = 400,
+  ) {
+    super(message);
+  }
 }
 
 export function checkPassword(password: unknown): string {
@@ -68,7 +73,8 @@ export function checkPassword(password: unknown): string {
 }
 
 function checkPermissions(permissions: unknown): Permission[] {
-  if (!Array.isArray(permissions) || !permissions.every(isPermission)) throw new UserError(`permissions must be a list of: ${Object.keys(PERMISSIONS).join(", ")}`);
+  if (!Array.isArray(permissions) || !permissions.every(isPermission))
+    throw new UserError(`permissions must be a list of: ${Object.keys(PERMISSIONS).join(", ")}`);
   return [...new Set(permissions)];
 }
 
@@ -101,7 +107,9 @@ export function userStore(file: string, now: () => Date = () => new Date(), admi
   const find = (name: string) => users.find((u) => u.name === name);
 
   return {
-    get problem() { return problem; },
+    get problem() {
+      return problem;
+    },
     list: () => users.map((u) => ({ ...u, permissions: [...u.permissions] })),
     get: (name) => find(name),
     async add(name, password, permissions) {
@@ -109,7 +117,12 @@ export function userStore(file: string, now: () => Date = () => new Date(), admi
       if (name === admin) throw new UserError(`"${admin}" is reserved for the administrator from the environment`);
       if (!NAME_RE.test(name)) throw new UserError("the name is 2 to 32 characters: lower case letters, digits, . _ -");
       if (find(name)) throw new UserError(`user ${name} exists`, 409);
-      const user: StoredUser = { name, hash: await hashPassword(checkPassword(password)), permissions: checkPermissions(permissions), created: now().toISOString() };
+      const user: StoredUser = {
+        name,
+        hash: await hashPassword(checkPassword(password)),
+        permissions: checkPermissions(permissions),
+        created: now().toISOString(),
+      };
       users.push(user);
       save();
       return user;

@@ -17,15 +17,25 @@ export function testRemoval(apps: RemovableApp[] = [], pulls: Record<string, "op
 }
 
 /** Stack dependencies for tests: the given stacks and a tool that records its calls and answers like `homelab.py secrets`. */
-export function testStacks(list: ManagedStack[] = [], answer: (args: string[], stdin?: string) => { code: number; out: string } = () => ({ code: 0, out: "" })): StacksDeps & { calls: { args: string[]; stdin?: string }[] } {
+export function testStacks(
+  list: ManagedStack[] = [],
+  answer: (args: string[], stdin?: string) => { code: number; out: string } = () => ({ code: 0, out: "" }),
+): StacksDeps & { calls: { args: string[]; stdin?: string }[] } {
   const calls: { args: string[]; stdin?: string }[] = [];
-  const secretTool: SecretTool = async (args, stdin) => { calls.push({ args, stdin }); return answer(args, stdin); };
+  const secretTool: SecretTool = async (args, stdin) => {
+    calls.push({ args, stdin });
+    return answer(args, stdin);
+  };
   return { list: async () => list, secretTool, calls };
 }
 
 /** Creation dependencies for tests: a store in a fresh temporary folder, fixed pull request and stack states, and certificates by domain. */
 export function testCreations(
-  { pulls = {}, stacks = {}, certs = {} }: {
+  {
+    pulls = {},
+    stacks = {},
+    certs = {},
+  }: {
     pulls?: Record<string, "open" | "merged" | "closed" | "unknown">;
     stacks?: Record<string, { health: Health; detail?: string }>;
     certs?: Record<string, { error?: string; matches?: boolean }>;
@@ -34,7 +44,8 @@ export function testCreations(
 ): CreationsDeps {
   const store = creationStore(join(mkdtempSync(join(tmpdir(), "homegraf-creations-")), "creations.json"));
   const tracker = creationTracker({
-    store, now,
+    store,
+    now,
     pullState: async (url) => pulls[url] ?? "unknown",
     stackState: async (name) => stacks[name],
     probe: async (domain) => ({ domain, ...(certs[domain] ?? { error: "ECONNREFUSED" }) }),
@@ -51,7 +62,11 @@ export function testHosts(list: HostInfo[] = [], rootCa: HostsDeps["rootCa"] = (
  * The app as somebody signed in, for the read routes (GET): every route is behind the sign-in now, and those tests are about what a route
  * answers, not about who may ask. Requests that bring their own `Authorization` or cookie, and every write, go through as they are.
  */
-export function signedInReads<A extends { request: (path: string, init?: RequestInit) => Response | Promise<Response> }>(app: A, password: string, name = "admin"): A {
+export function signedInReads<A extends { request: (path: string, init?: RequestInit) => Response | Promise<Response> }>(
+  app: A,
+  password: string,
+  name = "admin",
+): A {
   const auth = `Basic ${Buffer.from(`${name}:${password}`).toString("base64")}`;
   const request = (path: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers);

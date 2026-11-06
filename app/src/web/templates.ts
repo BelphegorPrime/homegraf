@@ -3,7 +3,12 @@ import type { TemplateInfo, VolumeRow } from "../shared/types";
 /** The order of the picker; a category it does not know comes last. */
 const ORDER = ["web server", "media", "documents", "productivity", "ai", "tools"];
 export const CATEGORY_TITLES: Record<string, string> = {
-  "web server": "Web servers", media: "Media", documents: "Documents", productivity: "Productivity", ai: "AI", tools: "Tools",
+  "web server": "Web servers",
+  media: "Media",
+  documents: "Documents",
+  productivity: "Productivity",
+  ai: "AI",
+  tools: "Tools",
 };
 
 /** The templates by category, in the order of the picker and by name inside a category. */

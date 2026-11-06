@@ -29,13 +29,23 @@ const STACK_HEALTH: Record<string, Health> = {
 };
 
 /** What the UniFi controller calls a device's state (1 = connected); the rest are transitions or trouble. */
-const UNIFI_STATE: Record<number, string> = { 0: "offline", 1: "connected", 4: "updating", 5: "provisioning", 6: "heartbeat missed", 7: "adopting", 9: "adoption failed", 11: "isolated" };
-export const unifiHealth = (state: number): NodeStatus =>
-  ({ health: state === 1 ? "ok" : state === 0 || state === 9 || state === 6 ? "down" : "warn", detail: UNIFI_STATE[state] ?? `state ${state}` });
+const UNIFI_STATE: Record<number, string> = {
+  0: "offline",
+  1: "connected",
+  4: "updating",
+  5: "provisioning",
+  6: "heartbeat missed",
+  7: "adopting",
+  9: "adoption failed",
+  11: "isolated",
+};
+export const unifiHealth = (state: number): NodeStatus => ({
+  health: state === 1 ? "ok" : state === 0 || state === 9 || state === 6 ? "down" : "warn",
+  detail: UNIFI_STATE[state] ?? `state ${state}`,
+});
 
 export const stackHealth = (state?: string): Health => STACK_HEALTH[(state ?? "").toLowerCase()] ?? "unknown";
-export const serverHealth = (state?: string): Health =>
-  state === "Ok" ? "ok" : state === "NotOk" ? "down" : state === "Disabled" ? "unknown" : "unknown";
+export const serverHealth = (state?: string): Health => (state === "Ok" ? "ok" : state === "NotOk" ? "down" : state === "Disabled" ? "unknown" : "unknown");
 
 /**
  * How the last run of a one-shot job went, from its containers: Komodo calls such a stack stopped, and its own status only counts
@@ -58,7 +68,12 @@ export function jobStatus(services: KomodoStackService[]): NodeStatus | undefine
 }
 
 /** Maps Komodo's stacks and servers onto graph node ids; containers inherit their stack's health. `jobs`: the last run of the one-shot stacks, by stack name. */
-export function statusFromKomodo(graph: Graph, stacks: KomodoStack[], servers: KomodoServer[], jobs: Record<string, NodeStatus> = {}): Record<string, NodeStatus> {
+export function statusFromKomodo(
+  graph: Graph,
+  stacks: KomodoStack[],
+  servers: KomodoServer[],
+  jobs: Record<string, NodeStatus> = {},
+): Record<string, NodeStatus> {
   const out: Record<string, NodeStatus> = {};
   const byName = new Map(stacks.map((s) => [s.name, s]));
   for (const n of graph.nodes) {
@@ -105,11 +120,7 @@ export async function komodo<T>(cfg: NonNullable<Config["komodo"]>, type: string
   return (await res.json()) as T;
 }
 
-export function statusPoller(
-  cfg: Config,
-  loadGraph: () => Promise<Graph>,
-  fetchFn: typeof fetch = fetch,
-) {
+export function statusPoller(cfg: Config, loadGraph: () => Promise<Graph>, fetchFn: typeof fetch = fetch) {
   let snapshot: StatusSnapshot = {
     updated: null,
     source: cfg.komodo ? "komodo" : "disabled",
@@ -127,12 +138,18 @@ export function statusPoller(
       ]);
       // One-shot jobs: the exit code of the last run is in the containers, not in the stack's state.
       const jobs: Record<string, NodeStatus> = {};
-      await Promise.all(graph.nodes.filter((n) => n.type === "stack" && n.job).map(async (n) => {
-        try {
-          const run = jobStatus(await komodo<KomodoStackService[]>(cfg.komodo!, "ListStackServices", fetchFn, { stack: n.label }));
-          if (run) jobs[n.label] = run;
-        } catch { /* not known: the stack's own state shows */ }
-      }));
+      await Promise.all(
+        graph.nodes
+          .filter((n) => n.type === "stack" && n.job)
+          .map(async (n) => {
+            try {
+              const run = jobStatus(await komodo<KomodoStackService[]>(cfg.komodo!, "ListStackServices", fetchFn, { stack: n.label }));
+              if (run) jobs[n.label] = run;
+            } catch {
+              /* not known: the stack's own state shows */
+            }
+          }),
+      );
       snapshot = {
         updated: new Date().toISOString(),
         source: "komodo",

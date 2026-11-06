@@ -18,22 +18,36 @@ async function source(run: UnifiRun, extra: object = {}) {
 
 describe("config", () => {
   it("reads the controller from the environment, and is off without it", () => {
-    expect(loadConfig({ UNIFI_URL: "https://udm/", UNIFI_USER: "u", UNIFI_PASSWORD: "p", UNIFI_FINGERPRINT: "ab" }).unifi)
-      .toEqual({ url: "https://udm", user: "u", password: "p", verify: false, fingerprint: "ab" });
+    expect(loadConfig({ UNIFI_URL: "https://udm/", UNIFI_USER: "u", UNIFI_PASSWORD: "p", UNIFI_FINGERPRINT: "ab" }).unifi).toEqual({
+      url: "https://udm",
+      user: "u",
+      password: "p",
+      verify: false,
+      fingerprint: "ab",
+    });
     expect(loadConfig({ UNIFI_URL: "https://udm", UNIFI_USER: "u" }).unifi).toBeUndefined();
   });
 });
 
 describe("unifiSource", () => {
   it("does nothing without a controller", async () => {
-    const s = unifiSource({ cfg: undefined, repoDir: "/repo", run: async () => { throw new Error("must not run"); } });
+    const s = unifiSource({
+      cfg: undefined,
+      repoDir: "/repo",
+      run: async () => {
+        throw new Error("must not run");
+      },
+    });
     expect(await s.args()).toEqual([]);
     expect(s.status()).toEqual({ enabled: false, fetched: undefined, error: undefined });
   });
 
   it("reads the controller once, hands build.py the file, and asks again only after the time is up", async () => {
     let calls = 0;
-    const { s, tick } = await source(async (f, a, e) => { calls++; return ok(f, a, e); });
+    const { s, tick } = await source(async (f, a, e) => {
+      calls++;
+      return ok(f, a, e);
+    });
     const args = await s.args();
     expect(args[0]).toBe("--unifi");
     expect(await readFile(args[1], "utf8")).toBe(snapshot);
@@ -47,7 +61,10 @@ describe("unifiSource", () => {
 
   it("gives the credentials to the one process that reads the controller and keeps the file private", async () => {
     let seen: { file: string; args: string[]; env: Record<string, string> } | undefined;
-    const { s } = await source(async (file, args, env) => { seen = { file, args, env }; return ok(file, args, env); });
+    const { s } = await source(async (file, args, env) => {
+      seen = { file, args, env };
+      return ok(file, args, env);
+    });
     const [, file] = await s.args();
     expect(seen!.file).toBe("/repo/infra/graph/unifi.py");
     expect(seen!.args).toEqual(["--root", "/repo"]);
@@ -62,10 +79,10 @@ describe("unifiSource", () => {
     expect((await s.args())[0]).toBe("--unifi");
     fail = true;
     tick(2000);
-    expect((await s.args())[0]).toBe("--unifi");                       // the failed read does not take the map away
-    expect(s.status().error).toBe("error: reader *** not reachable");  // and the password is not in the message
+    expect((await s.args())[0]).toBe("--unifi"); // the failed read does not take the map away
+    expect(s.status().error).toBe("error: reader *** not reachable"); // and the password is not in the message
     tick(5000);
-    expect(await s.args()).toEqual([]);                                // too old: back to the placeholders
+    expect(await s.args()).toEqual([]); // too old: back to the placeholders
     expect(s.status()).toMatchObject({ enabled: true, fetched: undefined });
   });
 
@@ -77,7 +94,11 @@ describe("unifiSource", () => {
 
   it("asks once for graphs that load at the same time", async () => {
     let calls = 0;
-    const { s } = await source(async (f, a, e) => { calls++; await new Promise((r) => setTimeout(r, 20)); return ok(f, a, e); });
+    const { s } = await source(async (f, a, e) => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 20));
+      return ok(f, a, e);
+    });
     await Promise.all([s.args(), s.args(), s.args()]);
     expect(calls).toBe(1);
   });

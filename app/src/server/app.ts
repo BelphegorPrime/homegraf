@@ -5,7 +5,21 @@ import { streamSSE } from "hono/streaming";
 import type { CertificateSource } from "./certificates.js";
 import type { RootCaSource } from "./rootCa.js";
 import type { UnifiStatus } from "./unifi.js";
-import type { AddonInfo, Capabilities, Graph, HostInfo, ManagedStack, PendingRemoval, RemovableApp, SecretKey, SsoSession, PlanResult, PreviewResult, StatusSnapshot, TemplateInfo } from "../shared/types.js";
+import type {
+  AddonInfo,
+  Capabilities,
+  Graph,
+  HostInfo,
+  ManagedStack,
+  PendingRemoval,
+  RemovableApp,
+  SecretKey,
+  SsoSession,
+  PlanResult,
+  PreviewResult,
+  StatusSnapshot,
+  TemplateInfo,
+} from "../shared/types.js";
 import { planInput, type PlanInput } from "./apps.js";
 import type { Applier } from "./apply.js";
 import type { SecretTool } from "./apps.js";
@@ -89,14 +103,33 @@ export interface Deps {
   sso?: { oidc?: Oidc; problem?: string };
 }
 
-export function createApp({ loadGraph, status, webDir, plan, preview, addons, templates, unifi, certificates, create, users, removal, creations, hosts, stacks, sso }: Deps) {
+export function createApp({
+  loadGraph,
+  status,
+  webDir,
+  plan,
+  preview,
+  addons,
+  templates,
+  unifi,
+  certificates,
+  create,
+  users,
+  removal,
+  creations,
+  hosts,
+  stacks,
+  sso,
+}: Deps) {
   const app = new Hono<Env>();
 
   const sessions = createSessions({ users: users.store, admin: users.admin });
   const isSecure = (c: Context) => c.req.header("x-forwarded-proto") === "https" || c.req.url.startsWith("https:");
 
   /** Who the request is: a cookie session (the login page, or the identity provider), else name and password in the Authorization header (scripts). */
-  const identify = async (c: Context): Promise<{ ok: true; principal: Principal } | { ok: false; status: 401 | 429 | 503; error: string } | { ok: false; status: 403; error: string }> => {
+  const identify = async (
+    c: Context,
+  ): Promise<{ ok: true; principal: Principal } | { ok: false; status: 401 | 429 | 503; error: string } | { ok: false; status: 403; error: string }> => {
     const cookies = c.req.header("cookie");
     const session = sso?.oidc?.principal(cookieValue(cookies, SESSION_COOKIE)) ?? sessions.principal(cookieValue(cookies, LOGIN_COOKIE));
     if (session) {
@@ -115,13 +148,15 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
   };
 
   /** Signs the request in and, when a permission is named, checks that the user has it. */
-  const authorize = (permission?: Permission) => createMiddleware<Env>(async (c, next) => {
-    const who = await identify(c);
-    if (!who.ok) return c.json({ error: who.error }, who.status);
-    if (permission && !who.principal.permissions.includes(permission)) return c.json({ error: `${who.principal.name} may not do this (needs ${permission})` }, 403);
-    c.set("principal", who.principal);
-    await next();
-  });
+  const authorize = (permission?: Permission) =>
+    createMiddleware<Env>(async (c, next) => {
+      const who = await identify(c);
+      if (!who.ok) return c.json({ error: who.error }, who.status);
+      if (permission && !who.principal.permissions.includes(permission))
+        return c.json({ error: `${who.principal.name} may not do this (needs ${permission})` }, 403);
+      c.set("principal", who.principal);
+      await next();
+    });
 
   // Everything behind the sign-in: only the health probe and the sign-in itself are open (the page is served to anybody, it is only a login form then).
   app.use("/api/*", async (c, next) => {
@@ -139,14 +174,16 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
     const cookies = c.req.header("cookie");
     const s = oidc?.principal(cookieValue(cookies, SESSION_COOKIE)) ?? sessions.principal(cookieValue(cookies, LOGIN_COOKIE));
     return c.json({
-      enabled: !!oidc, label: oidc?.cfg.label, problem: oidc ? undefined : sso?.problem,
+      enabled: !!oidc,
+      label: oidc?.cfg.label,
+      problem: oidc ? undefined : sso?.problem,
       password: users.enabled ? { enabled: true } : { enabled: false, reason: "HOMEGRAF_PASSWORD is not set" },
       user: s && { name: s.principal.name, permissions: s.principal.permissions, csrf: s.csrf, source: s.principal.source },
     } satisfies SsoSession);
   });
   // The login page's form: a name and a password, answered with a cookie session.
   app.post("/api/auth/password", async (c) => {
-    const given = await c.req.json().catch(() => null) as { name?: unknown; password?: unknown } | null;
+    const given = (await c.req.json().catch(() => null)) as { name?: unknown; password?: unknown } | null;
     if (typeof given?.name !== "string" || typeof given.password !== "string") return c.json({ error: "give a user name and a password" }, 400);
     const result = await users.authenticate(basicHeader(given.name, given.password));
     if (!result.ok) {
@@ -169,7 +206,10 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
   });
   app.get("/api/auth/callback", async (c) => {
     if (!sso?.oidc) return c.json({ error: "single sign-on is not set up" }, 404);
-    const result = await sso.oidc.callback({ code: c.req.query("code"), state: c.req.query("state"), error: c.req.query("error") }, cookieValue(c.req.header("cookie"), STATE_COOKIE));
+    const result = await sso.oidc.callback(
+      { code: c.req.query("code"), state: c.req.query("state"), error: c.req.query("error") },
+      cookieValue(c.req.header("cookie"), STATE_COOKIE),
+    );
     c.header("Set-Cookie", sso.oidc.clearStateCookie(), { append: true });
     if (!result.ok) return c.redirect(`/?sso_error=${encodeURIComponent(result.error)}`, 302);
     c.header("Set-Cookie", sso.oidc.sessionCookie(result.sessionId, result.maxAgeSeconds), { append: true });
@@ -190,7 +230,13 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
       const message = err instanceof Error ? err.message : String(err);
       // An empty or missing /repo is the first thing a new setup runs into: say what to do instead of a Python error.
       if (/can't open file .*build\.py/.test(message)) {
-        return c.json({ error: "there is no repository to read: mount a checkout of your homelab repository at /repo (it holds infra/graph/build.py, inventory/ and stacks/)" }, 502);
+        return c.json(
+          {
+            error:
+              "there is no repository to read: mount a checkout of your homelab repository at /repo (it holds infra/graph/build.py, inventory/ and stacks/)",
+          },
+          502,
+        );
       }
       return c.json({ error: `graph build failed: ${message}` }, 502);
     }
@@ -228,19 +274,24 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
   });
 
   // Turns the HTTP to HTTPS redirect of a host on or off: a pull request that changes its manifest; the merge sets the NPM host.
-  app.post("/api/hosts/force-https", async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()), authorize("hosts:edit"), async (c) => {
-    const b = await body(c);
-    const domain = typeof b.domain === "string" ? b.domain : "";
-    if (typeof b.enabled !== "boolean") return c.json({ error: "enabled must be true or false" }, 400);
-    const host = (await hosts.list().catch(() => [])).find((h) => h.domains.includes(domain));
-    if (!host) return c.json({ error: `${domain || "this domain"} is not a host managed here (hosts made by hand in NPM are changed in NPM)` }, 404);
-    if (host.forceHttps === b.enabled) return c.json({ error: `the redirect is already ${b.enabled ? "on" : "off"}` }, 409);
-    const by = c.get("principal").name;
-    const job = create.applier.startHostOption(domain, b.enabled, by);
-    if (!job) return c.json({ error: "another job is running, wait for it to finish" }, 409);
-    console.log(`force-https ${b.enabled ? "on" : "off"} for ${domain} requested by ${by}`);
-    return c.json({ jobId: job.id }, 202);
-  });
+  app.post(
+    "/api/hosts/force-https",
+    async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()),
+    authorize("hosts:edit"),
+    async (c) => {
+      const b = await body(c);
+      const domain = typeof b.domain === "string" ? b.domain : "";
+      if (typeof b.enabled !== "boolean") return c.json({ error: "enabled must be true or false" }, 400);
+      const host = (await hosts.list().catch(() => [])).find((h) => h.domains.includes(domain));
+      if (!host) return c.json({ error: `${domain || "this domain"} is not a host managed here (hosts made by hand in NPM are changed in NPM)` }, 404);
+      if (host.forceHttps === b.enabled) return c.json({ error: `the redirect is already ${b.enabled ? "on" : "off"}` }, 409);
+      const by = c.get("principal").name;
+      const job = create.applier.startHostOption(domain, b.enabled, by);
+      if (!job) return c.json({ error: "another job is running, wait for it to finish" }, 409);
+      console.log(`force-https ${b.enabled ? "on" : "off"} for ${domain} requested by ${by}`);
+      return c.json({ jobId: job.id }, 202);
+    },
+  );
 
   // Dry run of `homelab.py new-app`: shows what would be created and changes nothing.
   app.post("/api/apps/plan", async (c) => {
@@ -251,8 +302,10 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
     return c.json(await plan(parsed.data));
   });
 
-  const invalid = (parsed: { error: { issues: { path: PropertyKey[]; message: string }[] } }) =>
-    ({ error: "invalid input", issues: parsed.error.issues.map((i) => ({ field: i.path.join("."), message: i.message })) });
+  const invalid = (parsed: { error: { issues: { path: PropertyKey[]; message: string }[] } }) => ({
+    error: "invalid input",
+    issues: parsed.error.issues.map((i) => ({ field: i.path.join("."), message: i.message })),
+  });
 
   app.get("/api/addons", async (c) => {
     try {
@@ -276,31 +329,54 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
     return parsed.success ? c.json(await preview(parsed.data)) : c.json(invalid(parsed), 400);
   });
 
-  app.get("/api/capabilities", (c) => c.json({ create: { enabled: !create.problem, reason: create.problem }, users: { enabled: users.enabled, reason: users.enabled ? users.store.problem : "HOMEGRAF_PASSWORD is not set" }, unifi: unifi() } satisfies Capabilities));
+  app.get("/api/capabilities", (c) =>
+    c.json({
+      create: { enabled: !create.problem, reason: create.problem },
+      users: { enabled: users.enabled, reason: users.enabled ? users.store.problem : "HOMEGRAF_PASSWORD is not set" },
+      unifi: unifi(),
+    } satisfies Capabilities),
+  );
 
   // Creates the app for real: the signed-in user needs apps:create, then `homelab.py new-app --pr --yes` runs as a background job.
-  app.post("/api/apps/create", async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()), authorize("apps:create"), async (c) => {
-    const parsed = planInput.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json(invalid(parsed), 400);
-    const by = c.get("principal").name;
-    const job = create.applier.start(parsed.data, by, (j) => {
-      if (!j.pullRequestUrl) return;
-      const domain = parsed.data.routing ? domainOfLog(j.log) ?? parsed.data.domain : undefined;
-      try {
-        creations.store.add({ appId: parsed.data.appId, server: parsed.data.server, pullRequestUrl: j.pullRequestUrl, domain, requestedBy: by, at: new Date().toISOString() });
-      } catch (err) {
-        console.error(`creations: ${parsed.data.appId} not recorded: ${err instanceof Error ? err.message : err}`);
-      }
-    });
-    if (!job) return c.json({ error: "another app is being created, wait for it to finish" }, 409);
-    console.log(`create ${parsed.data.appId} on ${parsed.data.server} requested by ${by}`);
-    return c.json({ jobId: job.id }, 202);
-  });
+  app.post(
+    "/api/apps/create",
+    async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()),
+    authorize("apps:create"),
+    async (c) => {
+      const parsed = planInput.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) return c.json(invalid(parsed), 400);
+      const by = c.get("principal").name;
+      const job = create.applier.start(parsed.data, by, (j) => {
+        if (!j.pullRequestUrl) return;
+        const domain = parsed.data.routing ? (domainOfLog(j.log) ?? parsed.data.domain) : undefined;
+        try {
+          creations.store.add({
+            appId: parsed.data.appId,
+            server: parsed.data.server,
+            pullRequestUrl: j.pullRequestUrl,
+            domain,
+            requestedBy: by,
+            at: new Date().toISOString(),
+          });
+        } catch (err) {
+          console.error(`creations: ${parsed.data.appId} not recorded: ${err instanceof Error ? err.message : err}`);
+        }
+      });
+      if (!job) return c.json({ error: "another app is being created, wait for it to finish" }, 409);
+      console.log(`create ${parsed.data.appId} on ${parsed.data.server} requested by ${by}`);
+      return c.json({ jobId: job.id }, 202);
+    },
+  );
 
   // Who am I: checks the credentials without doing anything.
   app.get("/api/me", authorize(), (c) => c.json(c.get("principal")));
 
-  const info = (u: { name: string; permissions: Permission[]; created?: string; sso?: boolean }): UserInfo => ({ name: u.name, permissions: u.permissions, created: u.created, sso: u.sso || undefined });
+  const info = (u: { name: string; permissions: Permission[]; created?: string; sso?: boolean }): UserInfo => ({
+    name: u.name,
+    permissions: u.permissions,
+    created: u.created,
+    sso: u.sso || undefined,
+  });
   const userFailure = (c: Context, err: unknown) => {
     if (err instanceof UserError) return c.json({ error: err.message }, err.status);
     throw err;
@@ -308,18 +384,22 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
   const body = async (c: Context) => ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
 
   app.get("/api/users", authorize("users:manage"), (c) =>
-    c.json({ users: [{ name: users.admin ?? ADMIN, permissions: Object.keys(PERMISSIONS), builtin: true }, ...users.store.list().map(info)] }));
+    c.json({ users: [{ name: users.admin ?? ADMIN, permissions: Object.keys(PERMISSIONS), builtin: true }, ...users.store.list().map(info)] }),
+  );
 
   app.post("/api/users", authorize("users:manage"), async (c) => {
     const b = await body(c);
     try {
       if (b.sso === true && !sso?.oidc) return c.json({ error: "single sign-on is not set up" }, 400);
-      const user = b.sso === true
-        ? await users.store.addSso(String(b.name ?? ""), (b.permissions ?? []) as Permission[])
-        : await users.store.add(String(b.name ?? ""), b.password as string, (b.permissions ?? []) as Permission[]);
+      const user =
+        b.sso === true
+          ? await users.store.addSso(String(b.name ?? ""), (b.permissions ?? []) as Permission[])
+          : await users.store.add(String(b.name ?? ""), b.password as string, (b.permissions ?? []) as Permission[]);
       console.log(`user ${user.name} created by ${c.get("principal").name}`);
       return c.json(info(user), 201);
-    } catch (err) { return userFailure(c, err); }
+    } catch (err) {
+      return userFailure(c, err);
+    }
   });
 
   app.patch("/api/users/:name", authorize("users:manage"), async (c) => {
@@ -330,7 +410,9 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
       const user = await users.store.update(name, { password: b.password as string | undefined, permissions: b.permissions as Permission[] | undefined });
       console.log(`user ${name} changed by ${c.get("principal").name}`);
       return c.json(info(user));
-    } catch (err) { return userFailure(c, err); }
+    } catch (err) {
+      return userFailure(c, err);
+    }
   });
 
   app.delete("/api/users/:name", authorize("users:manage"), (c) => {
@@ -340,7 +422,9 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
       users.store.remove(name);
       console.log(`user ${name} removed by ${c.get("principal").name}`);
       return c.body(null, 204);
-    } catch (err) { return userFailure(c, err); }
+    } catch (err) {
+      return userFailure(c, err);
+    }
   });
 
   // Everybody changes their own password; it needs the current one (the request is signed in with it).
@@ -351,7 +435,9 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
     try {
       await users.store.update(me.name, { password: (await body(c)).password as string });
       return c.body(null, 204);
-    } catch (err) { return userFailure(c, err); }
+    } catch (err) {
+      return userFailure(c, err);
+    }
   });
 
   // The apps that may be removed, with what removing each touches.
@@ -374,34 +460,45 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
   });
 
   // First half: the stack is destroyed now, the files go in a pull request. Needs the app's name typed again as confirmation.
-  app.post("/api/apps/remove", async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()), authorize("apps:remove"), async (c) => {
-    const b = await body(c);
-    const appId = typeof b.appId === "string" ? b.appId : "";
-    if (!appId || b.confirm !== appId) return c.json({ error: "type the app's name to confirm" }, 400);
-    const found = (await removal.apps().catch(() => [])).find((a) => a.id === appId);
-    if (!found) return c.json({ error: `${appId} cannot be removed here (unknown, or part of the platform)` }, 404);
-    if (removal.store.problem) return c.json({ error: removal.store.problem }, 503);
-    const by = c.get("principal").name;
-    const job = create.applier.startRemoval(appId, by, (j) => {
-      if (j.pullRequestUrl) removal.store.add({ appId, server: found.server, pullRequestUrl: j.pullRequestUrl, requestedBy: by, at: new Date().toISOString() });
-    });
-    if (!job) return c.json({ error: "another job is running, wait for it to finish" }, 409);
-    console.log(`remove ${appId} (first half) requested by ${by}`);
-    return c.json({ jobId: job.id }, 202);
-  });
+  app.post(
+    "/api/apps/remove",
+    async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()),
+    authorize("apps:remove"),
+    async (c) => {
+      const b = await body(c);
+      const appId = typeof b.appId === "string" ? b.appId : "";
+      if (!appId || b.confirm !== appId) return c.json({ error: "type the app's name to confirm" }, 400);
+      const found = (await removal.apps().catch(() => [])).find((a) => a.id === appId);
+      if (!found) return c.json({ error: `${appId} cannot be removed here (unknown, or part of the platform)` }, 404);
+      if (removal.store.problem) return c.json({ error: removal.store.problem }, 503);
+      const by = c.get("principal").name;
+      const job = create.applier.startRemoval(appId, by, (j) => {
+        if (j.pullRequestUrl)
+          removal.store.add({ appId, server: found.server, pullRequestUrl: j.pullRequestUrl, requestedBy: by, at: new Date().toISOString() });
+      });
+      if (!job) return c.json({ error: "another job is running, wait for it to finish" }, 409);
+      console.log(`remove ${appId} (first half) requested by ${by}`);
+      return c.json({ jobId: job.id }, 202);
+    },
+  );
 
   // Second half, once the pull request is merged: NPM host, certificate and secrets.
-  app.post("/api/apps/remove/finish", async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()), authorize("apps:remove"), async (c) => {
-    const appId = String((await body(c)).appId ?? "");
-    const pending = removal.store.get(appId);
-    if (!pending) return c.json({ error: `no removal of ${appId} is waiting` }, 404);
-    if ((await removal.pullState(pending.pullRequestUrl)) !== "merged") return c.json({ error: "the pull request is not merged yet" }, 409);
-    const by = c.get("principal").name;
-    const job = create.applier.finishRemoval(appId, pending.server, by, () => removal.store.remove(appId));
-    if (!job) return c.json({ error: "another job is running, wait for it to finish" }, 409);
-    console.log(`remove ${appId} (second half) requested by ${by}`);
-    return c.json({ jobId: job.id }, 202);
-  });
+  app.post(
+    "/api/apps/remove/finish",
+    async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()),
+    authorize("apps:remove"),
+    async (c) => {
+      const appId = String((await body(c)).appId ?? "");
+      const pending = removal.store.get(appId);
+      if (!pending) return c.json({ error: `no removal of ${appId} is waiting` }, 404);
+      if ((await removal.pullState(pending.pullRequestUrl)) !== "merged") return c.json({ error: "the pull request is not merged yet" }, 409);
+      const by = c.get("principal").name;
+      const job = create.applier.finishRemoval(appId, pending.server, by, () => removal.store.remove(appId));
+      if (!job) return c.json({ error: "another job is running, wait for it to finish" }, 409);
+      console.log(`remove ${appId} (second half) requested by ${by}`);
+      return c.json({ jobId: job.id }, 202);
+    },
+  );
 
   // The stacks that may be redeployed, and whose secrets may be managed.
   app.get("/api/stacks", async (c) => {
@@ -420,7 +517,13 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
     if (needSecrets && !stack.secrets) return c.json({ error: `${stack.id} keeps no secrets in Infisical` }, 404);
     return stack;
   };
-  const lastLine = (out: string) => out.trim().split("\n").filter(Boolean).pop()?.replace(/^error: /, "") ?? "the tool failed";
+  const lastLine = (out: string) =>
+    out
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .pop()
+      ?.replace(/^error: /, "") ?? "the tool failed";
 
   // Names of the secrets, never their values.
   app.get("/api/stacks/:id/secrets", authorize("secrets:manage"), async (c) => {
@@ -444,9 +547,8 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
     const b = await body(c);
     const value = typeof b.value === "string" ? b.value : undefined;
     if (b.generate !== true && (!value || value.length > 4096)) return c.json({ error: "give a value (up to 4096 characters), or generate one" }, 400);
-    const { code, out } = b.generate === true
-      ? await stacks.secretTool(["set", stack.id, key, "--generate"])
-      : await stacks.secretTool(["set", stack.id, key], value);
+    const { code, out } =
+      b.generate === true ? await stacks.secretTool(["set", stack.id, key, "--generate"]) : await stacks.secretTool(["set", stack.id, key], value);
     const clean = value ? out.replaceAll(value, "***") : out;
     if (code !== 0) return c.json({ error: lastLine(clean) }, 502);
     console.log(`secret ${stack.id}/${key} ${b.generate === true ? "generated" : "set"} by ${c.get("principal").name}`);
@@ -465,15 +567,20 @@ export function createApp({ loadGraph, status, webDir, plan, preview, addons, te
   });
 
   // Redeploys the stack through Komodo (docker compose pull + up) as a job with its log.
-  app.post("/api/stacks/:id/deploy", async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()), authorize("stacks:deploy"), async (c) => {
-    const stack = await managed(c, false);
-    if (stack instanceof Response) return stack;
-    const by = c.get("principal").name;
-    const job = create.applier.startDeploy(stack.komodoStack, by);
-    if (!job) return c.json({ error: "another job is running, wait for it to finish" }, 409);
-    console.log(`deploy ${stack.komodoStack} requested by ${by}`);
-    return c.json({ jobId: job.id }, 202);
-  });
+  app.post(
+    "/api/stacks/:id/deploy",
+    async (c, next) => (create.problem ? c.json({ error: create.problem }, 503) : next()),
+    authorize("stacks:deploy"),
+    async (c) => {
+      const stack = await managed(c, false);
+      if (stack instanceof Response) return stack;
+      const by = c.get("principal").name;
+      const job = create.applier.startDeploy(stack.komodoStack, by);
+      if (!job) return c.json({ error: "another job is running, wait for it to finish" }, 409);
+      console.log(`deploy ${stack.komodoStack} requested by ${by}`);
+      return c.json({ jobId: job.id }, 202);
+    },
+  );
 
   app.get("/api/apps/jobs/:id", (c) => {
     const job = create.applier.get(c.req.param("id"));

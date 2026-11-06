@@ -11,16 +11,26 @@ import { signedInReads, testCreations, testHosts, testRemoval, testStacks } from
 import { userStore } from "./users.js";
 
 const env = {
-  KOMODO_URL: "http://komodo:9120", KOMODO_API_KEY: "kkey", KOMODO_API_SECRET: "ksecret",
-  HOMEGRAF_PASSWORD: "pw-1234", HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git", FORGEJO_TOKEN: "ftoken",
-  INFISICAL_URL: "https://inf.example", INFISICAL_BOOTSTRAP_CLIENT_ID: "iid", INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
+  KOMODO_URL: "http://komodo:9120",
+  KOMODO_API_KEY: "kkey",
+  KOMODO_API_SECRET: "ksecret",
+  HOMEGRAF_PASSWORD: "pw-1234",
+  HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git",
+  FORGEJO_TOKEN: "ftoken",
+  INFISICAL_URL: "https://inf.example",
+  INFISICAL_BOOTSTRAP_CLIENT_ID: "iid",
+  INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
 };
 const cfg = loadConfig(env);
 const basic = (name: string, password: string) => `Basic ${Buffer.from(`${name}:${password}`).toString("base64")}`;
 const PR = "https://git.example/owner/infrastructure/pulls/7";
 const demo = { id: "demo", server: "worker-1", komodoStack: "demo", secrets: true, domains: ["demo.lab.example"], dataPaths: ["/srv/docker/demo"] };
 
-interface Call { cmd: string; args: string[]; env: Record<string, string> }
+interface Call {
+  cmd: string;
+  args: string[];
+  env: Record<string, string>;
+}
 
 async function build(pulls: Record<string, "open" | "merged" | "closed" | "unknown"> = {}) {
   const calls: Call[] = [];
@@ -33,20 +43,38 @@ async function build(pulls: Record<string, "open" | "merged" | "closed" | "unkno
   await store.add("alice", "alice may remove apps", ["apps:remove"]);
   await store.add("bob", "bob may only create", ["apps:create"]);
   const removal = testRemoval([demo], pulls);
-  const app = signedInReads(createApp({
-    loadGraph: async () => { throw new Error("unused"); },
-    status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
-    webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
-    addons: async () => [], templates: async () => [], unifi: () => ({ enabled: false }),
-    certificates: { get: async () => ({ updated: null, certificates: [] }) },
-    create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
-    users: { enabled: true, store, authenticate: authenticator({ adminPassword: "pw-1234", users: store }) },
-    removal, creations: testCreations(), hosts: testHosts(),
-    stacks: testStacks(),
-  }), "pw-1234");
-  const post = (path: string, body: unknown, auth?: string) => app.request(path, {
-    method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
-  });
+  const app = signedInReads(
+    createApp({
+      loadGraph: async () => {
+        throw new Error("unused");
+      },
+      status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
+      webDir: "dist/web",
+      plan: async () => {
+        throw new Error("unused");
+      },
+      preview: async () => {
+        throw new Error("unused");
+      },
+      addons: async () => [],
+      templates: async () => [],
+      unifi: () => ({ enabled: false }),
+      certificates: { get: async () => ({ updated: null, certificates: [] }) },
+      create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
+      users: { enabled: true, store, authenticate: authenticator({ adminPassword: "pw-1234", users: store }) },
+      removal,
+      creations: testCreations(),
+      hosts: testHosts(),
+      stacks: testStacks(),
+    }),
+    "pw-1234",
+  );
+  const post = (path: string, body: unknown, auth?: string) =>
+    app.request(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
+    });
   const settle = async (jobId: string) => (await app.request(`/api/apps/jobs/${jobId}/events`)).text();
   return { app, post, calls, removal, settle };
 }
@@ -142,27 +170,45 @@ describe("removalStore", () => {
     store.add({ appId: "demo", server: "s", pullRequestUrl: PR, at: "t1" });
     store.add({ appId: "demo", server: "s", pullRequestUrl: `${PR}8`, at: "t2" });
     store.add({ appId: "other", server: "s", pullRequestUrl: PR, at: "t3" });
-    expect(removalStore(file).list().map((r) => [r.appId, r.at])).toEqual([["demo", "t2"], ["other", "t3"]]);
+    expect(
+      removalStore(file)
+        .list()
+        .map((r) => [r.appId, r.at]),
+    ).toEqual([
+      ["demo", "t2"],
+      ["other", "t3"],
+    ]);
     store.remove("demo");
-    expect(removalStore(file).list().map((r) => r.appId)).toEqual(["other"]);
+    expect(
+      removalStore(file)
+        .list()
+        .map((r) => r.appId),
+    ).toEqual(["other"]);
   });
 });
 
 describe("pullStateReader", () => {
   const reader = (answers: Record<string, object | number>, calls: string[] = []) =>
-    pullStateReader(cfg, async (url, init) => {
-      calls.push(`${url} ${(init?.headers as Record<string, string>).authorization}`);
-      const a = answers[String(url)];
-      return typeof a === "number" ? new Response("", { status: a }) : new Response(JSON.stringify(a ?? {}));
-    }, () => 0);
+    pullStateReader(
+      cfg,
+      async (url, init) => {
+        calls.push(`${url} ${(init?.headers as Record<string, string> | undefined)?.authorization}`);
+        const a = answers[String(url)];
+        return typeof a === "number" ? new Response("", { status: a }) : new Response(JSON.stringify(a ?? {}));
+      },
+      () => 0,
+    );
 
   it("reads merged, open and closed from the Forgejo API of the clone's repository", async () => {
     const calls: string[] = [];
-    const read = reader({
-      "https://git.example/api/v1/repos/owner/infrastructure/pulls/1": { merged: true, state: "closed" },
-      "https://git.example/api/v1/repos/owner/infrastructure/pulls/2": { merged: false, state: "open" },
-      "https://git.example/api/v1/repos/owner/infrastructure/pulls/3": { merged: false, state: "closed" },
-    }, calls);
+    const read = reader(
+      {
+        "https://git.example/api/v1/repos/owner/infrastructure/pulls/1": { merged: true, state: "closed" },
+        "https://git.example/api/v1/repos/owner/infrastructure/pulls/2": { merged: false, state: "open" },
+        "https://git.example/api/v1/repos/owner/infrastructure/pulls/3": { merged: false, state: "closed" },
+      },
+      calls,
+    );
     expect(await read("https://git.example/owner/infrastructure/pulls/1")).toBe("merged");
     expect(await read("https://git.example/owner/infrastructure/pulls/2")).toBe("open");
     expect(await read("https://git.example/owner/infrastructure/pulls/3")).toBe("closed");
@@ -170,19 +216,33 @@ describe("pullStateReader", () => {
   });
 
   it("is unknown for an error, a strange URL and an unreachable Forgejo", async () => {
-    expect(await reader({ "https://git.example/api/v1/repos/owner/infrastructure/pulls/4": 404 })("https://git.example/owner/infrastructure/pulls/4")).toBe("unknown");
+    expect(await reader({ "https://git.example/api/v1/repos/owner/infrastructure/pulls/4": 404 })("https://git.example/owner/infrastructure/pulls/4")).toBe(
+      "unknown",
+    );
     expect(await reader({})("https://git.example/somewhere/else")).toBe("unknown");
-    const down = pullStateReader(cfg, async () => { throw new Error("offline"); });
+    const down = pullStateReader(cfg, async () => {
+      throw new Error("offline");
+    });
     expect(await down("https://git.example/owner/infrastructure/pulls/5")).toBe("unknown");
   });
 
   it("keeps an answer for a few seconds", async () => {
     const calls: string[] = [];
     let now = 0;
-    const read = pullStateReader(cfg, async (u) => { calls.push(String(u)); return new Response(JSON.stringify({ merged: true })); }, () => now, 1000);
-    await read(PR); await read(PR);
+    const read = pullStateReader(
+      cfg,
+      async (u) => {
+        calls.push(String(u));
+        return new Response(JSON.stringify({ merged: true }));
+      },
+      () => now,
+      1000,
+    );
+    await read(PR);
+    await read(PR);
     expect(calls).toHaveLength(1);
-    now = 1001; await read(PR);
+    now = 1001;
+    await read(PR);
     expect(calls).toHaveLength(2);
   });
 });

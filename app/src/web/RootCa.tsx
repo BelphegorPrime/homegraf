@@ -21,20 +21,33 @@ export function RootCa() {
     <section>
       <h2>Root certificate</h2>
       <p className="muted max-w-3xl">
-        Certificates of the homelab CA are only trusted by devices that have its certificate. Install it once on each device and the pages open without a warning;
-        it holds no key.
+        Certificates of the homelab CA are only trusted by devices that have its certificate. Install it once on each device and the pages open without a
+        warning; it holds no key.
       </p>
       <div className="actions">
-        <Button nativeButton={false} render={<a href="/api/ca.pem" download="homelab-root-ca.pem" />}>Download the root certificate</Button>
+        <Button nativeButton={false} render={<a href="/api/ca.pem" download="homelab-root-ca.pem" />}>
+          Download the root certificate
+        </Button>
       </div>
       <table className="mt-3 text-left text-sm">
-        <thead className="muted"><tr><th className="pr-4 font-normal">Certificate</th><th className="pr-4 font-normal">Ends</th><th className="font-normal">SHA-256 fingerprint</th></tr></thead>
+        <thead className="muted">
+          <tr>
+            <th className="pr-4 font-normal">Certificate</th>
+            <th className="pr-4 font-normal">Ends</th>
+            <th className="font-normal">SHA-256 fingerprint</th>
+          </tr>
+        </thead>
         <tbody>
           {q.data.certificates.map((c) => (
             <tr key={c.fingerprint} className="align-top">
-              <td className="pr-4">{c.subject}{c.root ? " (root)" : ` (issued by ${c.issuer})`}</td>
+              <td className="pr-4">
+                {c.subject}
+                {c.root ? " (root)" : ` (issued by ${c.issuer})`}
+              </td>
               <td className="pr-4">{date(c.notAfter)}</td>
-              <td><code className="break-all text-xs">{c.fingerprint}</code></td>
+              <td>
+                <code className="break-all text-xs">{c.fingerprint}</code>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -43,7 +56,11 @@ export function RootCa() {
       <details className="mt-2 max-w-3xl">
         <summary className="cursor-pointer">How to install it</summary>
         <ul className="mt-2 list-disc pl-5 text-sm">
-          {INSTALL.map(([os, how]) => <li key={os}><strong>{os}:</strong> {how}</li>)}
+          {INSTALL.map(([os, how]) => (
+            <li key={os}>
+              <strong>{os}:</strong> {how}
+            </li>
+          ))}
         </ul>
       </details>
     </section>

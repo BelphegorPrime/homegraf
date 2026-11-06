@@ -13,8 +13,16 @@ interface Discovery {
   token_endpoint: string;
   userinfo_endpoint?: string;
 }
-interface Pending { verifier: string; nonce: string; exp: number }
-interface Session { name: string; csrf: string; exp: number }
+interface Pending {
+  verifier: string;
+  nonce: string;
+  exp: number;
+}
+interface Session {
+  name: string;
+  csrf: string;
+  exp: number;
+}
 
 export interface OidcDeps {
   cfg: OidcConfig;
@@ -86,9 +94,16 @@ export function createOidc({ cfg, users, admin = ADMIN, fetchFn = fetch, now = D
       pending.set(state, { verifier, nonce, exp: now() + TEN_MINUTES });
       const url = new URL(meta.authorization_endpoint);
       for (const [k, v] of Object.entries({
-        response_type: "code", client_id: cfg.clientId, redirect_uri: redirectUri, scope: cfg.scopes, state, nonce,
-        code_challenge: b64url(createHash("sha256").update(verifier).digest()), code_challenge_method: "S256",
-      })) url.searchParams.set(k, v);
+        response_type: "code",
+        client_id: cfg.clientId,
+        redirect_uri: redirectUri,
+        scope: cfg.scopes,
+        state,
+        nonce,
+        code_challenge: b64url(createHash("sha256").update(verifier).digest()),
+        code_challenge_method: "S256",
+      }))
+        url.searchParams.set(k, v);
       return { location: url.toString(), stateCookie: cookie(STATE_COOKIE, state, 600, "/api/auth") };
     },
 
@@ -105,7 +120,14 @@ export function createOidc({ cfg, users, admin = ADMIN, fetchFn = fetch, now = D
         const res = await fetchFn(meta.token_endpoint, {
           method: "POST",
           headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-          body: new URLSearchParams({ grant_type: "authorization_code", code: q.code, redirect_uri: redirectUri, client_id: cfg.clientId, client_secret: cfg.clientSecret, code_verifier: wait.verifier }),
+          body: new URLSearchParams({
+            grant_type: "authorization_code",
+            code: q.code,
+            redirect_uri: redirectUri,
+            client_id: cfg.clientId,
+            client_secret: cfg.clientSecret,
+            code_verifier: wait.verifier,
+          }),
           signal: AbortSignal.timeout(8000),
         });
         if (!res.ok) return { ok: false, error: `the provider's token endpoint answered HTTP ${res.status}` };
@@ -132,8 +154,15 @@ export function createOidc({ cfg, users, admin = ADMIN, fetchFn = fetch, now = D
         let known = users.get(name);
         if (!known && cfg.admins?.includes(name)) known = await users.addSso(name, Object.keys(PERMISSIONS) as Permission[]);
         if (known?.sso) {
-          if (known.sub && known.sub !== claims.sub) return { ok: false, error: `${name} is bound to another account at the provider: remove the entry in the Users tab and add it again` };
-          if (!known.sub) { try { users.bind(name, claims.sub); } catch { /* the users file is unreadable: the sign-in still works, unbound */ } }
+          if (known.sub && known.sub !== claims.sub)
+            return { ok: false, error: `${name} is bound to another account at the provider: remove the entry in the Users tab and add it again` };
+          if (!known.sub) {
+            try {
+              users.bind(name, claims.sub);
+            } catch {
+              /* the users file is unreadable: the sign-in still works, unbound */
+            }
+          }
         }
         trim(sessions);
         const id = random();
@@ -148,7 +177,10 @@ export function createOidc({ cfg, users, admin = ADMIN, fetchFn = fetch, now = D
     principal(sessionId: string | undefined): { principal: Principal; csrf: string } | undefined {
       const s = sessionId ? sessions.get(sessionId) : undefined;
       if (!s) return undefined;
-      if (s.exp <= now()) { sessions.delete(sessionId!); return undefined; }
+      if (s.exp <= now()) {
+        sessions.delete(sessionId!);
+        return undefined;
+      }
       const user = users.get(s.name);
       const permissions: Permission[] = user?.sso ? user.permissions : [];
       return { principal: { name: s.name, permissions, source: "sso" }, csrf: s.csrf };

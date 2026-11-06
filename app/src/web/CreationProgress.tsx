@@ -21,13 +21,36 @@ export function CreationProgress() {
         {data.creations.map((c) => (
           <li key={c.appId} className="rounded-md border p-3">
             <div>
-              <strong>{c.appId}</strong> <span className="muted text-xs">{c.server}{c.requestedBy ? ` · by ${c.requestedBy}` : ""} · <a href={c.pullRequestUrl} target="_blank" rel="noreferrer">pull request</a></span>
-              {c.done && <Badge variant="outline" className="ml-2 border-ok text-ok">running{c.domain ? <> · <a href={`https://${c.domain}`} target="_blank" rel="noreferrer">open</a></> : null}</Badge>}
+              <strong>{c.appId}</strong>{" "}
+              <span className="muted text-xs">
+                {c.server}
+                {c.requestedBy ? ` · by ${c.requestedBy}` : ""} ·{" "}
+                <a href={c.pullRequestUrl} target="_blank" rel="noreferrer">
+                  pull request
+                </a>
+              </span>
+              {c.done && (
+                <Badge variant="outline" className="ml-2 border-ok text-ok">
+                  running
+                  {c.domain ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a href={`https://${c.domain}`} target="_blank" rel="noreferrer">
+                        open
+                      </a>
+                    </>
+                  ) : null}
+                </Badge>
+              )}
             </div>
             <ol className="mt-2 grid gap-1 text-sm">
               {creationSteps(c).map((s) => (
                 <li key={s.label}>
-                  <Badge variant="outline" className={MARK[s.state].cls}>{MARK[s.state].text}</Badge> {s.label}
+                  <Badge variant="outline" className={MARK[s.state].cls}>
+                    {MARK[s.state].text}
+                  </Badge>{" "}
+                  {s.label}
                   {s.detail && <span className="muted"> — {s.detail}</span>}
                 </li>
               ))}

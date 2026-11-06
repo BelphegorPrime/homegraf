@@ -15,14 +15,26 @@ async function build(enabled = true) {
   const app = createApp({
     loadGraph: async () => ({ generated: "now", nodes: [], edges: [], warnings: [] }),
     status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
-    webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
-    addons: async () => [], templates: async () => [], unifi: () => ({ enabled: false }),
+    webDir: "dist/web",
+    plan: async () => {
+      throw new Error("unused");
+    },
+    preview: async () => {
+      throw new Error("unused");
+    },
+    addons: async () => [],
+    templates: async () => [],
+    unifi: () => ({ enabled: false }),
     certificates: { get: async () => ({ updated: null, certificates: [] }) },
     create: { problem: undefined, applier: applier({ cfg: loadConfig({}) }) },
     users: { enabled, store, authenticate: authenticator({ adminPassword: enabled ? "pw-admin-1234" : undefined, users: store }) },
-    removal: testRemoval(), creations: testCreations(), hosts: testHosts(), stacks: testStacks(),
+    removal: testRemoval(),
+    creations: testCreations(),
+    hosts: testHosts(),
+    stacks: testStacks(),
   });
-  const login = (name: string, password: string) => app.request("/api/auth/password", { method: "POST", body: JSON.stringify({ name, password }), headers: { "content-type": "application/json" } });
+  const login = (name: string, password: string) =>
+    app.request("/api/auth/password", { method: "POST", body: JSON.stringify({ name, password }), headers: { "content-type": "application/json" } });
   /** Signs in and returns the cookie to send back and the session's token for writes. */
   const session = async (name: string, password: string) => {
     const res = await login(name, password);
@@ -36,7 +48,19 @@ async function build(enabled = true) {
 describe("everything is behind the sign-in", () => {
   it("refuses every route but the health probe and the sign-in itself", async () => {
     const { app } = await build();
-    for (const path of ["/api/graph", "/api/status", "/api/events", "/api/certificates", "/api/capabilities", "/api/ca", "/api/ca.pem", "/api/hosts", "/api/stacks", "/api/apps/removable", "/api/templates"]) {
+    for (const path of [
+      "/api/graph",
+      "/api/status",
+      "/api/events",
+      "/api/certificates",
+      "/api/capabilities",
+      "/api/ca",
+      "/api/ca.pem",
+      "/api/hosts",
+      "/api/stacks",
+      "/api/apps/removable",
+      "/api/templates",
+    ]) {
       expect((await app.request(path)).status, path).toBe(401);
     }
     expect((await app.request("/api/health")).status).toBe(200);
@@ -65,7 +89,11 @@ describe("signing in with a name and a password", () => {
 
   it("marks the cookie Secure behind an HTTPS proxy", async () => {
     const { app } = await build();
-    const res = await app.request("/api/auth/password", { method: "POST", body: JSON.stringify({ name: "alice", password: "alice has apps rights" }), headers: { "content-type": "application/json", "x-forwarded-proto": "https" } });
+    const res = await app.request("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ name: "alice", password: "alice has apps rights" }),
+      headers: { "content-type": "application/json", "x-forwarded-proto": "https" },
+    });
     expect(res.headers.get("set-cookie")).toMatch(/; Secure/);
   });
 
@@ -86,7 +114,12 @@ describe("signing in with a name and a password", () => {
   it("asks for the session's token on writes, and applies the user's rights", async () => {
     const { app, session } = await build();
     const { cookie, csrf } = await session("alice", "alice has apps rights");
-    const put = (headers: Record<string, string>) => app.request("/api/me/password", { method: "PUT", body: JSON.stringify({ password: "another long password" }), headers: { "content-type": "application/json", cookie, ...headers } });
+    const put = (headers: Record<string, string>) =>
+      app.request("/api/me/password", {
+        method: "PUT",
+        body: JSON.stringify({ password: "another long password" }),
+        headers: { "content-type": "application/json", cookie, ...headers },
+      });
     expect((await put({})).status).toBe(403);
     expect((await put({ "x-csrf-token": "forged" })).status).toBe(403);
     expect((await app.request("/api/users", { headers: { cookie } })).status).toBe(403); // alice may not manage users

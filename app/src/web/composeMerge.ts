@@ -39,7 +39,8 @@ export function diff(before: Json, after: Json, path: Path = []): Op[] {
     return ops;
   }
   if (Array.isArray(before) && Array.isArray(after) && before.every(isScalarValue) && after.every(isScalarValue)) {
-    const had = new Set(before.map(String)), has = new Set(after.map(String));
+    const had = new Set(before.map(String)),
+      has = new Set(after.map(String));
     return [
       ...before.filter((x) => !has.has(String(x))).map((item): Op => ({ kind: "listRemove", path, item })),
       ...after.filter((x) => !had.has(String(x))).map((item): Op => ({ kind: "listAdd", path, item })),
@@ -104,7 +105,8 @@ function apply(doc: Document, op: Op) {
     case "listAdd": {
       const seq = nodeAt(doc, op.path);
       if (!isSeq(seq)) doc.setIn(op.path, doc.createNode([op.item]));
-      else if (!(seq as YAMLSeq<unknown>).items.some((i) => String(isScalar(i) ? i.value : i) === String(op.item))) (seq as YAMLSeq<unknown>).add(doc.createNode(op.item));
+      else if (!(seq as YAMLSeq<unknown>).items.some((i) => String(isScalar(i) ? i.value : i) === String(op.item)))
+        (seq as YAMLSeq<unknown>).add(doc.createNode(op.item));
       break;
     }
     case "listRemove": {

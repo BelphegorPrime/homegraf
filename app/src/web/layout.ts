@@ -8,7 +8,9 @@ const elk = import("elkjs/lib/elk.bundled.js").then(({ default: ELK }) => new EL
 
 /** Layered left-to-right layout; returns the top-left position of every node. */
 export async function layout(sub: Sub): Promise<Record<string, { x: number; y: number }>> {
-  const result = await (await elk).layout({
+  const result = await (
+    await elk
+  ).layout({
     id: "root",
     layoutOptions: {
       "elk.algorithm": "layered",

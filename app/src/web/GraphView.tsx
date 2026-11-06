@@ -1,7 +1,4 @@
-import {
-  Background, BackgroundVariant, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow,
-  type Edge, type Node, type NodeProps,
-} from "@xyflow/react";
+import { Background, BackgroundVariant, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useState } from "react";
 import type { GraphNode, StatusSnapshot } from "../shared/types";
@@ -22,7 +19,12 @@ function GraphCard({ data, selected }: NodeProps<Node<CardData>>) {
       <span className={`dot h-${health}`} title={health} />
       <span className="gnode-text">
         <strong>{node.label}</strong>
-        <small>{node.kind ?? node.type}{node.placeholder ? " · placeholder" : ""}{node.manual ? " · manual" : ""}{node.disabled ? " · disabled" : ""}</small>
+        <small>
+          {node.kind ?? node.type}
+          {node.placeholder ? " · placeholder" : ""}
+          {node.manual ? " · manual" : ""}
+          {node.disabled ? " · disabled" : ""}
+        </small>
       </span>
       <Handle type="source" position={Position.Right} />
     </div>
@@ -47,7 +49,9 @@ export function GraphView({ sub, status, query, selected, onSelect }: Props) {
   useEffect(() => {
     let live = true;
     layout(sub).then((positions) => live && setLaid({ key: structure, positions }));
-    return () => { live = false; };
+    return () => {
+      live = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [structure]);
 

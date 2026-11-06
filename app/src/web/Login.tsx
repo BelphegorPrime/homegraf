@@ -6,7 +6,10 @@ import { rememberedUser, rememberUser, useAuth, useSso } from "./api";
 function ssoError(): string | null {
   const q = new URLSearchParams(location.search);
   const error = q.get("sso_error");
-  if (error) { q.delete("sso_error"); history.replaceState(null, "", `${location.pathname}${q.size ? `?${q}` : ""}${location.hash}`); }
+  if (error) {
+    q.delete("sso_error");
+    history.replaceState(null, "", `${location.pathname}${q.size ? `?${q}` : ""}${location.hash}`);
+  }
   return error;
 }
 
@@ -18,13 +21,18 @@ export function Login() {
   return (
     <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
       <div className="w-full max-w-sm">
-        <p className="mb-4 text-center text-lg font-semibold tracking-tight">homegraf <span className="text-xs font-normal text-muted-foreground">{__APP_VERSION__}</span></p>
+        <p className="mb-4 text-center text-lg font-semibold tracking-tight">
+          homegraf <span className="text-xs font-normal text-muted-foreground">{__APP_VERSION__}</span>
+        </p>
         <LoginForm
           initialName={rememberedUser()}
           notice={failure ?? sso?.problem}
           disabledReason={sso?.password.enabled === false ? `Signing in is off: ${sso.password.reason}` : undefined}
           sso={sso?.enabled ? { label: sso.label } : undefined}
-          onSubmit={async (name, password) => { await signIn(name, password); rememberUser(name); }}
+          onSubmit={async (name, password) => {
+            await signIn(name, password);
+            rememberUser(name);
+          }}
         />
       </div>
     </div>

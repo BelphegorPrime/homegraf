@@ -3,8 +3,14 @@ import { applyEnvFile, parseEnvFile } from "./envfile.js";
 
 describe("parseEnvFile", () => {
   it("reads KEY=value lines, skips comments and junk, keeps = inside values, strips quotes", () => {
-    expect(parseEnvFile(`# comment\n\nA=1\n B = two words \nURL=http://x/y?z=1\nQ="quoted"\nS='single'\nnoequals\n=novalue\n1BAD=x\nE=\n`))
-      .toEqual({ A: "1", B: "two words", URL: "http://x/y?z=1", Q: "quoted", S: "single", E: "" });
+    expect(parseEnvFile(`# comment\n\nA=1\n B = two words \nURL=http://x/y?z=1\nQ="quoted"\nS='single'\nnoequals\n=novalue\n1BAD=x\nE=\n`)).toEqual({
+      A: "1",
+      B: "two words",
+      URL: "http://x/y?z=1",
+      Q: "quoted",
+      S: "single",
+      E: "",
+    });
   });
   it("copes with Windows line endings", () => expect(parseEnvFile("A=1\r\nB=2\r\n")).toEqual({ A: "1", B: "2" }));
 });

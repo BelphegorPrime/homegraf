@@ -16,7 +16,13 @@ export function ThemeToggle() {
     setDark(next);
   };
   return (
-    <Button variant="ghost" size="icon" onClick={flip} aria-label={dark ? "Switch to the light theme" : "Switch to the dark theme"} title={dark ? "Light theme" : "Dark theme"}>
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={flip}
+      aria-label={dark ? "Switch to the light theme" : "Switch to the dark theme"}
+      title={dark ? "Light theme" : "Dark theme"}
+    >
       {dark ? <SunIcon /> : <MoonIcon />}
     </Button>
   );

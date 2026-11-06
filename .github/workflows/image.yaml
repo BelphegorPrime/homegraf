@@ -37,6 +37,8 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
       - run: npm test
       # What ends up in the image: the runtime dependencies only.
       - run: npm audit --omit=dev --audit-level=high

@@ -7,8 +7,15 @@ import type { Config } from "./config.js";
 import { toolPath, toolRoot } from "./tools.js";
 
 /** Runs a command in cwd with env, hands its output to onData and resolves with the exit code. */
-export type Spawn = (cmd: string, args: string[], o: { cwd?: string; env: Record<string, string>; timeoutMs: number }, onData: (s: string) => void) => Promise<number>;
+export type Spawn = (
+  cmd: string,
+  args: string[],
+  o: { cwd?: string; env: Record<string, string>; timeoutMs: number },
+  onData: (s: string) => void,
+) => Promise<number>;
 
+// the escape character is the point: this strips terminal colours
+// oxlint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 const PR_URL = /pull request: (https?:\/\/\S+)/;
 
@@ -21,8 +28,15 @@ export const nodeSpawn: Spawn = (cmd, args, { cwd, env, timeoutMs }, onData) =>
     }, timeoutMs);
     child.stdout.on("data", (b: Buffer) => onData(b.toString()));
     child.stderr.on("data", (b: Buffer) => onData(b.toString()));
-    child.on("error", (e) => { onData(`! ${e.message}\n`); clearTimeout(timer); resolve(127); });
-    child.on("close", (code) => { clearTimeout(timer); resolve(code ?? 1); });
+    child.on("error", (e) => {
+      onData(`! ${e.message}\n`);
+      clearTimeout(timer);
+      resolve(127);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve(code ?? 1);
+    });
   });
 
 export interface Job extends JobSnapshot {
@@ -55,16 +69,27 @@ export function applier({ cfg, spawn: run = nodeSpawn, exists = existsSync, logi
 
   // Everything the tool and git need, nothing else; the container's own environment stays out.
   const baseEnv = (by?: string): Record<string, string> => ({
-    PATH: process.env.PATH ?? "", LANG: "C.UTF-8", HOME: "/tmp", PYTHONDONTWRITEBYTECODE: "1", GIT_TERMINAL_PROMPT: "0",
+    PATH: process.env.PATH ?? "",
+    LANG: "C.UTF-8",
+    HOME: "/tmp",
+    PYTHONDONTWRITEBYTECODE: "1",
+    GIT_TERMINAL_PROMPT: "0",
     // The commit of the pull request names who asked for it (user names are letters, digits and . _ - only).
-    GIT_AUTHOR_NAME: by ? `${by} via homegraf` : "homegraf", GIT_AUTHOR_EMAIL: "homegraf@localhost", GIT_COMMITTER_NAME: "homegraf", GIT_COMMITTER_EMAIL: "homegraf@localhost",
+    GIT_AUTHOR_NAME: by ? `${by} via homegraf` : "homegraf",
+    GIT_AUTHOR_EMAIL: "homegraf@localhost",
+    GIT_COMMITTER_NAME: "homegraf",
+    GIT_COMMITTER_EMAIL: "homegraf@localhost",
   });
   const toolEnv = (by?: string): Record<string, string> => ({
     ...baseEnv(by),
-    KOMODO_URL: cfg.komodo?.url ?? "", KOMODO_API_KEY: cfg.komodo?.key ?? "", KOMODO_API_SECRET: cfg.komodo?.secret ?? "",
-    INFISICAL_URL: c.infisical?.url ?? "", INFISICAL_BOOTSTRAP_CLIENT_ID: c.infisical?.clientId ?? "",
+    KOMODO_URL: cfg.komodo?.url ?? "",
+    KOMODO_API_KEY: cfg.komodo?.key ?? "",
+    KOMODO_API_SECRET: cfg.komodo?.secret ?? "",
+    INFISICAL_URL: c.infisical?.url ?? "",
+    INFISICAL_BOOTSTRAP_CLIENT_ID: c.infisical?.clientId ?? "",
     INFISICAL_BOOTSTRAP_CLIENT_SECRET: c.infisical?.clientSecret ?? "",
-    FORGEJO_TOKEN: c.forgejoToken ?? "", ...(c.forgejoUrl ? { FORGEJO_URL: c.forgejoUrl } : {}),
+    FORGEJO_TOKEN: c.forgejoToken ?? "",
+    ...(c.forgejoUrl ? { FORGEJO_URL: c.forgejoUrl } : {}),
   });
   const secretValues = (typed: string[]) =>
     [c.password, c.forgejoToken, c.infisical?.clientSecret, cfg.komodo?.secret, cfg.komodo?.key, ...typed].filter((v): v is string => !!v);
@@ -101,10 +126,12 @@ export function applier({ cfg, spawn: run = nodeSpawn, exists = existsSync, logi
       const gitEnv = { ...baseEnv(), GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}` };
       const git = (...args: string[]) => run("git", args, { env: gitEnv, timeoutMs: 120_000 }, emit);
       emit("── Preparing the repository clone ──\n");
-      const steps = exists(`${c.workDir}/.git`)
-        ? [["-C", c.workDir, "fetch", "-q", "origin"]]
-        : [["clone", "-q", c.cloneUrl ?? "", c.workDir]];
-      steps.push(["-C", c.workDir, "switch", "-q", "-f", "main"], ["-C", c.workDir, "reset", "-q", "--hard", "origin/main"], ["-C", c.workDir, "clean", "-fdq"]);
+      const steps = exists(`${c.workDir}/.git`) ? [["-C", c.workDir, "fetch", "-q", "origin"]] : [["clone", "-q", c.cloneUrl ?? "", c.workDir]];
+      steps.push(
+        ["-C", c.workDir, "switch", "-q", "-f", "main"],
+        ["-C", c.workDir, "reset", "-q", "--hard", "origin/main"],
+        ["-C", c.workDir, "clean", "-fdq"],
+      );
       for (const s of steps) {
         const code = await git(...s);
         if (code !== 0) throw new Error(`git ${s.filter((a) => a !== "-C" && a !== c.workDir)[0]} failed (exit ${code})`);
@@ -141,47 +168,83 @@ export function applier({ cfg, spawn: run = nodeSpawn, exists = existsSync, logi
     /** Starts creating an app; undefined while another job runs. */
     start(input: PlanInput, requestedBy?: string, onDone?: (job: Job) => void): Job | undefined {
       return begin("create", input.appId, {
-        by: requestedBy, onDone,
+        by: requestedBy,
+        onDone,
         typed: Object.values(input.secretValues),
         tool: ({ cwd, env, emit }) => {
           // Typed secret values travel in the environment (--secret VAR=env:NAME), the edited compose file as a temporary file.
           const typed = Object.fromEntries(Object.entries(input.secretValues).map(([k, v]) => [secretValueEnv(k), v]));
           return withWorkFiles(input, ({ composeFile, filesDir }) =>
-            run("python3", ["-I", toolPath(cwd, "homelab.py"), ...newAppArgs(input, composeFile, filesDir), "--pr", "--yes"],
-              { cwd, env: { ...env, ...toolRoot(cwd), ...typed }, timeoutMs: 15 * 60_000 }, emit));
+            run(
+              "python3",
+              ["-I", toolPath(cwd, "homelab.py"), ...newAppArgs(input, composeFile, filesDir), "--pr", "--yes"],
+              { cwd, env: { ...env, ...toolRoot(cwd), ...typed }, timeoutMs: 15 * 60_000 },
+              emit,
+            ),
+          );
         },
       });
     },
     /** First half of a removal: the stack goes now, the files go in a pull request. */
     startRemoval(appId: string, requestedBy?: string, onDone?: (job: Job) => void): Job | undefined {
       return begin("remove", appId, {
-        by: requestedBy, typed: [], onDone,
+        by: requestedBy,
+        typed: [],
+        onDone,
         tool: ({ cwd, env, emit }) => run("python3", removeArgs(appId, "--pr"), { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 20 * 60_000 }, emit),
       });
     },
     /** Second half, after the merge: NPM host, certificate and secrets. */
     finishRemoval(appId: string, server: string, requestedBy?: string, onDone?: (job: Job) => void): Job | undefined {
       return begin("finish", appId, {
-        by: requestedBy, typed: [], onDone,
-        tool: ({ cwd, env, emit }) => run("python3", removeArgs(appId, "--server", server, "--finish"), { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 30 * 60_000 }, emit),
+        by: requestedBy,
+        typed: [],
+        onDone,
+        tool: ({ cwd, env, emit }) =>
+          run("python3", removeArgs(appId, "--server", server, "--finish"), { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 30 * 60_000 }, emit),
       });
     },
     /** Turns the HTTP to HTTPS redirect of a host on or off: the change to its manifest goes in a pull request. */
     startHostOption(domain: string, forceHttps: boolean, requestedBy?: string, onDone?: (job: Job) => void): Job | undefined {
       return begin("host", domain, {
-        by: requestedBy, typed: [], onDone,
-        tool: ({ cwd, env, emit }) => run("python3", ["-I", toolPath(c.workDir, "homelab.py"), "force-https", domain, forceHttps ? "on" : "off", "--pr", "--yes"], { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 10 * 60_000 }, emit),
+        by: requestedBy,
+        typed: [],
+        onDone,
+        tool: ({ cwd, env, emit }) =>
+          run(
+            "python3",
+            ["-I", toolPath(c.workDir, "homelab.py"), "force-https", domain, forceHttps ? "on" : "off", "--pr", "--yes"],
+            { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 10 * 60_000 },
+            emit,
+          ),
       });
     },
     /** Redeploys a Komodo stack (pull and up); changed secrets and bind-mounted files need it. */
     startDeploy(komodoStack: string, requestedBy?: string): Job | undefined {
       return begin("deploy", komodoStack, {
-        by: requestedBy, typed: [], readOnly: true,
-        tool: ({ cwd, env, emit }) => run("python3", ["-I", toolPath(cwd, "homelab.py"), "deploy", komodoStack, "--yes"], { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 20 * 60_000 }, emit),
+        by: requestedBy,
+        typed: [],
+        readOnly: true,
+        tool: ({ cwd, env, emit }) =>
+          run(
+            "python3",
+            ["-I", toolPath(cwd, "homelab.py"), "deploy", komodoStack, "--yes"],
+            { cwd, env: { ...env, ...toolRoot(cwd) }, timeoutMs: 20 * 60_000 },
+            emit,
+          ),
       });
     },
     get: (id: string) => jobs.get(id),
-    snapshot: (j: Job): JobSnapshot => ({ id: j.id, kind: j.kind, appId: j.appId, requestedBy: j.requestedBy, state: j.state, exitCode: j.exitCode, pullRequestUrl: j.pullRequestUrl, log: j.log }),
+    snapshot: (j: Job): JobSnapshot => ({
+      id: j.id,
+      kind: j.kind,
+      appId: j.appId,
+      requestedBy: j.requestedBy,
+      state: j.state,
+      exitCode: j.exitCode,
+      pullRequestUrl: j.pullRequestUrl,
+      log: j.log,
+    }),
   };
 }
 export type Applier = ReturnType<typeof applier>;

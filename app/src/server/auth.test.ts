@@ -13,7 +13,15 @@ describe("basicCredentials", () => {
     expect(basicCredentials(basic("alice", "pa:ss:word"))).toEqual({ name: "alice", password: "pa:ss:word" });
   });
   it("rejects anything else", () => {
-    for (const h of [undefined, "", "Bearer abc", "Basic", "Basic !!!", `Basic ${Buffer.from("nocolon").toString("base64")}`, `Basic ${Buffer.from(":nopassword-name").toString("base64")}`])
+    for (const h of [
+      undefined,
+      "",
+      "Bearer abc",
+      "Basic",
+      "Basic !!!",
+      `Basic ${Buffer.from("nocolon").toString("base64")}`,
+      `Basic ${Buffer.from(":nopassword-name").toString("base64")}`,
+    ])
       expect(basicCredentials(h)).toBeUndefined();
   });
 });
@@ -46,7 +54,10 @@ describe("authenticator", () => {
     const users = freshStore();
     await users.add("alice", "correct horse battery", ["apps:create"]);
     const auth = authenticator({ adminPassword: "s3cret-admin", users });
-    expect(await auth(basic("alice", "correct horse battery"))).toEqual({ ok: true, principal: { name: "alice", permissions: ["apps:create"], source: "user" } });
+    expect(await auth(basic("alice", "correct horse battery"))).toEqual({
+      ok: true,
+      principal: { name: "alice", permissions: ["apps:create"], source: "user" },
+    });
     expect(await auth(basic("alice", "wrong horse battery"))).toEqual({ ok: false, reason: "wrong" });
     expect(await auth(basic("bob", "correct horse battery"))).toEqual({ ok: false, reason: "wrong" });
   });
@@ -66,7 +77,8 @@ describe("authenticator", () => {
 
   it("a success clears the failures", async () => {
     const auth = authenticator({ adminPassword: "s3cret-admin", users: freshStore(), now: () => 0, maxFailures: 3, windowMs: 1000 });
-    await auth(basic("admin", "a")); await auth(basic("admin", "b"));
+    await auth(basic("admin", "a"));
+    await auth(basic("admin", "b"));
     expect((await auth(basic("admin", "s3cret-admin"))).ok).toBe(true);
     expect([(await auth(basic("admin", "a"))).ok, (await auth(basic("admin", "b"))).ok]).toEqual([false, false]);
     expect((await auth(basic("admin", "s3cret-admin"))).ok).toBe(true);
@@ -74,7 +86,8 @@ describe("authenticator", () => {
 
   it("counts unknown names too, and names differing in case are the same name", async () => {
     const auth = authenticator({ adminPassword: "s3cret-admin", users: freshStore(), now: () => 0, maxFailures: 2, windowMs: 1000 });
-    await auth(basic("ghost", "x")); await auth(basic("GHOST", "x"));
+    await auth(basic("ghost", "x"));
+    await auth(basic("GHOST", "x"));
     expect(await auth(basic("ghost", "x"))).toEqual({ ok: false, reason: "locked" });
   });
 });

@@ -5,7 +5,11 @@ import { ADMIN, type UserStore } from "./users.js";
 
 export const LOGIN_COOKIE = "hg_login";
 
-interface Session { name: string; csrf: string; exp: number }
+interface Session {
+  name: string;
+  csrf: string;
+  exp: number;
+}
 
 const MAX_ENTRIES = 1000;
 const random = (bytes = 32) => randomBytes(bytes).toString("base64url");
@@ -35,16 +39,23 @@ export function createSessions({ users, admin = ADMIN, hours = 12, now = Date.no
     principal(id: string | undefined): { principal: Principal; csrf: string } | undefined {
       const s = id ? sessions.get(id) : undefined;
       if (!s) return undefined;
-      if (s.exp <= now()) { sessions.delete(id!); return undefined; }
+      if (s.exp <= now()) {
+        sessions.delete(id!);
+        return undefined;
+      }
       if (s.name === admin) return { principal: { name: admin, permissions: all, source: "builtin" }, csrf: s.csrf };
       const user = users.get(s.name);
-      if (!user || user.sso) { sessions.delete(id!); return undefined; }
+      if (!user || user.sso) {
+        sessions.delete(id!);
+        return undefined;
+      }
       return { principal: { name: user.name, permissions: user.permissions, source: "user" }, csrf: s.csrf };
     },
     close(id: string | undefined) {
       if (id) sessions.delete(id);
     },
-    cookie: (id: string, secure: boolean) => `${LOGIN_COOKIE}=${id}; Path=/; Max-Age=${Math.round(hours * 3600)}; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`,
+    cookie: (id: string, secure: boolean) =>
+      `${LOGIN_COOKIE}=${id}; Path=/; Max-Age=${Math.round(hours * 3600)}; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`,
     clearCookie: (secure: boolean) => `${LOGIN_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`,
   };
 }

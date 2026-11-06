@@ -27,11 +27,19 @@ export function pendingStore<T extends { appId: string }>(file: string, what: st
     renameSync(tmp, file);
   };
   return {
-    get problem() { return problem; },
+    get problem() {
+      return problem;
+    },
     list: () => items.map((i) => ({ ...i })),
     get: (appId: string) => items.find((i) => i.appId === appId),
-    add(r: T) { items = [...items.filter((i) => i.appId !== r.appId), r]; save(); },
-    remove(appId: string) { items = items.filter((i) => i.appId !== appId); save(); },
+    add(r: T) {
+      items = [...items.filter((i) => i.appId !== r.appId), r];
+      save();
+    },
+    remove(appId: string) {
+      items = items.filter((i) => i.appId !== appId);
+      save();
+    },
   };
 }
 export type PendingStore<T extends { appId: string }> = ReturnType<typeof pendingStore<T>>;
@@ -54,7 +62,10 @@ export function pullStateReader(cfg: Config, fetchFn: typeof fetch = fetch, now:
       const base = (c.forgejoUrl ?? clone?.origin ?? "").replace(/\/$/, "");
       const repo = clone?.pathname.replace(/^\/|\.git$|\/$/g, "");
       if (number && base && repo && c.forgejoToken) {
-        const res = await fetchFn(`${base}/api/v1/repos/${repo}/pulls/${number}`, { headers: { authorization: `token ${c.forgejoToken}` }, signal: AbortSignal.timeout(8000) });
+        const res = await fetchFn(`${base}/api/v1/repos/${repo}/pulls/${number}`, {
+          headers: { authorization: `token ${c.forgejoToken}` },
+          signal: AbortSignal.timeout(8000),
+        });
         if (res.ok) {
           const pull = (await res.json()) as { merged?: boolean; state?: string };
           state = pull.merged ? "merged" : pull.state === "open" ? "open" : "closed";

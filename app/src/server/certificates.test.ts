@@ -8,15 +8,24 @@ import { certificateSource, describeCertificate, tlsProbe } from "./certificates
 
 const NOW = Date.parse("2026-10-30T12:00:00Z");
 const peer = (over: object = {}) => ({
-  subject: { CN: "a.lab.example" }, issuer: { CN: "Example CA" }, subjectaltname: "DNS:a.lab.example, DNS:b.lab.example",
-  valid_to: "Jan 22 16:42:57 2027 GMT", fingerprint256: "AA:BB", ...over,
+  subject: { CN: "a.lab.example" },
+  issuer: { CN: "Example CA" },
+  subjectaltname: "DNS:a.lab.example, DNS:b.lab.example",
+  valid_to: "Jan 22 16:42:57 2027 GMT",
+  fingerprint256: "AA:BB",
+  ...over,
 });
 
 describe("describeCertificate", () => {
   it("reads issuer, end date, days left and names", () => {
     expect(describeCertificate("a.lab.example", peer(), NOW)).toEqual({
-      domain: "a.lab.example", issuer: "Example CA", notAfter: "2027-01-22T16:42:57.000Z", daysLeft: 84,
-      names: ["a.lab.example", "b.lab.example"], matches: true, fingerprint: "AA:BB",
+      domain: "a.lab.example",
+      issuer: "Example CA",
+      notAfter: "2027-01-22T16:42:57.000Z",
+      daysLeft: 84,
+      names: ["a.lab.example", "b.lab.example"],
+      matches: true,
+      fingerprint: "AA:BB",
     });
   });
 
@@ -31,12 +40,22 @@ describe("describeCertificate", () => {
 
   it("falls back to the common name and reports a missing end date", () => {
     expect(describeCertificate("a.lab.example", peer({ subjectaltname: undefined }), NOW).names).toEqual(["a.lab.example"]);
-    expect(describeCertificate("a.lab.example", peer({ valid_to: undefined }), NOW)).toEqual({ domain: "a.lab.example", error: "the certificate has no end date" });
+    expect(describeCertificate("a.lab.example", peer({ valid_to: undefined }), NOW)).toEqual({
+      domain: "a.lab.example",
+      error: "the certificate has no end date",
+    });
   });
 });
 
 describe("certificateSource", () => {
-  const info = (domain: string, daysLeft: number, matches = true) => ({ domain, daysLeft, matches, issuer: "x", names: [domain], notAfter: "2027-01-01T00:00:00.000Z" });
+  const info = (domain: string, daysLeft: number, matches = true) => ({
+    domain,
+    daysLeft,
+    matches,
+    issuer: "x",
+    names: [domain],
+    notAfter: "2027-01-01T00:00:00.000Z",
+  });
 
   it("lists failures first, then the soonest to expire, and de-duplicates the domains", async () => {
     const source = certificateSource({
@@ -50,22 +69,36 @@ describe("certificateSource", () => {
   });
 
   it("keeps the result for the ttl and runs one probe round at a time", async () => {
-    let now = NOW; let rounds = 0;
-    const source = certificateSource({ domains: async () => { rounds++; return ["a.x"]; }, probe: async (d) => info(d, 1), ttlMs: 1000, now: () => now });
+    let now = NOW;
+    let rounds = 0;
+    const source = certificateSource({
+      domains: async () => {
+        rounds++;
+        return ["a.x"];
+      },
+      probe: async (d) => info(d, 1),
+      ttlMs: 1000,
+      now: () => now,
+    });
     await Promise.all([source.get(), source.get(), source.get()]);
     expect(rounds).toBe(1);
-    now += 999; await source.get();
+    now += 999;
+    await source.get();
     expect(rounds).toBe(1);
-    now += 2; await source.get();
+    now += 2;
+    await source.get();
     expect(rounds).toBe(2);
   });
 
   it("limits the connections at a time and survives a probe that throws", async () => {
-    let active = 0; let most = 0;
+    let active = 0;
+    let most = 0;
     const source = certificateSource({
-      domains: async () => Array.from({ length: 20 }, (_, i) => `d${i}.x`), concurrency: 4,
+      domains: async () => Array.from({ length: 20 }, (_, i) => `d${i}.x`),
+      concurrency: 4,
       probe: async (d) => {
-        active++; most = Math.max(most, active);
+        active++;
+        most = Math.max(most, active);
         await new Promise((r) => setTimeout(r, 2));
         active--;
         if (d === "d3.x") throw new Error("boom");
@@ -80,12 +113,38 @@ describe("certificateSource", () => {
 });
 
 describe("tlsProbe", () => {
-  const openssl = (() => { try { execFileSync("openssl", ["version"]); return true; } catch { return false; } })();
+  const openssl = (() => {
+    try {
+      execFileSync("openssl", ["version"]);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
 
   it.skipIf(!openssl)("reads the certificate a real TLS server presents, and reports a closed port", async () => {
     const dir = mkdtempSync(join(tmpdir(), "homegraf-tls-"));
-    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "k.pem"), "-out", join(dir, "c.pem"),
-      "-days", "10", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost"], { stdio: "ignore" });
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        join(dir, "k.pem"),
+        "-out",
+        join(dir, "c.pem"),
+        "-days",
+        "10",
+        "-subj",
+        "/CN=localhost",
+        "-addext",
+        "subjectAltName=DNS:localhost",
+      ],
+      { stdio: "ignore" },
+    );
     const server = createServer({ key: readFileSync(join(dir, "k.pem")), cert: readFileSync(join(dir, "c.pem")) }, (s) => s.end());
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     const port = (server.address() as { port: number }).port;

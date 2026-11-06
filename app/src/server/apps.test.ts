@@ -7,21 +7,59 @@ import { createApp } from "./app.js";
 import { applier } from "./apply.js";
 import { loadConfig } from "./config.js";
 import { userStore } from "./users.js";
-import { addonCatalog, newAppArgs, planInput, planner, previewer, removableCatalog, secretValueEnv, shellCommand, stackCatalog, templateCatalog, type Runner } from "./apps.js";
+import {
+  addonCatalog,
+  newAppArgs,
+  planInput,
+  planner,
+  previewer,
+  removableCatalog,
+  secretValueEnv,
+  shellCommand,
+  stackCatalog,
+  templateCatalog,
+  type Runner,
+} from "./apps.js";
 
 const parse = (v: unknown) => planInput.parse(v);
 
 describe("new-app arguments", () => {
   it("maps the form to flags and generates secrets, never --yes", () => {
-    const args = newAppArgs(parse({
-      appId: "whoami-test", server: "worker-1", image: "traefik/whoami:v1.11.0", containerPort: 80, hostPort: 8123,
-      mount: "/data", secretVars: ["API_TOKEN"], websockets: true,
-    }));
+    const args = newAppArgs(
+      parse({
+        appId: "whoami-test",
+        server: "worker-1",
+        image: "traefik/whoami:v1.11.0",
+        containerPort: 80,
+        hostPort: 8123,
+        mount: "/data",
+        secretVars: ["API_TOKEN"],
+        websockets: true,
+      }),
+    );
     expect(args).toEqual([
-      "new-app", "--app-id", "whoami-test", "--server", "worker-1", "--generate-secrets", "--image", "traefik/whoami:v1.11.0",
-      "--container-port", "80", "--host-port", "8123", "--mount", "/data",
-      "--secret-var", "API_TOKEN", "--secret", "API_TOKEN=generate",
-      "--web-port", "8123", "--websockets", "--force-https",
+      "new-app",
+      "--app-id",
+      "whoami-test",
+      "--server",
+      "worker-1",
+      "--generate-secrets",
+      "--image",
+      "traefik/whoami:v1.11.0",
+      "--container-port",
+      "80",
+      "--host-port",
+      "8123",
+      "--mount",
+      "/data",
+      "--secret-var",
+      "API_TOKEN",
+      "--secret",
+      "API_TOKEN=generate",
+      "--web-port",
+      "8123",
+      "--websockets",
+      "--force-https",
     ]);
     expect(args).not.toContain("--yes");
   });
@@ -83,21 +121,44 @@ describe("planner", () => {
 
 describe("POST /api/apps/plan", () => {
   const app = createApp({
-    loadGraph: async () => { throw new Error("unused"); },
+    loadGraph: async () => {
+      throw new Error("unused");
+    },
     status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
     webDir: "dist/web",
     plan: async (i) => ({ ok: true, exitCode: 0, output: `plan for ${i.appId}`, command: "x" }),
     preview: async (i) => ({ ok: true, compose: `services:\n  ${i.appId}: {}\n`, secrets: [], ports: [] }),
-    addons: async () => [{ id: "redis", label: "Redis", description: "cache", secrets: [], image: "redis:8-alpine", ui: false, requiresAny: [], publishesPort: false, urlPath: "/", exclusive: false, vpn: false }],
+    addons: async () => [
+      {
+        id: "redis",
+        label: "Redis",
+        description: "cache",
+        secrets: [],
+        image: "redis:8-alpine",
+        ui: false,
+        requiresAny: [],
+        publishesPort: false,
+        urlPath: "/",
+        exclusive: false,
+        vpn: false,
+      },
+    ],
     templates: async () => [],
     unifi: () => ({ enabled: false }),
     certificates: { get: async () => ({ updated: null, certificates: [] }) },
-    removal: testRemoval(), creations: testCreations(), hosts: testHosts(),
+    removal: testRemoval(),
+    creations: testCreations(),
+    hosts: testHosts(),
     stacks: testStacks(),
     create: { problem: undefined, applier: applier({ cfg: loadConfig({}) }) },
-    users: { enabled: true, authenticate: async () => ({ ok: true, principal: { name: "admin", permissions: [], source: "builtin" } }), store: userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json")) },
+    users: {
+      enabled: true,
+      authenticate: async () => ({ ok: true, principal: { name: "admin", permissions: [], source: "builtin" } }),
+      store: userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json")),
+    },
   });
-  const post = (body: unknown) => app.request("/api/apps/plan", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+  const post = (body: unknown) =>
+    app.request("/api/apps/plan", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 
   it("returns the plan", async () => {
     const res = await post({ appId: "demo-app", server: "aws" });
@@ -124,11 +185,29 @@ describe("building blocks and an edited compose file", () => {
 
   it("with a compose file the container fields are dropped, secrets are generated, typed ones come from the environment", () => {
     const input = parse({
-      appId: "demo-app", server: "aws", image: "x:1", containerPort: 80, hostPort: 8123, addons: ["redis"], secretVars: ["A"],
-      compose: "services: {}", webPort: 9000, secretValues: { DB_PASS: "s3cret-value" },
+      appId: "demo-app",
+      server: "aws",
+      image: "x:1",
+      containerPort: 80,
+      hostPort: 8123,
+      addons: ["redis"],
+      secretVars: ["A"],
+      compose: "services: {}",
+      webPort: 9000,
+      secretValues: { DB_PASS: "s3cret-value" },
     });
     const args = newAppArgs(input, "/tmp/x/compose.yaml");
-    expect(args).toEqual(expect.arrayContaining(["--compose-file", "/tmp/x/compose.yaml", "--generate-secrets", "--secret", "DB_PASS=env:SECRET_VALUE_DB_PASS", "--web-port", "9000"]));
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--compose-file",
+        "/tmp/x/compose.yaml",
+        "--generate-secrets",
+        "--secret",
+        "DB_PASS=env:SECRET_VALUE_DB_PASS",
+        "--web-port",
+        "9000",
+      ]),
+    );
     for (const dropped of ["--image", "--container-port", "--host-port", "--addon", "--secret-var"]) expect(args).not.toContain(dropped);
     expect(args.join(" ")).not.toContain("s3cret-value");
     expect(secretValueEnv("DB_PASS")).toBe("SECRET_VALUE_DB_PASS");
@@ -150,21 +229,38 @@ describe("building blocks and an edited compose file", () => {
   });
 
   it("the preview adds --print-compose and reads the tool's JSON, or its error", async () => {
-    const good: Runner = async () => ({ code: 0, out: JSON.stringify({ compose: "c", existing: false, secrets: ["A"], ports: [{ service: "web", host: 8000, container: 80 }] }) });
+    const good: Runner = async () => ({
+      code: 0,
+      out: JSON.stringify({ compose: "c", existing: false, secrets: ["A"], ports: [{ service: "web", host: 8000, container: 80 }] }),
+    });
     expect(await previewer("/repo", good)(parse({ appId: "demo-app", server: "aws", image: "x:1" }))).toEqual({
-      ok: true, compose: "c", existing: false, secrets: ["A"], ports: [{ service: "web", host: 8000, container: 80 }],
+      ok: true,
+      compose: "c",
+      existing: false,
+      secrets: ["A"],
+      ports: [{ service: "web", host: 8000, container: 80 }],
     });
     let args: string[] = [];
-    await previewer("/repo", async (_f, a) => { args = a; return good("", []); })(parse({ appId: "demo-app", server: "aws" }));
+    await previewer("/repo", async (_f, a) => {
+      args = a;
+      return good("", []);
+    })(parse({ appId: "demo-app", server: "aws" }));
     expect(args.at(-1)).toBe("--print-compose");
     const bad: Runner = async () => ({ code: 1, out: "\nerror: --compose-file: needs a `services:` mapping\n" });
-    expect(await previewer("/repo", bad)(parse({ appId: "demo-app", server: "aws" }))).toEqual({ ok: false, error: "--compose-file: needs a `services:` mapping" });
+    expect(await previewer("/repo", bad)(parse({ appId: "demo-app", server: "aws" }))).toEqual({
+      ok: false,
+      error: "--compose-file: needs a `services:` mapping",
+    });
     expect(await previewer("/repo", async () => ({ code: 0, out: "not json" }))(parse({ appId: "demo-app", server: "aws" }))).toMatchObject({ ok: false });
   });
 
   it("lists the building blocks and keeps the answer for a while", async () => {
-    let calls = 0, now = 0;
-    const run: Runner = async () => { calls++; return { code: 0, out: '[{"id":"redis","label":"Redis","description":"d","secrets":[],"image":"redis:8"}]' }; };
+    let calls = 0,
+      now = 0;
+    const run: Runner = async () => {
+      calls++;
+      return { code: 0, out: '[{"id":"redis","label":"Redis","description":"d","secrets":[],"image":"redis:8"}]' };
+    };
     const list = addonCatalog("/repo", run, 1000, () => now);
     expect((await list())[0].id).toBe("redis");
     await list();
@@ -176,13 +272,14 @@ describe("building blocks and an edited compose file", () => {
   });
 
   it("sees a freshly deployed app within seconds: the lists of apps are not kept for a minute", async () => {
-    let apps: string[] = [], now = 0;
+    let apps: string[] = [],
+      now = 0;
     const run: Runner = async () => ({ code: 0, out: JSON.stringify(apps.map((id) => ({ id }))) });
     const removable = removableCatalog("/repo", run, undefined, () => now);
     const stacks = stackCatalog("/repo", run, undefined, () => now);
     expect(await removable()).toEqual([]);
-    apps = ["web"];                                   // update-all pulled a merge
-    now = 10_000;                                     // the 60 s of a building-block list would still hide it
+    apps = ["web"]; // update-all pulled a merge
+    now = 10_000; // the 60 s of a building-block list would still hide it
     expect(await removable()).toEqual([{ id: "web" }]);
     expect(await stacks()).toEqual([{ id: "web" }]);
   });
@@ -197,22 +294,50 @@ describe("building blocks and an edited compose file", () => {
 
 describe("volumes, networks, limits, GPU and environment", () => {
   it("map to the tool's flags", () => {
-    const args = newAppArgs(parse({
-      appId: "demo-app", server: "aws", image: "x:1",
-      volumes: [
-        { kind: "data", source: "", target: "/data" },
-        { kind: "bind", source: "/mnt/tank/media", target: "/media", readOnly: true },
-        { kind: "tmpfs", target: "/tmp", size: "512m" },
-        { kind: "named", source: "cache", target: "/cache" },
-      ],
-      networks: [{ name: "internal" }, { name: "protonmail_default", external: true }],
-      cpus: "1.5", memory: "2g", gpu: "nvidia", env: { TZ: "Europe/Berlin", URL: "http://x:8080/a?b=c" },
-    }));
-    expect(args).toEqual(expect.arrayContaining([
-      "--volume", "data::/data", "--volume", "bind:/mnt/tank/media:/media:ro", "--volume", "tmpfs::/tmp:size=512m", "--volume", "named:cache:/cache",
-      "--network", "internal", "--external-network", "protonmail_default", "--cpus", "1.5", "--memory", "2g", "--gpu", "nvidia",
-      "--env", "TZ=Europe/Berlin", "--env", "URL=http://x:8080/a?b=c",
-    ]));
+    const args = newAppArgs(
+      parse({
+        appId: "demo-app",
+        server: "aws",
+        image: "x:1",
+        volumes: [
+          { kind: "data", source: "", target: "/data" },
+          { kind: "bind", source: "/mnt/tank/media", target: "/media", readOnly: true },
+          { kind: "tmpfs", target: "/tmp", size: "512m" },
+          { kind: "named", source: "cache", target: "/cache" },
+        ],
+        networks: [{ name: "internal" }, { name: "protonmail_default", external: true }],
+        cpus: "1.5",
+        memory: "2g",
+        gpu: "nvidia",
+        env: { TZ: "Europe/Berlin", URL: "http://x:8080/a?b=c" },
+      }),
+    );
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--volume",
+        "data::/data",
+        "--volume",
+        "bind:/mnt/tank/media:/media:ro",
+        "--volume",
+        "tmpfs::/tmp:size=512m",
+        "--volume",
+        "named:cache:/cache",
+        "--network",
+        "internal",
+        "--external-network",
+        "protonmail_default",
+        "--cpus",
+        "1.5",
+        "--memory",
+        "2g",
+        "--gpu",
+        "nvidia",
+        "--env",
+        "TZ=Europe/Berlin",
+        "--env",
+        "URL=http://x:8080/a?b=c",
+      ]),
+    );
   });
 
   it("add nothing when empty, and are not used with a compose file (the file says it all)", () => {
@@ -241,7 +366,9 @@ describe("templates and their files", () => {
   it("maps the template and the files folder to flags, with or without a compose file", () => {
     const input = parse({ appId: "demo-app", server: "aws", template: "nginx", files: { "default.conf": "x" } });
     expect(newAppArgs(input, undefined, "/tmp/w/files")).toEqual(expect.arrayContaining(["--template", "nginx", "--files-dir", "/tmp/w/files"]));
-    expect(newAppArgs(input, "/tmp/w/compose.yaml", "/tmp/w/files")).toEqual(expect.arrayContaining(["--compose-file", "/tmp/w/compose.yaml", "--template", "nginx"]));
+    expect(newAppArgs(input, "/tmp/w/compose.yaml", "/tmp/w/files")).toEqual(
+      expect.arrayContaining(["--compose-file", "/tmp/w/compose.yaml", "--template", "nginx"]),
+    );
     expect(newAppArgs(parse({ appId: "demo-app", server: "aws", image: "x:1" }))).not.toContain("--template");
   });
 
@@ -249,13 +376,13 @@ describe("templates and their files", () => {
     const input = parse({ appId: "EngineX", server: "aws", image: "x:1" });
     expect(input.appId).toBe("enginex");
     expect(newAppArgs(input).slice(0, 3)).toEqual(["new-app", "--app-id", "enginex"]);
-    expect(planInput.safeParse({ appId: "Engine X", server: "aws" }).success).toBe(false);   // still only letters, digits and dashes
+    expect(planInput.safeParse({ appId: "Engine X", server: "aws" }).success).toBe(false); // still only letters, digits and dashes
   });
 
   it("passes further templates as more --template flags, the first one first", () => {
     const args = newAppArgs(parse({ appId: "demo-app", server: "aws", template: "mealie", extraTemplates: ["paperless", "kuma"] }));
     expect(args.filter((x, i) => args[i - 1] === "--template")).toEqual(["mealie", "paperless", "kuma"]);
-    expect(newAppArgs(parse({ appId: "demo-app", server: "aws", image: "x:1", extraTemplates: ["kuma"] }))).not.toContain("--template");   // no first template: none
+    expect(newAppArgs(parse({ appId: "demo-app", server: "aws", image: "x:1", extraTemplates: ["kuma"] }))).not.toContain("--template"); // no first template: none
     expect(planInput.safeParse({ appId: "demo-app", server: "aws", template: "mealie", extraTemplates: ["No Good"] }).success).toBe(false);
   });
 
@@ -267,7 +394,10 @@ describe("templates and their files", () => {
       seen = { args, dir, conf: readFileSync(`${dir}/default.conf`, "utf8"), page: readFileSync(`${dir}/html/index.html`, "utf8") };
       return { code: 0, out: "plan" };
     };
-    const res = await planner("/repo", run)(parse({ appId: "demo-app", server: "aws", template: "nginx", files: { "default.conf": "A", "html/index.html": "B" } }));
+    const res = await planner(
+      "/repo",
+      run,
+    )(parse({ appId: "demo-app", server: "aws", template: "nginx", files: { "default.conf": "A", "html/index.html": "B" } }));
     expect([seen!.conf, seen!.page]).toEqual(["A", "B"]);
     expect(existsSync(seen!.dir)).toBe(false);
     expect(res.command).toContain("--template nginx --files-dir files");
@@ -285,7 +415,11 @@ describe("templates and their files", () => {
 
   it("lists the templates through the tool and keeps the answer", async () => {
     let calls = 0;
-    const run: Runner = async (_f, args) => { calls++; expect(args).toEqual(["templates", "--json"]); return { code: 0, out: '[{"id":"nginx","label":"nginx","description":"d","healthPath":"/","defaults":{},"files":["default.conf"]}]' }; };
+    const run: Runner = async (_f, args) => {
+      calls++;
+      expect(args).toEqual(["templates", "--json"]);
+      return { code: 0, out: '[{"id":"nginx","label":"nginx","description":"d","healthPath":"/","defaults":{},"files":["default.conf"]}]' };
+    };
     const list = templateCatalog("/repo", run);
     expect((await list())[0].id).toBe("nginx");
     await list();
@@ -295,21 +429,34 @@ describe("templates and their files", () => {
 
 describe("preview and addons routes", () => {
   const app = createApp({
-    loadGraph: async () => { throw new Error("unused"); },
+    loadGraph: async () => {
+      throw new Error("unused");
+    },
     status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
     webDir: "dist/web",
-    plan: async () => { throw new Error("unused"); },
+    plan: async () => {
+      throw new Error("unused");
+    },
     preview: async (i) => ({ ok: true, compose: `for ${i.appId}` }),
-    addons: async () => { throw new Error("no tool"); },
+    addons: async () => {
+      throw new Error("no tool");
+    },
     templates: async () => [],
     unifi: () => ({ enabled: false }),
     certificates: { get: async () => ({ updated: null, certificates: [] }) },
-    removal: testRemoval(), creations: testCreations(), hosts: testHosts(),
+    removal: testRemoval(),
+    creations: testCreations(),
+    hosts: testHosts(),
     stacks: testStacks(),
     create: { problem: undefined, applier: applier({ cfg: loadConfig({}) }) },
-    users: { enabled: true, authenticate: async () => ({ ok: true, principal: { name: "admin", permissions: [], source: "builtin" } }), store: userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json")) },
+    users: {
+      enabled: true,
+      authenticate: async () => ({ ok: true, principal: { name: "admin", permissions: [], source: "builtin" } }),
+      store: userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json")),
+    },
   });
-  const post = (body: unknown) => app.request("/api/apps/preview", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+  const post = (body: unknown) =>
+    app.request("/api/apps/preview", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 
   it("previews and rejects invalid input with the fields", async () => {
     expect(await (await post({ appId: "demo-app", server: "aws" })).json()).toEqual({ ok: true, compose: "for demo-app" });

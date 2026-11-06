@@ -11,9 +11,15 @@ import { signedInReads, testCreations, testHosts, testRemoval, testStacks } from
 import { userStore } from "./users.js";
 
 const env = {
-  KOMODO_URL: "http://komodo:9120", KOMODO_API_KEY: "kkey", KOMODO_API_SECRET: "ksecret",
-  HOMEGRAF_PASSWORD: "pw-1234", HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git", FORGEJO_TOKEN: "ftoken",
-  INFISICAL_URL: "https://inf.example", INFISICAL_BOOTSTRAP_CLIENT_ID: "iid", INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
+  KOMODO_URL: "http://komodo:9120",
+  KOMODO_API_KEY: "kkey",
+  KOMODO_API_SECRET: "ksecret",
+  HOMEGRAF_PASSWORD: "pw-1234",
+  HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git",
+  FORGEJO_TOKEN: "ftoken",
+  INFISICAL_URL: "https://inf.example",
+  INFISICAL_BOOTSTRAP_CLIENT_ID: "iid",
+  INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
 };
 const cfg = loadConfig(env);
 const PR = "https://git.example/owner/infrastructure/pulls/9";
@@ -40,7 +46,11 @@ describe("following a creation", () => {
   });
 
   it("shows the stack once merged, and asks for HTTPS only when the stack runs", async () => {
-    const down = await follow({ pulls: { [PR]: "merged" }, stacks: { demo: { health: "down", detail: "Down" } }, certs: { "demo.lab.example": { matches: true } } });
+    const down = await follow({
+      pulls: { [PR]: "merged" },
+      stacks: { demo: { health: "down", detail: "Down" } },
+      certs: { "demo.lab.example": { matches: true } },
+    });
     expect(await down.list()).toMatchObject([{ pr: "merged", stack: { health: "down" }, https: undefined, done: false }]);
     const running = await follow({ pulls: { [PR]: "merged" }, stacks: { demo: { health: "ok" } } });
     expect(await running.list()).toMatchObject([{ stack: { health: "ok" }, https: { ok: false, detail: "ECONNREFUSED" }, done: false }]);
@@ -90,42 +100,77 @@ describe("stackStateReader", () => {
   it("reads one stack's state from Komodo and asks once for a few seconds", async () => {
     const calls: string[] = [];
     let now = 0;
-    const read = stackStateReader(cfg, async (url) => {
-      calls.push(String(url));
-      return new Response(JSON.stringify([{ name: "demo", info: { state: "running", status: "Up 2 minutes" } }, { name: "other", info: { state: "down" } }]));
-    }, () => now, 1000);
+    const read = stackStateReader(
+      cfg,
+      async (url) => {
+        calls.push(String(url));
+        return new Response(
+          JSON.stringify([
+            { name: "demo", info: { state: "running", status: "Up 2 minutes" } },
+            { name: "other", info: { state: "down" } },
+          ]),
+        );
+      },
+      () => now,
+      1000,
+    );
     expect(await read("demo")).toEqual({ health: "ok", detail: "Up 2 minutes" });
     expect(await read("other")).toMatchObject({ health: "down" });
     expect(await read("nope")).toBeUndefined();
     expect(calls).toEqual(["http://komodo:9120/read/ListStacks"]);
-    now = 1001; await read("demo");
+    now = 1001;
+    await read("demo");
     expect(calls).toHaveLength(2);
   });
 
   it("knows nothing when Komodo is unreachable", async () => {
-    expect(await stackStateReader(cfg, async () => { throw new Error("offline"); })("demo")).toBeUndefined();
+    expect(
+      await stackStateReader(cfg, async () => {
+        throw new Error("offline");
+      })("demo"),
+    ).toBeUndefined();
   });
 });
 
 describe("creating an app records it for following", () => {
   const PLAN = { appId: "demo", server: "worker-1", image: "traefik/whoami:v1.11.0", containerPort: 80, hostPort: 8081 };
   const build = async (log: string) => {
-    const spawn: Spawn = async (cmd, _args, _o, onData) => { if (cmd === "python3") onData(log); return 0; };
+    const spawn: Spawn = async (cmd, _args, _o, onData) => {
+      if (cmd === "python3") onData(log);
+      return 0;
+    };
     const users = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
     await users.add("alice", "alice may create", ["apps:create"]);
     const creations = testCreations({ pulls: { [PR]: "open" } });
-    const app = signedInReads(createApp({
-      loadGraph: async () => { throw new Error("unused"); },
-      status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
-      webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
-      addons: async () => [], templates: async () => [], unifi: () => ({ enabled: false }),
-      certificates: { get: async () => ({ updated: null, certificates: [] }) },
-      create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
-      users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
-      removal: testRemoval(), creations, hosts: testHosts(), stacks: testStacks(),
-    }), "pw-1234");
+    const app = signedInReads(
+      createApp({
+        loadGraph: async () => {
+          throw new Error("unused");
+        },
+        status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
+        webDir: "dist/web",
+        plan: async () => {
+          throw new Error("unused");
+        },
+        preview: async () => {
+          throw new Error("unused");
+        },
+        addons: async () => [],
+        templates: async () => [],
+        unifi: () => ({ enabled: false }),
+        certificates: { get: async () => ({ updated: null, certificates: [] }) },
+        create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
+        users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
+        removal: testRemoval(),
+        creations,
+        hosts: testHosts(),
+        stacks: testStacks(),
+      }),
+      "pw-1234",
+    );
     const res = await app.request("/api/apps/create", {
-      method: "POST", body: JSON.stringify(PLAN),
+      method: "POST",
+      body: JSON.stringify(PLAN),
       headers: { "content-type": "application/json", authorization: `Basic ${Buffer.from("alice:alice may create").toString("base64")}` },
     });
     expect(res.status).toBe(202);

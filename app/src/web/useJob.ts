@@ -14,7 +14,11 @@ export function useJob() {
       const es = new EventSource(`/api/apps/jobs/${jobId}/events`);
       source.current = es;
       es.addEventListener("log", (ev) => setJob((j) => ({ ...j, log: (j?.log ?? "") + JSON.parse((ev as MessageEvent).data) })));
-      es.addEventListener("done", (ev) => { setJob((j) => ({ log: j?.log ?? "", done: JSON.parse((ev as MessageEvent).data) })); es.close(); onDone(); });
+      es.addEventListener("done", (ev) => {
+        setJob((j) => ({ log: j?.log ?? "", done: JSON.parse((ev as MessageEvent).data) }));
+        es.close();
+        onDone();
+      });
     },
   };
 }

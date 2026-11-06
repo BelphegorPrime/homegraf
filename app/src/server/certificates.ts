@@ -21,7 +21,11 @@ const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v
 /** Turns a peer certificate into what the page shows. */
 export function describeCertificate(domain: string, c: PeerCertificate, now: number): CertificateInfo {
   const notAfter = c.valid_to ? new Date(c.valid_to) : undefined;
-  const names = (c.subjectaltname ?? "").split(",").map((n) => n.trim()).filter((n) => n.startsWith("DNS:")).map((n) => n.slice(4));
+  const names = (c.subjectaltname ?? "")
+    .split(",")
+    .map((n) => n.trim())
+    .filter((n) => n.startsWith("DNS:"))
+    .map((n) => n.slice(4));
   const subjectCn = first(c.subject?.CN);
   if (!names.length && subjectCn) names.push(subjectCn);
   if (!notAfter || Number.isNaN(notAfter.getTime())) return { domain, error: "the certificate has no end date" };
@@ -44,7 +48,10 @@ export function tlsProbe({ port = 443, timeoutMs = 8000, now = Date.now }: { por
         socket.end();
       });
       socket.on("error", (e: NodeJS.ErrnoException) => resolve({ domain, error: e.code ?? e.message }));
-      socket.on("timeout", () => { resolve({ domain, error: "timeout" }); socket.destroy(); });
+      socket.on("timeout", () => {
+        resolve({ domain, error: "timeout" });
+        socket.destroy();
+      });
     });
 }
 
@@ -70,12 +77,14 @@ export function certificateSource({ domains, probe = tlsProbe(), ttlMs = 15 * 60
     const list = [...new Set(await domains())].sort();
     const found: CertificateInfo[] = [];
     let next = 0;
-    await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, async () => {
-      while (next < list.length) {
-        const domain = list[next++];
-        found.push(await probe(domain).catch((e: unknown) => ({ domain, error: e instanceof Error ? e.message : String(e) })));
-      }
-    }));
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, list.length) }, async () => {
+        while (next < list.length) {
+          const domain = list[next++];
+          found.push(await probe(domain).catch((e: unknown) => ({ domain, error: e instanceof Error ? e.message : String(e) })));
+        }
+      }),
+    );
     const rank = (c: CertificateInfo) => (c.error ? -1e9 : !c.matches ? -1e8 : (c.daysLeft ?? 0));
     found.sort((a, b) => rank(a) - rank(b) || a.domain.localeCompare(b.domain));
     at = now();

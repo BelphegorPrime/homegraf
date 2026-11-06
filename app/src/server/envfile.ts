@@ -24,7 +24,10 @@ export function parseEnvFile(text: string): Record<string, string> {
  * Fills the environment from the file named by HOMEGRAF_ENV_FILE, for variables that are not set or empty (what the
  * environment says explicitly wins). Without the variable or without the file nothing changes. Returns the names it set.
  */
-export function applyEnvFile(env: NodeJS.ProcessEnv = process.env, read: (path: string) => string | undefined = (p) => (existsSync(p) ? readFileSync(p, "utf8") : undefined)): string[] {
+export function applyEnvFile(
+  env: NodeJS.ProcessEnv = process.env,
+  read: (path: string) => string | undefined = (p) => (existsSync(p) ? readFileSync(p, "utf8") : undefined),
+): string[] {
   const path = env.HOMEGRAF_ENV_FILE;
   if (!path) return [];
   const text = read(path);

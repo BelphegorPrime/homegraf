@@ -26,9 +26,15 @@ vj81VLGw6n6eBukCIE6RweY1MWqwTaSSes8hcexkF0lZa33/bPnLBJ0ftSiZ
 const FINGERPRINT = "94:B9:7D:FB:04:24:3D:2C:10:B8:07:EF:E5:DD:23:9C:72:9B:AE:EF:DB:9C:AC:B4:36:50:B2:94:F9:1D:D4:67";
 
 const env = {
-  KOMODO_URL: "http://komodo:9120", KOMODO_API_KEY: "kkey", KOMODO_API_SECRET: "ksecret",
-  HOMEGRAF_PASSWORD: "pw-1234", HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git", FORGEJO_TOKEN: "ftoken",
-  INFISICAL_URL: "https://inf.example", INFISICAL_BOOTSTRAP_CLIENT_ID: "iid", INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
+  KOMODO_URL: "http://komodo:9120",
+  KOMODO_API_KEY: "kkey",
+  KOMODO_API_SECRET: "ksecret",
+  HOMEGRAF_PASSWORD: "pw-1234",
+  HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git",
+  FORGEJO_TOKEN: "ftoken",
+  INFISICAL_URL: "https://inf.example",
+  INFISICAL_BOOTSTRAP_CLIENT_ID: "iid",
+  INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
 };
 const cfg = loadConfig(env);
 const basic = (name: string, password: string) => `Basic ${Buffer.from(`${name}:${password}`).toString("base64")}`;
@@ -44,7 +50,9 @@ const ISSUERS = (bundle: string) => `issuers:\n  homelab-private-ca:\n    type: 
 
 describe("the CA certificate", () => {
   it("is described by subject, end, fingerprint and whether it is a root", () => {
-    expect(describeBundle(CA)).toEqual([{ subject: "Test Root CA", issuer: "Test Root CA", notAfter: "2036-10-29T17:04:39.000Z", fingerprint: FINGERPRINT, root: true }]);
+    expect(describeBundle(CA)).toEqual([
+      { subject: "Test Root CA", issuer: "Test Root CA", notAfter: "2036-10-29T17:04:39.000Z", fingerprint: FINGERPRINT, root: true },
+    ]);
     expect(describeBundle(`${CA}\n${CA}`)).toHaveLength(2);
     expect(describeBundle("nothing here")).toEqual([]);
   });
@@ -65,29 +73,58 @@ describe("the CA certificate", () => {
   });
 });
 
-const TDARR: HostInfo = { id: "tdarr", stack: "external", file: "external/ingress.yaml", domains: ["tdarr.lab.example", "tdarr2.lab.example"], forceHttps: false };
+const TDARR: HostInfo = {
+  id: "tdarr",
+  stack: "external",
+  file: "external/ingress.yaml",
+  domains: ["tdarr.lab.example", "tdarr2.lab.example"],
+  forceHttps: false,
+};
 const PVE: HostInfo = { id: "pve", stack: "external", file: "external/ingress.yaml", domains: ["pve.lab.example"], forceHttps: true };
 const PR = "https://git.example/owner/infrastructure/pulls/12";
 
 async function build(rootCa: ReturnType<typeof rootCaSource> = () => null) {
   const calls: { cmd: string; args: string[] }[] = [];
-  const spawn: Spawn = async (cmd, args, _o, onData) => { calls.push({ cmd, args }); if (cmd === "python3") onData(`pull request: ${PR}\n`); return 0; };
+  const spawn: Spawn = async (cmd, args, _o, onData) => {
+    calls.push({ cmd, args });
+    if (cmd === "python3") onData(`pull request: ${PR}\n`);
+    return 0;
+  };
   const users = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
   await users.add("alice", "alice may edit hosts", ["hosts:edit"]);
   await users.add("bob", "bob may only create", ["apps:create"]);
-  const app = signedInReads(createApp({
-    loadGraph: async () => { throw new Error("unused"); },
-    status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
-    webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
-    addons: async () => [], templates: async () => [], unifi: () => ({ enabled: false }),
-    certificates: { get: async () => ({ updated: null, certificates: [] }) },
-    create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
-    users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
-    removal: testRemoval(), creations: testCreations(), hosts: testHosts([TDARR, PVE], rootCa), stacks: testStacks(),
-  }), "pw-1234");
-  const post = (body: unknown, auth?: string) => app.request("/api/hosts/force-https", {
-    method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
-  });
+  const app = signedInReads(
+    createApp({
+      loadGraph: async () => {
+        throw new Error("unused");
+      },
+      status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
+      webDir: "dist/web",
+      plan: async () => {
+        throw new Error("unused");
+      },
+      preview: async () => {
+        throw new Error("unused");
+      },
+      addons: async () => [],
+      templates: async () => [],
+      unifi: () => ({ enabled: false }),
+      certificates: { get: async () => ({ updated: null, certificates: [] }) },
+      create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
+      users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
+      removal: testRemoval(),
+      creations: testCreations(),
+      hosts: testHosts([TDARR, PVE], rootCa),
+      stacks: testStacks(),
+    }),
+    "pw-1234",
+  );
+  const post = (body: unknown, auth?: string) =>
+    app.request("/api/hosts/force-https", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
+    });
   return { app, post, calls, settle: async (jobId: string) => (await app.request(`/api/apps/jobs/${jobId}/events`)).text() };
 }
 

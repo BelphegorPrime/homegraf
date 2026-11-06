@@ -11,14 +11,25 @@ import { createProblem, loadConfig } from "./config.js";
 import { planInput } from "./apps.js";
 
 const env = {
-  KOMODO_URL: "http://komodo:9120", KOMODO_API_KEY: "kkey", KOMODO_API_SECRET: "ksecret",
-  HOMEGRAF_PASSWORD: "pw-1234", HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git", FORGEJO_TOKEN: "ftoken",
-  INFISICAL_URL: "https://inf.example", INFISICAL_BOOTSTRAP_CLIENT_ID: "iid", INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
+  KOMODO_URL: "http://komodo:9120",
+  KOMODO_API_KEY: "kkey",
+  KOMODO_API_SECRET: "ksecret",
+  HOMEGRAF_PASSWORD: "pw-1234",
+  HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git",
+  FORGEJO_TOKEN: "ftoken",
+  INFISICAL_URL: "https://inf.example",
+  INFISICAL_BOOTSTRAP_CLIENT_ID: "iid",
+  INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
 };
 const cfg = loadConfig(env);
 const input = planInput.parse({ appId: "demo-app", server: "aws", image: "x:1", containerPort: 80 });
 
-interface Call { cmd: string; args: string[]; env: Record<string, string>; cwd?: string }
+interface Call {
+  cmd: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd?: string;
+}
 
 function fakeSpawn(tool: (onData: (s: string) => void) => Promise<number> | number = () => 0) {
   const calls: Call[] = [];
@@ -28,7 +39,11 @@ function fakeSpawn(tool: (onData: (s: string) => void) => Promise<number> | numb
   };
   return { calls, spawn };
 }
-const settled = (job: { subscribers: Set<unknown> }) => new Promise<void>((r) => { const f = () => r(); job.subscribers.add((c: string | null) => c === null && f()); });
+const settled = (job: { subscribers: Set<unknown> }) =>
+  new Promise<void>((r) => {
+    const f = () => r();
+    job.subscribers.add((c: string | null) => c === null && f());
+  });
 const opts = (spawn: Spawn, exists = false) => ({ cfg, spawn, exists: () => exists, login: async () => "owner" });
 
 describe("createProblem", () => {
@@ -41,13 +56,20 @@ describe("createProblem", () => {
 
 describe("applier", () => {
   it("clones when needed, resets to origin/main, then runs new-app --pr --yes and finds the pull request", async () => {
-    const { calls, spawn } = fakeSpawn((out) => { out("  ✓ ok\n  pull request: https://git.example/owner/infrastructure/pulls/7\n"); return 0; });
+    const { calls, spawn } = fakeSpawn((out) => {
+      out("  ✓ ok\n  pull request: https://git.example/owner/infrastructure/pulls/7\n");
+      return 0;
+    });
     const a = applier(opts(spawn));
     const job = a.start(input)!;
     await settled(job);
     expect(job).toMatchObject({ state: "done", exitCode: 0, pullRequestUrl: "https://git.example/owner/infrastructure/pulls/7" });
     expect(calls.map((c) => [c.cmd, ...c.args.filter((x) => x !== "-C" && x !== "/work")].slice(0, 3))).toEqual([
-      ["git", "clone", "-q"], ["git", "switch", "-q"], ["git", "reset", "-q"], ["git", "clean", "-fdq"], ["python3", "-I", "/work/homelab.py"],
+      ["git", "clone", "-q"],
+      ["git", "switch", "-q"],
+      ["git", "reset", "-q"],
+      ["git", "clean", "-fdq"],
+      ["python3", "-I", "/work/homelab.py"],
     ]);
     const tool = calls.at(-1)!;
     expect(tool.args).toEqual(expect.arrayContaining(["new-app", "--app-id", "demo-app", "--pr", "--yes"]));
@@ -76,7 +98,10 @@ describe("applier", () => {
   });
 
   it("scrubs secret values and colour codes from the output", async () => {
-    const { spawn } = fakeSpawn((out) => { out("\x1b[32mtoken ftoken and pw-1234\x1b[0m\n"); return 0; });
+    const { spawn } = fakeSpawn((out) => {
+      out("\x1b[32mtoken ftoken and pw-1234\x1b[0m\n");
+      return 0;
+    });
     const job = applier(opts(spawn)).start(input)!;
     await settled(job);
     expect(job.log).toContain("token *** and ***");
@@ -95,7 +120,12 @@ describe("applier", () => {
       }
       return 0;
     };
-    const edited = planInput.parse({ appId: "demo-app", server: "aws", compose: "services:\n  web:\n    image: x:1\n", secretValues: { DB_PASS: "typed-secret-42" } });
+    const edited = planInput.parse({
+      appId: "demo-app",
+      server: "aws",
+      compose: "services:\n  web:\n    image: x:1\n",
+      secretValues: { DB_PASS: "typed-secret-42" },
+    });
     const job = applier(opts(spawn)).start(edited)!;
     await settled(job);
     const tool = calls.at(-1)!;
@@ -135,35 +165,60 @@ const basic = (name: string, password: string) => `Basic ${Buffer.from(`${name}:
 
 describe("create routes", () => {
   async function build(problem?: string, maxFailures = 5) {
-    const { calls, spawn } = fakeSpawn((out) => { out("pull request: https://git.example/pulls/1\n"); return 0; });
+    const { calls, spawn } = fakeSpawn((out) => {
+      out("pull request: https://git.example/pulls/1\n");
+      return 0;
+    });
     const store = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
     await store.add("alice", "alice has apps rights", ["apps:create"]);
     await store.add("bob", "bob can only look", []);
-    const app = signedInReads(createApp({
-      loadGraph: async () => { throw new Error("unused"); },
-      status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
-      webDir: "dist/web",
-      plan: async () => { throw new Error("unused"); },
-      preview: async () => { throw new Error("unused"); },
-      addons: async () => [],
-      templates: async () => [],
-      unifi: () => ({ enabled: false }),
-    certificates: { get: async () => ({ updated: null, certificates: [] }) },
-    removal: testRemoval(), creations: testCreations(), hosts: testHosts(),
-    stacks: testStacks(),
-      create: { problem, applier: applier(opts(spawn)) },
-      users: { enabled: true, store, authenticate: authenticator({ adminPassword: "pw-1234", users: store, maxFailures }) },
-    }), "pw-1234");
-    const post = (body: unknown, auth?: string) => app.request("/api/apps/create", {
-      method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
-    });
+    const app = signedInReads(
+      createApp({
+        loadGraph: async () => {
+          throw new Error("unused");
+        },
+        status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
+        webDir: "dist/web",
+        plan: async () => {
+          throw new Error("unused");
+        },
+        preview: async () => {
+          throw new Error("unused");
+        },
+        addons: async () => [],
+        templates: async () => [],
+        unifi: () => ({ enabled: false }),
+        certificates: { get: async () => ({ updated: null, certificates: [] }) },
+        removal: testRemoval(),
+        creations: testCreations(),
+        hosts: testHosts(),
+        stacks: testStacks(),
+        create: { problem, applier: applier(opts(spawn)) },
+        users: { enabled: true, store, authenticate: authenticator({ adminPassword: "pw-1234", users: store, maxFailures }) },
+      }),
+      "pw-1234",
+    );
+    const post = (body: unknown, auth?: string) =>
+      app.request("/api/apps/create", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
+      });
     return { app, post, calls };
   }
   const demo = { appId: "demo-app", server: "aws" };
 
   it("reports whether creating and signing in are available", async () => {
-    expect(await (await (await build()).app.request("/api/capabilities")).json()).toEqual({ create: { enabled: true }, users: { enabled: true }, unifi: { enabled: false } });
-    expect(await (await (await build("not configured: X")).app.request("/api/capabilities")).json()).toEqual({ create: { enabled: false, reason: "not configured: X" }, users: { enabled: true }, unifi: { enabled: false } });
+    expect(await (await (await build()).app.request("/api/capabilities")).json()).toEqual({
+      create: { enabled: true },
+      users: { enabled: true },
+      unifi: { enabled: false },
+    });
+    expect(await (await (await build("not configured: X")).app.request("/api/capabilities")).json()).toEqual({
+      create: { enabled: false, reason: "not configured: X" },
+      users: { enabled: true },
+      unifi: { enabled: false },
+    });
   });
 
   it("answers 503 when not configured, 401 without or with wrong credentials, 429 when locked", async () => {

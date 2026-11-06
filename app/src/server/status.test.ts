@@ -3,7 +3,7 @@ import type { Graph } from "../shared/types.js";
 import { loadConfig } from "./config.js";
 import { jobStatus, statusFromKomodo, statusPoller, unifiHealth } from "./status.js";
 
-const graph = (nodes: Graph["nodes"]): Graph => ({ nodes, edges: [], warnings: [], generated: "t" } as unknown as Graph);
+const graph = (nodes: Graph["nodes"]): Graph => ({ nodes, edges: [], warnings: [], generated: "t" }) as unknown as Graph;
 
 describe("unifiHealth", () => {
   it("is ok when connected, in trouble when offline, a warning while the device changes", () => {
@@ -19,13 +19,17 @@ describe("unifiHealth", () => {
 
 describe("statusFromKomodo and the UniFi devices", () => {
   it("gives the gateway, switches and access points the state their controller reports, and leaves other nodes alone", () => {
-    const status = statusFromKomodo(graph([
-      { id: "router:udm", type: "router", label: "UDM", unifiState: 1 },
-      { id: "switch:core", type: "switch", label: "Core", unifiState: 1 },
-      { id: "ap:attic", type: "device", label: "Attic AP", unifiState: 0 },
-      { id: "router:placeholder", type: "router", label: "Router" },            // no snapshot: nothing known
-      { id: "device:printer", type: "device", label: "Printer", online: true },   // a hand-kept device without UniFi state
-    ] as Graph["nodes"]), [], []);
+    const status = statusFromKomodo(
+      graph([
+        { id: "router:udm", type: "router", label: "UDM", unifiState: 1 },
+        { id: "switch:core", type: "switch", label: "Core", unifiState: 1 },
+        { id: "ap:attic", type: "device", label: "Attic AP", unifiState: 0 },
+        { id: "router:placeholder", type: "router", label: "Router" }, // no snapshot: nothing known
+        { id: "device:printer", type: "device", label: "Printer", online: true }, // a hand-kept device without UniFi state
+      ] as Graph["nodes"]),
+      [],
+      [],
+    );
     expect(status["router:udm"]).toEqual({ health: "ok", detail: "connected" });
     expect(status["ap:attic"]).toEqual({ health: "down", detail: "offline" });
     expect(status["router:placeholder"]).toBeUndefined();
@@ -65,7 +69,10 @@ describe("statusFromKomodo and one-shot jobs", () => {
     { id: "stack:app", type: "stack", label: "app" },
     { id: "container:backup/cli", type: "container", label: "cli", stack: "backup" },
   ] as Graph["nodes"];
-  const stacks = [{ name: "backup", info: { state: "stopped", status: "exited(1)" } }, { name: "app", info: { state: "stopped", status: "exited(1)" } }];
+  const stacks = [
+    { name: "backup", info: { state: "stopped", status: "exited(1)" } },
+    { name: "app", info: { state: "stopped", status: "exited(1)" } },
+  ];
 
   it("shows the last run instead of the stopped stack, and its containers follow", () => {
     const status = statusFromKomodo(graph(nodes), stacks, [], { backup: { health: "ok", detail: "last run ok, 16 hours ago" } });
@@ -82,13 +89,22 @@ describe("statusFromKomodo and one-shot jobs", () => {
 
 describe("statusPoller and one-shot jobs", () => {
   const cfg = loadConfig({ KOMODO_URL: "http://komodo:9120", KOMODO_API_KEY: "k", KOMODO_API_SECRET: "s" });
-  const nodes = [{ id: "stack:backup", type: "stack", label: "backup", job: true }, { id: "stack:app", type: "stack", label: "app" }] as Graph["nodes"];
+  const nodes = [
+    { id: "stack:backup", type: "stack", label: "backup", job: true },
+    { id: "stack:app", type: "stack", label: "app" },
+  ] as Graph["nodes"];
   const answers = (services: Response | Error) => {
     const asked: { type: string; body: string }[] = [];
     const fetchFn = (async (url: string, init: RequestInit) => {
       const type = String(url).split("/read/")[1];
       asked.push({ type, body: String(init.body) });
-      if (type === "ListStacks") return new Response(JSON.stringify([{ name: "backup", info: { state: "stopped", status: "exited(1)" } }, { name: "app", info: { state: "running" } }]));
+      if (type === "ListStacks")
+        return new Response(
+          JSON.stringify([
+            { name: "backup", info: { state: "stopped", status: "exited(1)" } },
+            { name: "app", info: { state: "running" } },
+          ]),
+        );
       if (type === "ListServers") return new Response("[]");
       if (services instanceof Error) throw services;
       return services;

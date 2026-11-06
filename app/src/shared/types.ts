@@ -1,5 +1,4 @@
-export type NodeType =
-  | "isp" | "router" | "switch" | "device" | "machine" | "stack" | "container" | "service" | "domain" | "infra";
+export type NodeType = "isp" | "router" | "switch" | "device" | "machine" | "stack" | "container" | "service" | "domain" | "infra";
 
 export interface GraphNode {
   id: string;
@@ -28,8 +27,7 @@ export interface GraphNode {
 }
 
 export type EdgeType =
-  | "link" | "hosts" | "contains" | "proxies" | "terminated-by" | "depends-on" | "deployed-by" | "uses-secrets"
-  | "runs" | "certificates-from";
+  "link" | "hosts" | "contains" | "proxies" | "terminated-by" | "depends-on" | "deployed-by" | "uses-secrets" | "runs" | "certificates-from";
 
 export interface GraphEdge {
   id: string;
@@ -334,5 +332,10 @@ export interface SsoSession {
   /** Name and password sign-in: off without HOMEGRAF_PASSWORD. */
   password: { enabled: boolean; reason?: string };
   /** Who is signed in, by either way. */
-  user?: { name: string; permissions: Permission[]; /** Sent back as X-CSRF-Token with every write request. */ csrf: string; source: "builtin" | "user" | "sso" };
+  user?: {
+    name: string;
+    permissions: Permission[];
+    /** Sent back as X-CSRF-Token with every write request. */ csrf: string;
+    source: "builtin" | "user" | "sso";
+  };
 }

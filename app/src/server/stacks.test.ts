@@ -10,9 +10,16 @@ import { signedInReads, testCreations, testHosts, testRemoval, testStacks } from
 import { userStore } from "./users.js";
 
 const cfg = loadConfig({
-  KOMODO_URL: "http://komodo:9120", KOMODO_API_KEY: "kkey", KOMODO_API_SECRET: "ksecret", HOMEGRAF_PASSWORD: "pw-1234",
-  HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git", FORGEJO_TOKEN: "ftoken",
-  INFISICAL_URL: "https://inf.example", INFISICAL_BOOTSTRAP_CLIENT_ID: "iid", INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret", REPO_DIR: "/repo",
+  KOMODO_URL: "http://komodo:9120",
+  KOMODO_API_KEY: "kkey",
+  KOMODO_API_SECRET: "ksecret",
+  HOMEGRAF_PASSWORD: "pw-1234",
+  HOMEGRAF_CLONE_URL: "https://git.example/owner/infrastructure.git",
+  FORGEJO_TOKEN: "ftoken",
+  INFISICAL_URL: "https://inf.example",
+  INFISICAL_BOOTSTRAP_CLIENT_ID: "iid",
+  INFISICAL_BOOTSTRAP_CLIENT_SECRET: "isecret",
+  REPO_DIR: "/repo",
 });
 const basic = (name: string, password: string) => `Basic ${Buffer.from(`${name}:${password}`).toString("base64")}`;
 const paperless = { id: "paperless", server: "worker-1", komodoStack: "paperless", secrets: true };
@@ -20,25 +27,47 @@ const aws = { id: "aws", server: "aws", komodoStack: "aws-floci", secrets: false
 
 async function build(answer?: Parameters<typeof testStacks>[1]) {
   const spawned: { cmd: string; args: string[]; cwd?: string; env: Record<string, string> }[] = [];
-  const spawn: Spawn = async (cmd, args, o, onData) => { spawned.push({ cmd, args, cwd: o.cwd, env: o.env }); if (cmd === "python3") onData("deploy succeeded\n"); return 0; };
+  const spawn: Spawn = async (cmd, args, o, onData) => {
+    spawned.push({ cmd, args, cwd: o.cwd, env: o.env });
+    if (cmd === "python3") onData("deploy succeeded\n");
+    return 0;
+  };
   const users = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
   await users.add("sam", "sam manages secrets", ["secrets:manage"]);
   await users.add("dee", "dee may deploy things", ["stacks:deploy"]);
   const tool = testStacks([paperless, aws], answer);
-  const app = signedInReads(createApp({
-    loadGraph: async () => { throw new Error("unused"); },
-    status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
-    webDir: "dist/web", plan: async () => { throw new Error("unused"); }, preview: async () => { throw new Error("unused"); },
-    addons: async () => [], templates: async () => [], unifi: () => ({ enabled: false }),
-    certificates: { get: async () => ({ updated: null, certificates: [] }) },
-    create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
-    users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
-    removal: testRemoval(), creations: testCreations(), hosts: testHosts(), stacks: tool,
-  }), "pw-1234");
-  const call = (method: string, path: string, auth?: string, body?: unknown) => app.request(path, {
-    method, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
-  });
+  const app = signedInReads(
+    createApp({
+      loadGraph: async () => {
+        throw new Error("unused");
+      },
+      status: { get: () => ({ updated: null, source: "disabled", nodes: {} }), subscribe: () => () => {} },
+      webDir: "dist/web",
+      plan: async () => {
+        throw new Error("unused");
+      },
+      preview: async () => {
+        throw new Error("unused");
+      },
+      addons: async () => [],
+      templates: async () => [],
+      unifi: () => ({ enabled: false }),
+      certificates: { get: async () => ({ updated: null, certificates: [] }) },
+      create: { problem: undefined, applier: applier({ cfg, spawn, exists: () => true, login: async () => "owner" }) },
+      users: { enabled: true, store: users, authenticate: authenticator({ adminPassword: "pw-1234", users }) },
+      removal: testRemoval(),
+      creations: testCreations(),
+      hosts: testHosts(),
+      stacks: tool,
+    }),
+    "pw-1234",
+  );
+  const call = (method: string, path: string, auth?: string, body?: unknown) =>
+    app.request(path, {
+      method,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}) },
+    });
   return { app, call, tool, spawned };
 }
 const sam = basic("sam", "sam manages secrets");
@@ -54,7 +83,11 @@ describe("stacks", () => {
 describe("secrets", () => {
   it("need secrets:manage, even to see the names", async () => {
     const { call, tool } = await build();
-    for (const [m, p, b] of [["GET", "/api/stacks/paperless/secrets"], ["PUT", "/api/stacks/paperless/secrets/KEY", undefined, { value: "x" }], ["DELETE", "/api/stacks/paperless/secrets/KEY"]] as const) {
+    for (const [m, p, b] of [
+      ["GET", "/api/stacks/paperless/secrets"],
+      ["PUT", "/api/stacks/paperless/secrets/KEY", undefined, { value: "x" }],
+      ["DELETE", "/api/stacks/paperless/secrets/KEY"],
+    ] as const) {
       expect((await call(m, p, `Basic ${Buffer.from("nobody:wrong").toString("base64")}`, b)).status).toBe(401);
       expect((await call(m, p, dee, b)).status).toBe(403);
     }
@@ -64,7 +97,13 @@ describe("secrets", () => {
   it("lists the names with whether a compose file uses them", async () => {
     const { call, tool } = await build(() => ({ code: 0, out: '[{"key":"DB_PASSWORD","used":true},{"key":"OLD","used":false}]\n' }));
     const res = await call("GET", "/api/stacks/paperless/secrets", sam);
-    expect(await res.json()).toEqual({ keys: [{ key: "DB_PASSWORD", used: true }, { key: "OLD", used: false }], redeploy: "paperless" });
+    expect(await res.json()).toEqual({
+      keys: [
+        { key: "DB_PASSWORD", used: true },
+        { key: "OLD", used: false },
+      ],
+      redeploy: "paperless",
+    });
     expect(tool.calls).toEqual([{ args: ["list", "paperless", "--json"], stdin: undefined }]);
   });
 
@@ -113,12 +152,19 @@ describe("secrets", () => {
   });
 
   it("deletes a key, and answers 409 while a compose file still uses it unless forced", async () => {
-    const { call, tool } = await build((a) => a.includes("--force") ? { code: 0, out: "deleted\n" } : { code: 1, out: "error: paperless still uses ${KEY}; change the compose file first, or --force\n" });
+    const { call, tool } = await build((a) =>
+      a.includes("--force")
+        ? { code: 0, out: "deleted\n" }
+        : { code: 1, out: "error: paperless still uses ${KEY}; change the compose file first, or --force\n" },
+    );
     const refused = await call("DELETE", "/api/stacks/paperless/secrets/KEY", sam);
     expect(refused.status).toBe(409);
     expect((await refused.json()).error).toMatch(/still uses/);
     expect((await call("DELETE", "/api/stacks/paperless/secrets/KEY?force=true", sam)).status).toBe(200);
-    expect(tool.calls.map((c) => c.args)).toEqual([["delete", "paperless", "KEY", "--yes"], ["delete", "paperless", "KEY", "--yes", "--force"]]);
+    expect(tool.calls.map((c) => c.args)).toEqual([
+      ["delete", "paperless", "KEY", "--yes"],
+      ["delete", "paperless", "KEY", "--yes", "--force"],
+    ]);
   });
 });
 
@@ -142,8 +188,13 @@ describe("redeploy", () => {
     expect(res.status).toBe(202);
     const { jobId } = await res.json();
     expect(await (await app.request(`/api/apps/jobs/${jobId}/events`)).text()).toContain("deploy succeeded");
-    expect(spawned).toHaveLength(1);                                         // no clone, no git
+    expect(spawned).toHaveLength(1); // no clone, no git
     expect(spawned[0]).toMatchObject({ cmd: "python3", args: ["-I", "/repo/homelab.py", "deploy", "aws-floci", "--yes"], cwd: "/repo" });
-    expect(await (await app.request(`/api/apps/jobs/${jobId}`)).json()).toMatchObject({ kind: "deploy", appId: "aws-floci", requestedBy: "dee", state: "done" });
+    expect(await (await app.request(`/api/apps/jobs/${jobId}`)).json()).toMatchObject({
+      kind: "deploy",
+      appId: "aws-floci",
+      requestedBy: "dee",
+      state: "done",
+    });
   });
 });

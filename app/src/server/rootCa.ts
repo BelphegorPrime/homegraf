@@ -26,7 +26,13 @@ const name = (dn: string) => /(?:^|\n)CN=([^\n]+)/.exec(dn)?.[1] ?? dn.replaceAl
 export function describeBundle(pem: string): RootCaInfo["certificates"] {
   return (pem.match(PEM) ?? []).map((one) => {
     const c = new X509Certificate(one);
-    return { subject: name(c.subject), issuer: name(c.issuer), notAfter: new Date(c.validTo).toISOString(), fingerprint: c.fingerprint256, root: c.subject === c.issuer };
+    return {
+      subject: name(c.subject),
+      issuer: name(c.issuer),
+      notAfter: new Date(c.validTo).toISOString(),
+      fingerprint: c.fingerprint256,
+      root: c.subject === c.issuer,
+    };
   });
 }
 

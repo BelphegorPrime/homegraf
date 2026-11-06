@@ -1,6 +1,7 @@
 import type { EdgeType, Graph, GraphEdge, GraphNode, NodeType } from "../shared/types";
 
-export type ViewId = "catalog" | "hosting" | "network" | "request" | "dependencies" | "platform" | "status" | "certificates" | "new" | "remove" | "stacks" | "users";
+export type ViewId =
+  "catalog" | "hosting" | "network" | "request" | "dependencies" | "platform" | "status" | "certificates" | "new" | "remove" | "stacks" | "users";
 
 export interface ViewDef {
   id: ViewId;
@@ -39,14 +40,19 @@ export interface Sub {
 }
 
 export interface ViewOptions {
-  containers: boolean;       // hosting and dependencies: include container nodes
-  focus: string;             // platform: infra node whose dependents are shown ("" = none)
+  containers: boolean; // hosting and dependencies: include container nodes
+  focus: string; // platform: infra node whose dependents are shown ("" = none)
 }
 
 export const defaultOptions: ViewOptions = { containers: false, focus: "infra:komodo" };
 
-function subgraph(g: Graph, nodeTypes: NodeType[], edgeTypes: EdgeType[], keep: (n: GraphNode) => boolean = () => true,
-                  alwaysShow: (n: GraphNode) => boolean = () => false): Sub {
+function subgraph(
+  g: Graph,
+  nodeTypes: NodeType[],
+  edgeTypes: EdgeType[],
+  keep: (n: GraphNode) => boolean = () => true,
+  alwaysShow: (n: GraphNode) => boolean = () => false,
+): Sub {
   const types = new Set(nodeTypes);
   const allowed = new Map(g.nodes.filter((n) => types.has(n.type) && keep(n)).map((n) => [n.id, n]));
   const edges = g.edges.filter((e) => edgeTypes.includes(e.type) && allowed.has(e.source) && allowed.has(e.target));
@@ -58,8 +64,20 @@ export function buildView(id: ViewId, g: Graph, opts: ViewOptions = defaultOptio
   switch (id) {
     case "hosting":
       return opts.containers
-        ? subgraph(g, ["machine", "stack", "container", "service"], ["hosts", "contains"], (n) => !n.external, (n) => n.type === "machine")
-        : subgraph(g, ["machine", "stack", "service"], ["hosts"], (n) => !n.external, (n) => n.type === "machine");
+        ? subgraph(
+            g,
+            ["machine", "stack", "container", "service"],
+            ["hosts", "contains"],
+            (n) => !n.external,
+            (n) => n.type === "machine",
+          )
+        : subgraph(
+            g,
+            ["machine", "stack", "service"],
+            ["hosts"],
+            (n) => !n.external,
+            (n) => n.type === "machine",
+          );
     case "network":
       return subgraph(g, ["isp", "router", "switch", "device", "machine"], ["link"], (n) => !n.external);
     case "request":

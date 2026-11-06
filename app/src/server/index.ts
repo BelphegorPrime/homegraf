@@ -28,7 +28,12 @@ const certificates = certificateSource({ domains: async () => (await loadGraph()
 const create = { problem: createProblem(cfg.create, cfg.komodo), applier: applier({ cfg }) };
 const store = userStore(`${cfg.dataDir}/users.json`, undefined, cfg.admin);
 if (store.problem) console.error(`users: ${store.problem}`);
-const users = { enabled: !!cfg.create.password, authenticate: authenticator({ adminPassword: cfg.create.password, admin: cfg.admin, users: store }), store, admin: cfg.admin };
+const users = {
+  enabled: !!cfg.create.password,
+  authenticate: authenticator({ adminPassword: cfg.create.password, admin: cfg.admin, users: store }),
+  store,
+  admin: cfg.admin,
+};
 const pullState = pullStateReader(cfg);
 const sso = { oidc: cfg.oidc ? createOidc({ cfg: cfg.oidc, users: store, admin: cfg.admin }) : undefined, problem: cfg.oidcProblem };
 if (sso.problem) console.error(`sso: ${sso.problem}`);
@@ -36,16 +41,45 @@ const removal = { apps: removableCatalog(cfg.repoDir), store: removalStore(`${cf
 if (removal.store.problem) console.error(`removals: ${removal.store.problem}`);
 const creationsStore = creationStore(`${cfg.dataDir}/creations.json`);
 if (creationsStore.problem) console.error(`creations: ${creationsStore.problem}`);
-const creations = { store: creationsStore, tracker: creationTracker({ store: creationsStore, pullState, stackState: stackStateReader(cfg), probe: tlsProbe({ timeoutMs: 4000 }) }) };
+const creations = {
+  store: creationsStore,
+  tracker: creationTracker({ store: creationsStore, pullState, stackState: stackStateReader(cfg), probe: tlsProbe({ timeoutMs: 4000 }) }),
+};
 const hosts = { list: hostCatalog(cfg.repoDir), rootCa: rootCaSource(cfg.repoDir) };
 const stacks = {
   list: stackCatalog(cfg.repoDir),
   secretTool: secretTool(cfg.repoDir, {
-    INFISICAL_URL: cfg.create.infisical?.url ?? "", INFISICAL_BOOTSTRAP_CLIENT_ID: cfg.create.infisical?.clientId ?? "",
+    INFISICAL_URL: cfg.create.infisical?.url ?? "",
+    INFISICAL_BOOTSTRAP_CLIENT_ID: cfg.create.infisical?.clientId ?? "",
     INFISICAL_BOOTSTRAP_CLIENT_SECRET: cfg.create.infisical?.clientSecret ?? "",
   }),
 };
 
-serve({ fetch: createApp({ loadGraph, status, webDir: cfg.webDir, plan: planner(cfg.repoDir), preview: previewer(cfg.repoDir), addons: addonCatalog(cfg.repoDir), templates: templateCatalog(cfg.repoDir), unifi: unifi.status, certificates, create, users, removal, creations, hosts, stacks, sso }).fetch, port: cfg.port }, (info) => {
-  console.log(`homegraf listening on :${info.port} (repo ${cfg.repoDir}, status ${cfg.komodo ? "komodo" : "disabled"}, create ${createProblem(cfg.create, cfg.komodo) ?? "enabled"}, users ${users.enabled ? `${store.list().length} + ${cfg.admin}` : "off"}, sso ${cfg.oidc ? cfg.oidc.label : "off"}, unifi ${cfg.unifi ? "on" : "off"})`);
-});
+serve(
+  {
+    fetch: createApp({
+      loadGraph,
+      status,
+      webDir: cfg.webDir,
+      plan: planner(cfg.repoDir),
+      preview: previewer(cfg.repoDir),
+      addons: addonCatalog(cfg.repoDir),
+      templates: templateCatalog(cfg.repoDir),
+      unifi: unifi.status,
+      certificates,
+      create,
+      users,
+      removal,
+      creations,
+      hosts,
+      stacks,
+      sso,
+    }).fetch,
+    port: cfg.port,
+  },
+  (info) => {
+    console.log(
+      `homegraf listening on :${info.port} (repo ${cfg.repoDir}, status ${cfg.komodo ? "komodo" : "disabled"}, create ${createProblem(cfg.create, cfg.komodo) ?? "enabled"}, users ${users.enabled ? `${store.list().length} + ${cfg.admin}` : "off"}, sso ${cfg.oidc ? cfg.oidc.label : "off"}, unifi ${cfg.unifi ? "on" : "off"})`,
+    );
+  },
+);

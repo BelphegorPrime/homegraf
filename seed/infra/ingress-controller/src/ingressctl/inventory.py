@@ -66,11 +66,47 @@ def _load(path: pathlib.Path) -> dict:
     return yaml.safe_load(path.read_text()) or {}
 
 
+COMPOSE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+
+
+def derive_stacks(root: pathlib.Path, namespaces: dict[str, dict], known: dict[str, dict]) -> dict[str, dict]:
+    """Stacks that exist only as a folder: stacks/<id>/ with a compose file and an ingress.yaml.
+
+    Nothing is written to inventory/stacks.yaml; an entry there always wins. The server is the upstream server
+    of the manifest's first service, the namespace comes from inventory/namespaces.yaml by path. A folder whose
+    manifest is unreadable or has no upstream server is skipped here; manifest validation then reports it.
+    """
+    derived: dict[str, dict] = {}
+    taken_paths = {(s.get("path") or "").rstrip("/") for s in known.values()}
+    for ns, cfg in namespaces.items():
+        for prefix in (cfg or {}).get("paths") or []:
+            base = root / prefix
+            if not base.is_dir():
+                continue
+            for manifest in sorted(base.rglob("ingress.yaml")):
+                folder = manifest.parent
+                rel = folder.relative_to(root).as_posix()
+                files = [n for n in COMPOSE_NAMES if (folder / n).is_file()]
+                if not files or rel in taken_paths or folder.name in known or folder.name in derived:
+                    continue
+                try:
+                    services = (yaml.safe_load(manifest.read_text()) or {}).get("services") or []
+                    server = services[0]["proxy"]["upstream"]["server"]
+                except (OSError, yaml.YAMLError, LookupError, TypeError, AttributeError):
+                    continue
+                derived[folder.name] = {
+                    "id": folder.name, "namespace": ns, "path": rel, "compose_files": files,
+                    "komodo_stack": folder.name, "server": server, "status": "derived", "secrets": "infisical",
+                }
+    return derived
+
+
 def load_inventory(root: pathlib.Path) -> Inventory:
     inv = root / "inventory"
     stacks = {s["id"]: s for s in (_load(inv / "stacks.yaml").get("stacks") or [])}
     servers = _load(inv / "servers.yaml").get("servers") or {}
     namespaces = _load(inv / "namespaces.yaml").get("namespaces") or {}
+    stacks.update(derive_stacks(root, namespaces, stacks))
     ing = _load(inv / "ingress.yaml")
     npm = {
         name: NpmInstance(name=name, server=c.get("server"), api_url=c.get("api_url"),

@@ -1,7 +1,10 @@
+import textwrap
+
 import pytest
 
 from ingressctl.errors import ManifestError
-from ingressctl.manifest import normalize_domain
+from ingressctl.inventory import load_inventory
+from ingressctl.manifest import load_all, normalize_domain
 
 
 def test_domains_are_normalized(env):
@@ -118,3 +121,27 @@ def test_external_manifest_requires_external_stack(env):
     ns.write_text(ns.read_text().replace("paths: [stacks/nas/]", "paths: [stacks/nas/, external/]"))
     with pytest.raises(ManifestError, match="stack 'external'"):
         env.specs()
+
+
+def test_stack_without_inventory_entry_is_derived_from_its_folder(env):
+    repo = env.root
+    """A folder with compose.yaml and ingress.yaml needs no line in inventory/stacks.yaml."""
+    d = repo / "stacks/ai/newapp"
+    d.mkdir(parents=True)
+    (d / "compose.yaml").write_text("services: {a: {image: x}}\n")
+    (d / "ingress.yaml").write_text(textwrap.dedent("""
+        apiVersion: homelab.ingress/v1
+        namespace: ai-sandbox
+        services:
+          - id: newapp
+            stack: newapp
+            lifecycle: present
+            proxy:
+              domains: [newapp.lab.example]
+              upstream: {scheme: http, server: worker, port: 8080}
+            certificate: {issuer_ref: homelab-private-ca, validity_days: 90, renew_before_days: 30}
+            healthcheck: {path: /, accepted_statuses: [200]}
+    """))
+    inv = load_inventory(repo)
+    assert inv.stacks["newapp"]["server"] == "worker" and inv.stacks["newapp"]["path"] == "stacks/ai/newapp"
+    assert "newapp" in {s.stack_id for s in load_all(repo, inv)}

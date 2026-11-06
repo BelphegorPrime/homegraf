@@ -46,6 +46,14 @@ class HttpTests(unittest.TestCase):
 
 
 class StateTests(unittest.TestCase):
+    def test_two_processes_do_not_overwrite_each_others_keys(self):
+        d = tempfile.mkdtemp()
+        first, second = State(f"{d}/state.json"), State(f"{d}/state.json")      # both loaded before either wrote
+        first.set("infisical", "client_id", "c1")
+        second.set("provisioner", "identity_id", "i1")                          # a stale copy of the file in memory
+        self.assertEqual(State(f"{d}/state.json").data, {"infisical": {"client_id": "c1"}, "provisioner": {"identity_id": "i1"}})
+        self.assertEqual(first.get("provisioner", "identity_id"), "i1")         # and a read sees what the other wrote
+
     def test_state_survives_a_restart_and_is_private(self):
         d = tempfile.mkdtemp()
         s = State(f"{d}/sub/state.json")

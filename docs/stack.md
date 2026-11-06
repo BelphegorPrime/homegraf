@@ -46,11 +46,25 @@ databases and services start ──► forgejo-admin (creates the Forgejo admini
 | Nginx Proxy Manager | the administrator (NPM 2.16 has **no default user**: the first one is created through its setup call); a proxy host for `git`, `komodo`, `secrets`, `proxy` and `homegraf` under `<name>.<domain>`, plain HTTP, WebSockets on | the names work as soon as they reach this host |
 | Infisical | bootstraps the instance (administrator and organisation `homegraf`); a machine identity `homegraf` with the organisation role Admin and Universal Auth | homegraf and the tools can keep stack secrets; they create the projects (`stacks-<server>`) and folders themselves when the first app needs them |
 | Certificates (the service `certificates`, which runs last: ingressctl checks every upstream, and homegraf starts after the bootstrap) | in Infisical's Certificate Manager: a project `homegraf-ca`, an internal **root CA** (ten years), a policy that allows only `*.<domain>`, a profile, an application with API enrollment and the machine identity `ingressctl` (no rights in the organisation, `operator` in the application); in Nginx Proxy Manager the technical user `ingressctl@<domain>` (no administrator, no 2FA); in Komodo the stack `ingressctl` (built from `infra/ingress-controller` of your repository, joined to this stack's network) and the procedure `ingress-apply`, which is the last stage of `update-all`; in your repository the ids in `inventory/ingress.yaml`, the root certificate `inventory/homegraf-root-ca.pem` and `external/ingress.yaml` (the five services of this stack); the proxy hosts of the bootstrap are **adopted** by `ingressctl`, which then gives each a certificate | every proxy host serves a certificate of your own CA, renewed before it expires; every new app gets one with its merge |
+| New apps (the same `certificates` service, after the certificate part) | in Infisical the project `stacks-<server>` for the host this stack runs on, the identity `stacks-<server>` that reads it at deploy time (`viewer`) and the machine identity `stack-provisioner` (no organisation rights, `member` of the `stacks-*` projects); in Komodo the variables the compose wrapper is filled from (`INFISICAL_API_URL`, `INFISICAL_PROJECT_ID_<SERVER>`, `INFISICAL_CLIENT_ID_<SERVER>`, `INFISICAL_CLIENT_SECRET_<SERVER>`), an API key `stack-provisioner` of its own, and the stage *Reconcile* of `update-all` (right after the pull); in your repository `infra/secrets/provisioner.env` with the credentials of both | a folder `stacks/<id>/` with a `compose.yaml` and an `ingress.yaml` sets itself up on push, see *A new app is a folder* |
 | AdGuard Home (`DNS_MODE=adguard`) | the first-run setup and the wildcard rewrite `*.<domain>` -> this host | the LAN resolves every current and future name |
 | homegraf | gets the Komodo key and secret, the Forgejo token and clone URL and the Infisical identity in a file on the `bootstrap-state` volume (`/state/homegraf.env`, mode 0600) that it reads at start (`HOMEGRAF_ENV_FILE`; the environment wins over the file) | the write actions are on and the map has live status, **without you typing a token anywhere** |
 
 `docker compose logs certificates` shows the certificate part; a failure there is a warning, not an error (the hosts stay on plain HTTP, nothing is stopped), and
 `docker compose up -d certificates` runs it again.
+
+### A new app is a folder
+
+Push `stacks/<id>/compose.yaml` and `stacks/<id>/ingress.yaml` to `main` and nothing else: no inventory entry, no wizard. The stack is derived from the folder
+(id, path, namespace, compose files, and the server from `proxy.upstream.server` of the manifest; an entry in `inventory/stacks.yaml` would win). The
+stage *Reconcile* of `update-all` runs `infra/komodo/reconcile_stacks.py` (also `./homelab.py reconcile`, a dry run without `--yes`) and, for each such
+stack, only what is missing: its `${VAR}` secrets generated in Infisical, the Komodo stack with the Infisical wrapper, a first deploy (and a deploy on
+every push for a stack that builds its own image). The last stage of `update-all`, `ingress-apply`, then gives it a proxy host and a certificate.
+
+A host added later with `add-host.sh` gets its own `stacks-<server>` project the same way, and `INFISICAL_API_URL` becomes the address of this host
+(`http://<HOST_IP>:<PORT_INFISICAL>`), because the compose wrapper runs on that host, where the name `infisical` does not resolve. For the same reason
+`BIND_ADDRESS` must not be `127.0.0.1` once there is more than one host. If the first push of an app on a new host says that the Infisical project does
+not exist or the provisioner is not a member, run the certificates step again: `docker compose run --rm certificates`.
 
 The bootstrap is a Python program with only the standard library (`bootstrap/`), run as an unprivileged user without the Docker socket, and **safe to run again**:
 every step first looks at the real system and only does what is missing (tokens whose value was lost are replaced, resources that exist are left

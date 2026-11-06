@@ -1,6 +1,7 @@
 """What the bootstrap has done and the credentials it created, in one JSON file (mode 0600) on a volume."""
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import pathlib
@@ -8,17 +9,29 @@ import tempfile
 
 
 class State:
+    """Several bootstrap processes can run at once (the certificates step while an add-host runs), each with its own State on the same
+    file: every write takes a lock, re-reads the file and adds only its own key, and every read looks at the file, so one process
+    never overwrites what another wrote."""
+
     def __init__(self, path: str | os.PathLike):
         self.path = pathlib.Path(path)
-        self.data: dict = json.loads(self.path.read_text()) if self.path.is_file() else {}
+        self.data: dict = self._read()
+
+    def _read(self) -> dict:
+        return json.loads(self.path.read_text()) if self.path.is_file() else {}
 
     def get(self, section: str, key: str | None = None, default=None):
+        self.data = self._read()
         value = self.data.get(section, {})
         return value if key is None else value.get(key, default)
 
     def set(self, section: str, key: str, value) -> None:
-        self.data.setdefault(section, {})[key] = value
-        self.save()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path.parent / (self.path.name + ".lock"), "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self.data = self._read()
+            self.data.setdefault(section, {})[key] = value
+            self.save()
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -192,6 +192,9 @@ class Komodo:
     def reconcile_in_update_all(self) -> None:
         """update-all gets a stage right after the pull that sets up the stacks which are only a folder with an ingress.yaml
         (the service reconcile of the stack ingressctl, before the stage that deploys what changed), unless it has one."""
+        if not any(s["name"] == INGRESS_STACK for s in self.call("read", "ListStacks")):
+            log(STEP, f"stack {INGRESS_STACK} does not exist yet: the reconcile stage of {PROCEDURE} waits for it")
+            return
         current = self.call("read", "GetProcedure", {"procedure": PROCEDURE})
         stages = current["config"]["stages"]
         if any(e["execution"].get("type") == "RunStackService" and e["execution"]["params"].get("service") == "reconcile"

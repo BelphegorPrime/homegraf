@@ -47,7 +47,8 @@ class HostsTests(unittest.TestCase):
                                           "repo": "owner/infrastructure", "branch": "main"})
         self.assertEqual(repo["info"]["latest_hash"], "25de55c")
         pull = self.komodo_fake.procedures["update-all"]["stages"][0]
-        self.assertEqual([e["execution"]["params"]["repo"] for e in pull["executions"]], ["infrastructure", "infrastructure-worker-1"])
+        self.assertEqual([e["execution"]["params"]["repo"] for e in pull["executions"]],
+                         ["infrastructure", repo["id"]])       # Komodo keeps the repository by its id once the procedure is saved
         self.assertEqual(self.servers_file(), SERVERS + '  "worker-1": { address: "10.0.0.12", status: verified }\n')
         self.assertEqual(self.forgejo_fake.puts, [("inventory/servers.yaml", "Add the host worker-1", "main")])
 

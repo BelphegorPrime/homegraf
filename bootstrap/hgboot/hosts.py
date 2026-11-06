@@ -134,7 +134,9 @@ class Hosts:
         pull = next((s for s in stages if s["name"] == "Pull"), None)
         if pull is None:
             raise StepError(f"the procedure {PROCEDURE} has no stage 'Pull' (it was changed): add a PullRepo of {repo} to it in Komodo")
-        if any(e["execution"].get("type") == "PullRepo" and e["execution"]["params"].get("repo") == repo for e in pull["executions"]):
+        # Komodo keeps the repository by its id once the procedure is saved, so the repository is known by its name and its id
+        known = {repo} | {r["id"] for r in k.call("read", "ListRepos") if r["name"] == repo}
+        if any(e["execution"].get("type") == "PullRepo" and e["execution"]["params"].get("repo") in known for e in pull["executions"]):
             log(STEP, f"procedure {PROCEDURE}: already pulls {repo}")
             return
         pull["executions"].append({"execution": {"type": "PullRepo", "params": {"repo": repo}}, "enabled": True})

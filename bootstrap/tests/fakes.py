@@ -271,6 +271,12 @@ class FakeKomodo:
         if p == "/read/GetProcedure":
             return 200, {"_id": {"$oid": "proc-" + body["procedure"]}, "config": self.procedures[body["procedure"]]}
         if p == "/write/UpdateProcedure":
+            by_name = {n: r["id"] for n, r in self.repos.items()}
+            for stage in body["config"].get("stages", []):         # Komodo stores a repository by its id once the procedure is saved
+                for e in stage.get("executions", []):
+                    params = e["execution"].get("params", {})
+                    if e["execution"].get("type") == "PullRepo" and params.get("repo") in by_name:
+                        params["repo"] = by_name[params["repo"]]
             self.procedures[body["id"].removeprefix("proc-")].update(body["config"])
             return 200, {}
         if p == "/read/ListVariables":
@@ -370,6 +376,7 @@ class FakeInfisical:
         self.initialized, self.identities, self.secrets, self.admin_password = initialized, {}, {}, None
         self.projects, self.cas, self.policies, self.profiles, self.apps = [], [], [], [], []
         self.project_members, self.app_members, self.api_enrolled = [], [], set()
+        self.member_pairs: list[tuple[str, str]] = []      # (project id, identity id)
         self.active_project = None
         self.token = jwt(orgId="org1")
         self.n = 0
@@ -423,9 +430,11 @@ class FakeInfisical:
             self.projects.append({"id": self.uid("proj"), "slug": body["slug"], "type": body["type"]})
             return 200, {"project": self.projects[-1]}
         if p.startswith("/api/v1/projects/") and "/identity-memberships" in p:
+            project = p.split("/")[4]
             if m == "GET":
-                return 200, {"identityMemberships": [{"identity": {"id": i}} for i in self.project_members]}
+                return 200, {"identityMemberships": [{"identity": {"id": i}} for pr, i in self.member_pairs if pr == project]}
             self.project_members.append(p.rsplit("/", 1)[1])
+            self.member_pairs.append((project, p.rsplit("/", 1)[1]))
             return 200, {}
         if p == "/api/v1/cert-manager/instance/active-project":
             self.active_project = body["projectId"]

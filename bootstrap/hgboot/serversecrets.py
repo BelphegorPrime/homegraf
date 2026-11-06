@@ -53,13 +53,18 @@ class ServerSecrets:
             self.komodo.call("write", "UpdateVariableValue", {"name": name, "value": value})
         existing[name] = value
 
-    def run(self, server: str) -> None:
+    def run(self, server: str, *, remote: bool = False) -> None:
+        """remote: the server is another host. The compose wrapper runs there, where the name `infisical` does not resolve, so the one
+        Komodo variable INFISICAL_API_URL becomes the address of the host of this stack, which every host reaches (the first host
+        reaches its own published port as well)."""
         self.token = self.login(self.state.get("infisical", "client_id"), self.state.get("infisical", "client_secret"))
         if not self.token:
             raise StepError("the machine identity homegraf cannot sign in to Infisical any more: the secrets of the server are set up with it")
         slug, sfx = project_slug(server), var_suffix(server)
         done = self.state.get(STEP, server)
         variables = {v["name"]: v["value"] for v in self.komodo.call("read", "ListVariables") or []}
+        if remote:
+            self.set_variable(variables, "INFISICAL_API_URL", f"http://{self.cfg.host_ip}:{self.cfg.ports['INFISICAL']}", False)
         if done and all(f"{n}_{sfx}" in variables for n in ("INFISICAL_PROJECT_ID", "INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET")):
             log(STEP, f"server {server}: secrets are already set up ({slug})")
             return
@@ -67,7 +72,8 @@ class ServerSecrets:
         if project is None:
             project = self.call("POST", "/api/v1/projects", {"projectName": slug, "slug": slug, "type": "secret-manager"})["project"]["id"]
             log(STEP, f"project {slug}: created")
-        self.set_variable(variables, "INFISICAL_API_URL", self.cfg.infisical_url, False)
+        if "INFISICAL_API_URL" not in variables:
+            self.set_variable(variables, "INFISICAL_API_URL", self.cfg.infisical_url, False)
         self.set_variable(variables, f"INFISICAL_PROJECT_ID_{sfx}", project, False)
 
         iid = self.state.get(STEP, f"identity_{server}")
@@ -92,5 +98,9 @@ class ServerSecrets:
         members = self.call("GET", f"/api/v1/projects/{project}/identity-memberships").get("identityMemberships", [])
         if not any((m.get("identity") or {}).get("id") == iid for m in members):
             self.call("POST", f"/api/v1/projects/{project}/identity-memberships/{iid}", {"role": ROLE})
+        prov = self.state.get("provisioner", "identity_id")      # a host added after the certificates step: the provisioner joins here
+        if prov and not any((m.get("identity") or {}).get("id") == prov for m in members):
+            self.call("POST", f"/api/v1/projects/{project}/identity-memberships/{prov}", {"role": "member"})
+            log(STEP, f"project {slug}: stack-provisioner is a member")
         self.state.set(STEP, server, True)
         log(STEP, f"server {server}: project {slug}, identity {slug} ({ROLE}) and the Komodo variables for the compose wrapper are set up")

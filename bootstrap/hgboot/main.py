@@ -35,11 +35,17 @@ def certificates(env=os.environ) -> int:
         forgejo.wait(lambda: forgejo.http("GET", cfg.forgejo_url + "/api/healthz").ok, "Forgejo", timeout=60)
         komodo.connect()
         npm.connect()
-        Ingress(cfg, state, forgejo, komodo, npm).run()
+        problem = None
+        try:
+            Ingress(cfg, state, forgejo, komodo, npm).run()
+        except (StepError, Unreachable, TimeoutError, ValueError, OSError) as e:
+            problem = e     # e.g. an app of yours answers nothing yet: that must not keep new apps from setting themselves up
         ServerSecrets(cfg, state, komodo).run(komodo.server_name)   # before the provisioner joins the projects
         komodo.ensure_provisioner_key()
         Provisioner(cfg, state, forgejo).run()
         komodo.reconcile_in_update_all()
+        if problem is not None:
+            raise problem
     except (StepError, Unreachable, TimeoutError, ValueError, OSError) as e:
         warn("ingress", f"certificates are not set up: {e}\n  The proxy hosts work over plain HTTP. Fix the cause and run it again: docker compose up -d certificates")
         print(handoff.certificates_summary(cfg, False), flush=True)
@@ -109,6 +115,7 @@ def add_host_cmd(argv: list[str], env=os.environ) -> int:
     forgejo, komodo = Forgejo(cfg, state), Komodo(cfg, state)
     try:
         Hosts(cfg, state, komodo, forgejo, wait=komodo.wait).add(name, address)
+        ServerSecrets(cfg, state, komodo).run(name, remote=True)        # its first stack can keep secrets, and sets itself up on push
     except (StepError, Unreachable, TimeoutError, ValueError) as e:
         print(f"\nerror: {e}\nNothing that is done is undone: fix the cause and run it again.", file=sys.stderr)
         return 1

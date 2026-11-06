@@ -240,3 +240,39 @@ class ServerSecretsTests(unittest.TestCase):
         before = (len(s.infisical.projects), len(s.infisical.identities), dict(s.komodo.variables))
         s.certificates()
         self.assertEqual((len(s.infisical.projects), len(s.infisical.identities), dict(s.komodo.variables)), before)
+
+    def test_a_host_added_later_gets_its_own_project_and_the_provisioner_joins_it(self):
+        from hgboot.config import Config
+        from hgboot.komodo import Komodo
+        from hgboot.serversecrets import ServerSecrets
+        from hgboot.state import State
+        from .helpers import no_wait
+        s = Stack()
+        self.addCleanup(s.close)
+        s.run()
+        s.certificates()
+        cfg = Config.from_env(s.env)
+        state = State(f"{cfg.state_dir}/state.json")
+        komodo = Komodo(cfg, state, wait=no_wait, sleep=lambda x: None)
+        komodo.login()
+        members_before = len(s.infisical.project_members)
+        ServerSecrets(cfg, state, komodo).run("worker-1", remote=True)
+        self.assertEqual(sorted(p["slug"] for p in s.infisical.projects if p["type"] == "secret-manager"), ["stacks-local", "stacks-worker-1"])
+        self.assertTrue({"INFISICAL_PROJECT_ID_WORKER_1", "INFISICAL_CLIENT_ID_WORKER_1", "INFISICAL_CLIENT_SECRET_WORKER_1"} <= set(s.komodo.variables))
+        self.assertEqual(len(s.infisical.project_members) - members_before, 2)     # the viewer and the provisioner
+        # the wrapper runs on the other host, where the name `infisical` does not resolve: the address of this host instead
+        self.assertEqual(s.komodo.variables["INFISICAL_API_URL"]["value"], f"http://{cfg.host_ip}:{cfg.ports['INFISICAL']}")
+        ServerSecrets(cfg, state, komodo).run("worker-1", remote=True)             # again: nothing more
+        self.assertEqual(len(s.infisical.project_members) - members_before, 2)
+
+    def test_an_app_that_answers_nothing_does_not_keep_the_provisioner_from_being_set_up(self):
+        s = Stack()
+        self.addCleanup(s.close)
+        s.run()
+        s.komodo.ingress_ok = False          # ingressctl apply reports an error (e.g. an app of the user is down)
+        code, out, err = s.certificates()
+        self.assertEqual(code, 0)
+        self.assertIn("certificates are not set up", err)                   # still said
+        self.assertIn("stack-provisioner", [i["name"] for i in s.infisical.identities.values()])
+        self.assertIn("infra/secrets/provisioner.env", s.forgejo.repos["owner/infrastructure"]["files"])
+        self.assertIn("Reconcile", [st["name"] for st in s.komodo.procedures["update-all"]["stages"]])

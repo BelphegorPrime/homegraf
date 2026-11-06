@@ -71,9 +71,12 @@ class Provisioner:
             log(STEP, f"identity {NAME}: already there")
             return cid, csec
         iid = self.state.get(STEP, "identity_id")
+        if not iid:      # the state may have been lost (two bootstrap runs at once): the identity of that name is the one
+            iid = next((m["identity"]["id"] for m in self.call("GET", "/api/v1/identities?orgId=" + org_id_of(self.token)).get("identities", [])
+                        if m["identity"]["name"] == NAME), None)
         if not iid:
             iid = self.call("POST", "/api/v1/identities", {"name": NAME, "organizationId": org_id_of(self.token), "role": "no-access"})["identity"]["id"]
-            self.state.set(STEP, "identity_id", iid)
+        self.state.set(STEP, "identity_id", iid)
         ua = f"/api/v1/auth/universal-auth/identities/{iid}"
         r = self.http("GET", self.cfg.infisical_url + ua, headers={"Authorization": f"Bearer {self.token}"})
         if r.ok:

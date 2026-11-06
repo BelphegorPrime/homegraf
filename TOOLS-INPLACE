@@ -13,4 +13,5 @@ infra/komodo/rebuild.py
 infra/komodo/run_ingressctl.py
 infra/komodo/reconcile_stacks.py
 infra/homelab/settings.py
+infra/homelab/stacklist.py
 infra/homelab/ui.py

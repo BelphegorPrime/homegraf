@@ -16,11 +16,12 @@ ROOT = pathlib.Path(os.environ.get("HOMELAB_ROOT") or CODE)             # the re
 for _p in ("infra/homelab", "infra/komodo"):
     sys.path.insert(0, str(CODE / _p))
 import settings  # noqa: E402
+import stacklist  # noqa: E402
 import ui  # noqa: E402
 
 
 def inventory() -> dict:
-    return {s["id"]: s for s in yaml.safe_load((ROOT / "inventory/stacks.yaml").read_text()).get("stacks") or []}
+    return {s["id"]: s for s in stacklist.load(ROOT)}
 
 
 def is_platform(app_id: str) -> bool:

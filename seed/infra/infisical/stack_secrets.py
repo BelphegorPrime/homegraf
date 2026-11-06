@@ -243,7 +243,9 @@ def main() -> int:
             raise SystemExit(f"--import expects STACK=ENVFILE, not {item!r}")
         imports[sid] = parse_env_file((ROOT / path).read_text())
 
-    stacks = secret_stacks(yaml.safe_load((ROOT / "inventory/stacks.yaml").read_text()).get("stacks") or [])
+    sys.path.insert(0, str(CODE / "infra/homelab"))
+    import stacklist  # noqa: E402
+    stacks = secret_stacks(stacklist.load(ROOT))
     if not stacks:
         print("no stack with `secrets: infisical` in inventory/stacks.yaml")
         return 0

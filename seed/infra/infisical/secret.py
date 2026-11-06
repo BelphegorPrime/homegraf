@@ -36,6 +36,7 @@ sys.path.insert(0, str(HERE))
 import stack_secrets as ss  # noqa: E402
 
 sys.path.insert(0, str(CODE / "infra/homelab"))
+import stacklist  # noqa: E402
 import ui  # noqa: E402
 
 KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -48,14 +49,14 @@ def default_url() -> str:
 
 
 def secret_stacks() -> list[dict]:
-    return ss.secret_stacks(yaml.safe_load((ROOT / "inventory/stacks.yaml").read_text()).get("stacks") or [])
+    return ss.secret_stacks(stacklist.load(ROOT))
 
 
 def find_stack(stack_id: str) -> dict:
-    stacks = {s["id"]: s for s in yaml.safe_load((ROOT / "inventory/stacks.yaml").read_text()).get("stacks") or []}
+    stacks = {s["id"]: s for s in stacklist.load(ROOT)}
     s = stacks.get(stack_id)
     if s is None:
-        raise SystemExit(f"stack {stack_id!r} is not in inventory/stacks.yaml")
+        raise SystemExit(f"stack {stack_id!r} is not in inventory/stacks.yaml and has no folder with compose.yaml and ingress.yaml")
     if s.get("secrets") != "infisical":
         raise SystemExit(f"stack {stack_id} has no `secrets: infisical`; set it up first (docs/plans/05-infisical-stack-secrets.md)")
     return s

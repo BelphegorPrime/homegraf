@@ -96,7 +96,8 @@ def main() -> int:
     ap.add_argument("--repos-dir", help="<periphery-root>/data/komodo/repos, if no stack exists on that server yet")
     args = ap.parse_args()
 
-    inv = {s["id"]: s for s in yaml.safe_load((ROOT / "inventory/stacks.yaml").read_text()).get("stacks") or []}
+    import stacklist  # noqa: E402
+    inv = {s["id"]: s for s in stacklist.load(ROOT)}
     entry = inv.get(args.stack_id) or sys.exit(f"{args.stack_id} is not in inventory/stacks.yaml")
     config = stack_config(entry, args.repos_dir)
     print(f"stack {entry['komodo_stack']} on {entry['server']}:")

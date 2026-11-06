@@ -25,6 +25,9 @@ import sys
 
 import yaml
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "homelab"))
+import stacklist  # noqa: E402
+
 # The platform services around the stacks (proxy, deployer, forge, secrets, certificate authority, ...) are what this installation
 # says they are: inventory/homegraf.yaml `platform:` (id -> label, the stack that runs it, kind). Without them the map just has none;
 # the ids npm, komodo, infisical and ca get the usual edges (domain -> proxy, stack -> deployer, stack -> secrets) when present.
@@ -129,7 +132,7 @@ class Builder:
     def load(self) -> None:
         inv = self.root / "inventory"
         self.servers = _read(inv / "servers.yaml").get("servers") or {}
-        self.stacks = [s for s in _read(inv / "stacks.yaml").get("stacks") or [] if s.get("status") != "inactive"]
+        self.stacks = [s for s in stacklist.load(self.root) if s.get("status") != "inactive"]
         core = _read(inv / "core-services.yaml") if (inv / "core-services.yaml").exists() else {}
         self.file_server = {t["file"]: t["server"] for t in core.get("targets") or []}
         self.network = _read(inv / "network.yaml") if (inv / "network.yaml").exists() else {}

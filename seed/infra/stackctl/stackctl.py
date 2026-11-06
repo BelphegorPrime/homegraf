@@ -21,10 +21,13 @@ import sys
 
 import yaml
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "homelab"))
+import stacklist  # noqa: E402
+
 STACK_KEYS = {"id", "namespace", "path", "compose_files", "legacy", "komodo_stack", "server", "project_name",
               "status", "extra_files", "notes", "secrets", "job"}
 STACK_REQUIRED = {"id", "namespace", "path", "compose_files", "status"}
-STATUSES = {"unverified", "verified", "inactive", "unmanaged"}  # unmanaged: nicht über Komodo ausgerollt
+STATUSES = {"unverified", "verified", "inactive", "unmanaged", "derived"}  # unmanaged: nicht über Komodo ausgerollt; derived: nur als Ordner mit compose.yaml + ingress.yaml
 SECRET_SOURCES = {"infisical"}  # infra/infisical/stack_secrets.py
 INGRESS_FILE = "ingress.yaml"
 INGRESS_GLOBAL = ("inventory/ingress.yaml", "inventory/namespaces.yaml")
@@ -87,6 +90,8 @@ class Inventory:
         self.root = root
         self.commit = commit
         self.stacks = load_yaml_text(read_at(root, commit, "inventory/stacks.yaml"), {}).get("stacks") or []
+        if commit is None:   # Ordner mit compose.yaml + ingress.yaml ohne Eintrag (im Arbeitsverzeichnis; ein Commit-Stand kennt sie nicht)
+            self.stacks = self.stacks + stacklist.derived(root, self.stacks)
         self.servers = load_yaml_text(read_at(root, commit, "inventory/servers.yaml"), {}).get("servers") or {}
         self.namespaces = load_yaml_text(read_at(root, commit, "inventory/namespaces.yaml"), {}).get("namespaces") or {}
         self.paths = load_yaml_text(read_at(root, commit, "inventory/paths.yaml"), {})

@@ -33,6 +33,7 @@ class Komodo:
         self.cfg, self.state, self.http, self.wait, self.sleep = cfg, state, http, wait, sleep
         self.jwt = ""
         self.server_id = ""
+        self.server_name = ""
         self.git_domain = urlparse(cfg.forgejo_url).netloc          # forgejo:3000, as the agent reaches it
 
     # -- calls ---------------------------------------------------------------------------------------------------------
@@ -113,7 +114,7 @@ class Komodo:
             raise StepError(f"{e}: check docker compose logs komodo-periphery") from None
         s = self.call("read", "ListServers")[0]
         log(STEP, f"server {s['name']}: Ok")
-        self.server_id = s["id"]
+        self.server_id, self.server_name = s["id"], s["name"]
         return s["id"], s["name"]
 
     def ensure_git_account(self, token: str, domain: str | None = None) -> None:

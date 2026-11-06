@@ -189,6 +189,7 @@ class FakeKomodo:
         self.procedures: dict[str, dict] = {"Backup Core Database": {}}
         self.updates: dict[str, dict] = {}
         self.stacks: dict[str, dict] = {}
+        self.variables: dict[str, dict] = {}
         self.servers: dict[str, dict] = {}                 # other hosts: name -> {id, config, state}
         self.new_server_state = "Ok"
         self.ingress_calls: list[list[str]] = []
@@ -271,6 +272,14 @@ class FakeKomodo:
             return 200, {"_id": {"$oid": "proc-" + body["procedure"]}, "config": self.procedures[body["procedure"]]}
         if p == "/write/UpdateProcedure":
             self.procedures[body["id"].removeprefix("proc-")].update(body["config"])
+            return 200, {}
+        if p == "/read/ListVariables":
+            return 200, [{"name": n, "value": v["value"], "is_secret": v["is_secret"]} for n, v in self.variables.items()]
+        if p == "/write/CreateVariable":
+            self.variables[body["name"]] = {"value": body["value"], "is_secret": body.get("is_secret", False)}
+            return 200, {}
+        if p == "/write/UpdateVariableValue":
+            self.variables[body["name"]]["value"] = body["value"]
             return 200, {}
         if p == "/read/ListStacks":
             return 200, [{"name": n} for n in self.stacks]
@@ -389,6 +398,8 @@ class FakeInfisical:
 
     def api(self, req, p, body):
         m = req.method
+        if p == "/api/v1/identities" and m == "GET":
+            return 200, {"identities": [{"identity": {"id": i, "name": v["name"]}} for i, v in self.identities.items()]}
         if p == "/api/v1/identities":
             iid = f"id{len(self.identities) + 1}"
             self.identities[iid] = body

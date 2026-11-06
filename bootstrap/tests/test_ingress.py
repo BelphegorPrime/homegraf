@@ -59,7 +59,7 @@ class StackTests(unittest.TestCase):
         code, out, err = s.certificates()
         self.assertEqual(code, 0, err)
         i = s.infisical
-        self.assertEqual([p["type"] for p in i.projects], ["cert-manager"])
+        self.assertEqual([p["type"] for p in i.projects], ["cert-manager", "secret-manager"])   # the CA, and stacks-<server> for the secrets
         self.assertEqual(i.active_project, i.projects[0]["id"])        # applications refuse to work before the project is active
         self.assertEqual([c["name"] for c in i.cas], ["homegraf-root-ca"])
         self.assertEqual([p["name"] for p in i.policies], ["ingressctl"])
@@ -155,7 +155,7 @@ class StackTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("every proxy host of the stack has one from your own CA", out)
         self.assertEqual(len(s.infisical.cas), 1)       # nothing is created twice
-        self.assertEqual(len(s.infisical.identities), 3)   # homegraf, ingressctl, stack-provisioner: each once
+        self.assertEqual(len(s.infisical.identities), 4)   # homegraf, ingressctl, stacks-local (viewer), stack-provisioner: each once
         self.assertEqual(len(s.komodo.stacks), 1)
 
     def test_a_second_certificate_authority_that_is_not_ours_is_not_guessed(self):
@@ -212,9 +212,31 @@ class ProvisionerTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual((len(s.infisical.identities), len(s.komodo.keys), s.komodo.procedures["update-all"]["stages"]), before)
 
-    def test_projects_of_the_stacks_get_the_provisioner_as_member(self):
-        s = self.stack()
+
+
+class ServerSecretsTests(unittest.TestCase):
+    def test_the_server_can_keep_secrets_before_the_first_stack_is_pushed(self):
+        s = Stack()
+        self.addCleanup(s.close)
         s.run()
-        s.infisical.projects.append({"id": "proj-stacks", "slug": "stacks-local", "type": "secret-manager"})
+        code, out, err = s.certificates()
+        self.assertEqual(code, 0, err)
+        self.assertEqual([p["slug"] for p in s.infisical.projects if p["type"] == "secret-manager"], ["stacks-local"])
+        self.assertEqual({"INFISICAL_API_URL", "INFISICAL_PROJECT_ID_LOCAL", "INFISICAL_CLIENT_ID_LOCAL", "INFISICAL_CLIENT_SECRET_LOCAL"},
+                         set(s.komodo.variables))
+        self.assertTrue(s.komodo.variables["INFISICAL_CLIENT_SECRET_LOCAL"]["is_secret"])
+        viewer = next(i for i in s.infisical.identities.values() if i["name"] == "stacks-local")
+        self.assertEqual(viewer["role"], "no-access")
+        # the provisioner is a member of that project too, so the first push needs nothing by hand
+        project_id = next(p["id"] for p in s.infisical.projects if p["slug"] == "stacks-local")
+        self.assertGreaterEqual(len(s.infisical.project_members), 3)   # ingressctl (CA project), the viewer, the provisioner
+        self.assertTrue(project_id)
+
+    def test_a_second_run_creates_nothing_again(self):
+        s = Stack()
+        self.addCleanup(s.close)
+        s.run()
         s.certificates()
-        self.assertEqual(len(s.infisical.project_members), 2)   # the certificate project's ingressctl, and the provisioner here
+        before = (len(s.infisical.projects), len(s.infisical.identities), dict(s.komodo.variables))
+        s.certificates()
+        self.assertEqual((len(s.infisical.projects), len(s.infisical.identities), dict(s.komodo.variables)), before)

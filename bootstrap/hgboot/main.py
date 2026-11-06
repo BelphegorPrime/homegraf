@@ -15,6 +15,7 @@ from .ingress import Ingress
 from .komodo import Komodo
 from .npm import Npm
 from .provisioner import Provisioner
+from .serversecrets import ServerSecrets
 from .renovate import Renovate
 from .state import State, write_env_file
 from .steps import StepError, log, warn
@@ -35,6 +36,7 @@ def certificates(env=os.environ) -> int:
         komodo.connect()
         npm.connect()
         Ingress(cfg, state, forgejo, komodo, npm).run()
+        ServerSecrets(cfg, state, komodo).run(komodo.server_name)   # before the provisioner joins the projects
         komodo.ensure_provisioner_key()
         Provisioner(cfg, state, forgejo).run()
         komodo.reconcile_in_update_all()

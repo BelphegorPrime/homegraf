@@ -9,6 +9,7 @@ from .steps import StepError, log
 
 STEP = "komodo"
 KEY_NAME = "homegraf"
+PROVISIONER_KEY_NAME = "stack-provisioner"
 REPO_NAME = "infrastructure"
 PROCEDURE = "update-all"
 INGRESS_STACK = "ingressctl"            # builds from infra/ingress-controller and runs ingressctl once per call
@@ -81,19 +82,26 @@ class Komodo:
         log(STEP, f"administrator {self.cfg.admin_user}: signed in")
 
     def ensure_api_key(self) -> None:
-        key, secret = self.state.get(STEP, "api_key"), self.state.get(STEP, "api_secret")
+        self.ensure_key(KEY_NAME, "api_key", "api_secret")
+
+    def ensure_provisioner_key(self) -> None:
+        """A key of its own for the reconcile stage of update-all (infra/secrets/provisioner.env), so it can be revoked on its own."""
+        self.ensure_key(PROVISIONER_KEY_NAME, "provisioner_key", "provisioner_secret")
+
+    def ensure_key(self, name: str, key_field: str, secret_field: str) -> None:
+        key, secret = self.state.get(STEP, key_field), self.state.get(STEP, secret_field)
         if key and secret and self.http("POST", self.cfg.komodo_url + "/read/GetVersion", body={}, headers={"X-Api-Key": key, "X-Api-Secret": secret}).ok:
-            log(STEP, "API key for homegraf: already there")
+            log(STEP, f"API key {name}: already there")
             return
         for k in self.call("read", "ListApiKeys") or []:
-            if k.get("name") == KEY_NAME:
+            if k.get("name") == name:       # Komodo shows the secret once; the one of an interrupted run was never stored
                 self.http("POST", self.cfg.komodo_url + "/auth/manage/DeleteApiKey", body={"key": k["key"]}, headers={"Authorization": self.jwt})
-        r = self.http("POST", self.cfg.komodo_url + "/auth/manage/CreateApiKey", body={"name": KEY_NAME}, headers={"Authorization": self.jwt})
+        r = self.http("POST", self.cfg.komodo_url + "/auth/manage/CreateApiKey", body={"name": name}, headers={"Authorization": self.jwt})
         if not r.ok:
-            raise StepError(f"Komodo refused to create the API key: {r.status} {r.text[:200]}")
-        self.state.set(STEP, "api_key", r.json()["key"])
-        self.state.set(STEP, "api_secret", r.json()["secret"])
-        log(STEP, "API key for homegraf: created")
+            raise StepError(f"Komodo refused to create the API key {name}: {r.status} {r.text[:200]}")
+        self.state.set(STEP, key_field, r.json()["key"])
+        self.state.set(STEP, secret_field, r.json()["secret"])
+        log(STEP, f"API key {name}: created")
 
     def server(self) -> tuple[str, str]:
         def ready() -> bool:
@@ -179,6 +187,22 @@ class Komodo:
                                                                   "no_deps": True, "no_tty": True}), f"ingressctl {argv[0]}", seconds=900)
         out = "".join((lg.get("stdout") or "") + (lg.get("stderr") or "") for lg in u.get("logs") or [])
         return not ('"result": "error"' in out or "BLOCKER" in out or "FEHLER" in out), out
+
+    def reconcile_in_update_all(self) -> None:
+        """update-all gets a stage right after the pull that sets up the stacks which are only a folder with an ingress.yaml
+        (the service reconcile of the stack ingressctl, before the stage that deploys what changed), unless it has one."""
+        current = self.call("read", "GetProcedure", {"procedure": PROCEDURE})
+        stages = current["config"]["stages"]
+        if any(e["execution"].get("type") == "RunStackService" and e["execution"]["params"].get("service") == "reconcile"
+               for s in stages for e in s.get("executions", [])):
+            log(STEP, f"procedure {PROCEDURE}: already has the reconcile stage")
+            return
+        stage = {"name": "Reconcile", "enabled": True, "executions": [{"execution": {"type": "RunStackService", "params": {
+            "stack": INGRESS_STACK, "service": "reconcile", "command": ["--apply"], "no_deps": True}}, "enabled": True}]}
+        pulls = [i for i, s in enumerate(stages) if any(e["execution"].get("type") in ("PullRepo", "BatchPullRepo") for e in s.get("executions", []))]
+        stages = stages[:pulls[0] + 1] + [stage] + stages[pulls[0] + 1:] if pulls else [stage] + stages
+        self.call("write", "UpdateProcedure", {"id": current["_id"]["$oid"], "config": {"stages": stages}})
+        log(STEP, f"procedure {PROCEDURE}: a push now sets up new apps (stacks that are only a folder) before it deploys")
 
     def apply_ingress_in_update_all(self) -> None:
         """update-all gets a last stage that runs ingress-apply, unless it has one."""

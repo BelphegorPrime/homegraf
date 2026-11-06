@@ -155,7 +155,7 @@ class StackTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("every proxy host of the stack has one from your own CA", out)
         self.assertEqual(len(s.infisical.cas), 1)       # nothing is created twice
-        self.assertEqual(len(s.infisical.identities), 2)
+        self.assertEqual(len(s.infisical.identities), 3)   # homegraf, ingressctl, stack-provisioner: each once
         self.assertEqual(len(s.komodo.stacks), 1)
 
     def test_a_second_certificate_authority_that_is_not_ours_is_not_guessed(self):
@@ -174,3 +174,47 @@ class StackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProvisionerTests(unittest.TestCase):
+    def stack(self):
+        s = Stack()
+        self.addCleanup(s.close)
+        return s
+
+    def test_the_identity_its_key_and_the_credentials_file_are_made_and_update_all_gets_a_reconcile_stage(self):
+        s = self.stack()
+        self.assertEqual(s.run()[0], 0)
+        code, out, err = s.certificates()
+        self.assertEqual(code, 0, err)
+        names = [i["name"] for i in s.infisical.identities.values()]
+        self.assertIn("stack-provisioner", names)
+        self.assertEqual(next(i for i in s.infisical.identities.values() if i["name"] == "stack-provisioner")["role"], "no-access")
+        self.assertIn("stack-provisioner", [k["name"] for k in s.komodo.keys])
+        env = file_of(s, "infra/secrets/provisioner.env")
+        for var in ("INFISICAL_URL", "INFISICAL_PROVISIONER_CLIENT_ID", "INFISICAL_PROVISIONER_CLIENT_SECRET", "KOMODO_URL", "KOMODO_API_KEY", "KOMODO_API_SECRET"):
+            self.assertIn(f"export {var}='", env)
+        key = next(k for k in s.komodo.keys if k["name"] == "stack-provisioner")
+        self.assertIn(f"export KOMODO_API_KEY='{key['key']}'", env)          # its own key, not homegraf's
+        stages = s.komodo.procedures["update-all"]["stages"]
+        names = [st["name"] for st in stages]
+        self.assertEqual(names.index("Reconcile"), names.index("Pull") + 1)   # right after the pull, before the deploy
+        self.assertLess(names.index("Reconcile"), names.index("Deploy"))
+        step = stages[names.index("Reconcile")]["executions"][0]["execution"]["params"]
+        self.assertEqual((step["stack"], step["service"], step["command"]), ("ingressctl", "reconcile", ["--apply"]))
+
+    def test_a_second_run_changes_nothing(self):
+        s = self.stack()
+        s.run()
+        s.certificates()
+        before = (len(s.infisical.identities), len(s.komodo.keys), s.komodo.procedures["update-all"]["stages"][:])
+        code, out, err = s.certificates()
+        self.assertEqual(code, 0, err)
+        self.assertEqual((len(s.infisical.identities), len(s.komodo.keys), s.komodo.procedures["update-all"]["stages"]), before)
+
+    def test_projects_of_the_stacks_get_the_provisioner_as_member(self):
+        s = self.stack()
+        s.run()
+        s.infisical.projects.append({"id": "proj-stacks", "slug": "stacks-local", "type": "secret-manager"})
+        s.certificates()
+        self.assertEqual(len(s.infisical.project_members), 2)   # the certificate project's ingressctl, and the provisioner here

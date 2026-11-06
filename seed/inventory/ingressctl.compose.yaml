@@ -11,6 +11,8 @@ services:
     networks: [stack]
     volumes:
       - credentials:/credentials:ro
+  reconcile:                   # sets up the apps that are only a folder (its credentials: infra/secrets/provisioner.env in the repository)
+    networks: [stack]          # Komodo and Infisical by name
 
 networks:
   stack:

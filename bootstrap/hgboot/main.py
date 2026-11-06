@@ -14,6 +14,7 @@ from .infisical import Infisical
 from .ingress import Ingress
 from .komodo import Komodo
 from .npm import Npm
+from .provisioner import Provisioner
 from .renovate import Renovate
 from .state import State, write_env_file
 from .steps import StepError, log, warn
@@ -34,6 +35,9 @@ def certificates(env=os.environ) -> int:
         komodo.connect()
         npm.connect()
         Ingress(cfg, state, forgejo, komodo, npm).run()
+        komodo.ensure_provisioner_key()
+        Provisioner(cfg, state, forgejo).run()
+        komodo.reconcile_in_update_all()
     except (StepError, Unreachable, TimeoutError, ValueError, OSError) as e:
         warn("ingress", f"certificates are not set up: {e}\n  The proxy hosts work over plain HTTP. Fix the cause and run it again: docker compose up -d certificates")
         print(handoff.certificates_summary(cfg, False), flush=True)

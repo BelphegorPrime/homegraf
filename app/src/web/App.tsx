@@ -1,11 +1,13 @@
-import { ActivityIcon, BoxesIcon, LayersIcon, LayoutGridIcon, LogOutIcon, NetworkIcon, PlusCircleIcon, RouteIcon, ServerIcon, ShieldCheckIcon, Trash2Icon, UsersIcon, WorkflowIcon, type LucideIcon } from "lucide-react";
+import { ActivityIcon, BoxesIcon, LayersIcon, LayoutGridIcon, LogOutIcon, ChevronsUpDownIcon, NetworkIcon, PlusCircleIcon, RouteIcon, ServerIcon, ShieldCheckIcon, Trash2Icon, UserIcon, UsersIcon, WorkflowIcon, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select } from "@/components/ui/select";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
-  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
+  Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar";
 import { useAuth, useSso, useCapabilities, useCertificates, useGraph, useStatus, type Session } from "./api";
 import { certHealth } from "./certificateHealth";
@@ -41,6 +43,29 @@ function ViewIcon({ name }: { name: string }) {
   return Icon ? <Icon /> : null;
 }
 
+/** The signed-in user at the foot of the sidebar: who, a way to the account page, and sign out. */
+function UserMenu({ name, go, signOut }: { name: string; go: (id: ViewId) => void; signOut: () => Promise<void> }) {
+  const { isMobile } = useSidebar();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<SidebarMenuButton size="lg" />}>
+        <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-accent"><UserIcon /></div>
+        <div className="grid flex-1 text-left leading-tight">
+          <span className="truncate font-medium">{name}</span>
+          <span className="truncate text-xs text-muted-foreground">signed in</span>
+        </div>
+        <ChevronsUpDownIcon className="ml-auto" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side={isMobile ? "bottom" : "right"} align="end" className="min-w-56">
+        <DropdownMenuLabel>{name}</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => go("users")}><UsersIcon /> Account and users</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void signOut()}><LogOutIcon /> Sign out</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function Main({ session, signOut }: { session: Session; signOut: () => Promise<void> }) {
   const graphQ = useGraph();
   const status = useStatus();
@@ -67,8 +92,22 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
   };
 
   return (
+    <TooltipProvider>
     <SidebarProvider className="h-svh min-h-0">
-      <Sidebar>
+      <Sidebar variant="inset" collapsible="icon">
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton size="lg" tooltip="homegraf" onClick={() => go("catalog")}>
+                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground"><NetworkIcon /></div>
+                <div className="grid flex-1 text-left leading-tight">
+                  <span className="truncate font-semibold">homegraf</span>
+                  <span className="truncate text-xs text-muted-foreground" title="version">{__APP_VERSION__}</span>
+                </div>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
         <SidebarContent>
           {VIEW_GROUPS.map((group) => {
             const views = VIEWS.filter((v) => v.group === group && (v.id !== "network" || hasNetwork));
@@ -79,7 +118,7 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
                   <SidebarMenu aria-label={group}>
                     {views.map((v) => (
                       <SidebarMenuItem key={v.id}>
-                        <SidebarMenuButton isActive={v.id === view} title={v.hint} onClick={() => go(v.id)}><ViewIcon name={v.icon} /><span>{v.label}</span></SidebarMenuButton>
+                        <SidebarMenuButton isActive={v.id === view} tooltip={v.hint} onClick={() => go(v.id)}><ViewIcon name={v.icon} /><span>{v.label}</span></SidebarMenuButton>
                       </SidebarMenuItem>
                     ))}
                   </SidebarMenu>
@@ -88,12 +127,19 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
             );
           })}
         </SidebarContent>
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <UserMenu name={session.name} go={go} signOut={signOut} />
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+        <SidebarRail />
       </Sidebar>
 
-      <SidebarInset className="min-h-0 min-w-0">
+      <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
       <header className="flex flex-wrap items-center gap-3 border-b bg-card px-4 py-2">
         <SidebarTrigger className="-ml-2" />
-        <h1>homegraf <span className="text-xs font-normal text-muted-foreground" title="version">{__APP_VERSION__}</span></h1>
         <div className="ml-auto flex flex-wrap items-center gap-3">
           <Input type="search" className="w-56" placeholder="Search…" value={query} onChange={(e) => setQuery(e.target.value)} />
           {certProblems.length > 0 && (
@@ -113,8 +159,6 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
           <Badge variant="outline" className={status.source === "komodo" ? "border-ok text-ok" : status.source === "error" ? "border-warn text-warn" : "text-muted-foreground"} title={status.error ?? ""}>
             {status.source === "disabled" ? "status off" : status.source === "error" ? "status stale" : `live ${status.updated ? new Date(status.updated).toLocaleTimeString() : "…"}`}
           </Badge>
-          <span className="muted text-sm" title="signed in">{session.name}</span>
-          <Button variant="ghost" size="icon" aria-label="Sign out" title="Sign out" onClick={() => void signOut()}><LogOutIcon /></Button>
           <ThemeToggle />
         </div>
       </header>
@@ -153,6 +197,7 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
       {graph && graph.warnings.length > 0 && <footer className="warning">{graph.warnings.length} graph warning(s): {graph.warnings[0]}</footer>}
       </SidebarInset>
     </SidebarProvider>
+    </TooltipProvider>
   );
 }
 

@@ -25,7 +25,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       REDIS_HOSTNAME: valkey
   machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:v3.3.5
+    image: ghcr.io/immich-app/immich-machine-learning:v3.3.6
     restart: unless-stopped
     volumes:
       - /srv/docker/__APP__/model_cache:/cache

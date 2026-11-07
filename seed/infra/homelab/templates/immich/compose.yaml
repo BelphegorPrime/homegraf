@@ -13,7 +13,7 @@ x-template:
     the vector extensions); read the Immich release notes before raising the version.
 services:
   app:
-    image: ghcr.io/immich-app/immich-server:v3.3.5
+    image: ghcr.io/immich-app/immich-server:v3.3.6
     ports:
       - "2283:2283"
     volumes:

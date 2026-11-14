@@ -9,7 +9,7 @@ x-addon:
   secrets: []
 services:
   adminer:
-    image: adminer:6.2.0
+    image: adminer:6.3.0
     restart: unless-stopped
     ports:
       - "__PORT__:8080"

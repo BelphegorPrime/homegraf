@@ -12,6 +12,7 @@ The platform stacks (Infisical, the reverse proxy, this UI, the Komodo ones) are
 """
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import shutil
@@ -155,32 +156,47 @@ def drop_files(entry: dict) -> None:
         ui.ok("removed the inventory entry")
 
 
-def remove_routing(app_id: str) -> bool:
-    ui.step("Routing", "ingressctl deletes only the NPM host recorded in its state, and only if the domains match.")
+def routing_resources(app_id: str) -> list[str]:
+    """The ingress resources the stack owns: its own and one per further host its template brought (from ingressctl's state)."""
     import run_ingressctl
-    # ingressctl is also run by update-all (ingress-apply) after the merge; while that run holds the stack Komodo answers
-    # "Resource is busy". Wait for it instead of failing.
-    for attempt in range(1, RETRIES + 1):
-        try:
-            rc, out = run_ingressctl.run(["remove", "--root", "/repo", "--resource", f"infrastructure/{app_id}"], echo=False)
-        except RuntimeError as e:
-            if "matching ingressctl" in str(e):   # an installation without the certificate step has no ingressctl stack
-                ui.ok("this installation has no ingressctl stack: no routing to remove")
-                return True
-            ui.warn(f"ingressctl could not be run: {e}")
-            return False
-        if rc == 0 or "busy" not in out or attempt == RETRIES:
-            break
-        ui.ok(f"ingressctl is busy (update-all is applying the merge), trying again in {BUSY_WAIT} s ({attempt}/{RETRIES})")
-        time.sleep(BUSY_WAIT)
-    ok = rc == 0 or "nicht im State" in out
-    if "nicht im State" in out:
-        ui.ok("ingressctl manages nothing for this app (already removed or never routed)")
-    elif rc == 0:
-        ui.ok("NPM host and certificate deleted")
-    else:
-        print("  " + out.strip().replace("\n", "\n  "))
-        ui.warn("ingressctl remove failed (see above); fix it, then start Remove app again for this ID")
+    try:
+        rc, out = run_ingressctl.run(["status", "--json"], echo=False)
+        rows = json.loads(out[out.index("["):out.rindex("]") + 1])
+    except (RuntimeError, ValueError):
+        return [f"infrastructure/{app_id}"]
+    ids = [str(r["resource_id"]) for r in rows if r.get("stack_id") == app_id]
+    return sorted(ids) or [f"infrastructure/{app_id}"]
+
+
+def remove_routing(app_id: str) -> bool:
+    """Deletes every NPM host and certificate of the stack (a combined template routes more than one service)."""
+    ui.step("Routing", "ingressctl deletes only the NPM hosts recorded in its state, and only if the domains match.")
+    import run_ingressctl
+    ok = True
+    for resource in routing_resources(app_id):
+        # ingressctl is also run by update-all (ingress-apply) after the merge; while that run holds the stack Komodo answers
+        # "Resource is busy". Wait for it instead of failing.
+        for attempt in range(1, RETRIES + 1):
+            try:
+                rc, out = run_ingressctl.run(["remove", "--root", "/repo", "--resource", resource], echo=False)
+            except RuntimeError as e:
+                if "matching ingressctl" in str(e):   # an installation without the certificate step has no ingressctl stack
+                    ui.ok("this installation has no ingressctl stack: no routing to remove")
+                    return True
+                ui.warn(f"ingressctl could not be run: {e}")
+                return False
+            if rc == 0 or "busy" not in out or attempt == RETRIES:
+                break
+            ui.ok(f"ingressctl is busy (update-all is applying the merge), trying again in {BUSY_WAIT} s ({attempt}/{RETRIES})")
+            time.sleep(BUSY_WAIT)
+        if "nicht im State" in out:
+            ui.ok(f"{resource}: ingressctl manages nothing for it (already removed or never routed)")
+        elif rc == 0:
+            ui.ok(f"{resource}: NPM host and certificate deleted")
+        else:
+            print("  " + out.strip().replace("\n", "\n  "))
+            ui.warn(f"ingressctl remove failed for {resource} (see above); fix it, then start Remove app again for this ID")
+            ok = False
     return ok
 
 

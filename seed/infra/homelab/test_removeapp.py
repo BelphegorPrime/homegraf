@@ -1,5 +1,6 @@
 """Tests for remove-app: which apps are removable, and the two halves of a removal with a pull request
 (pytest infra/homelab): git against a local bare origin, Komodo and Forgejo faked."""
+import json
 import pathlib
 import subprocess
 import sys
@@ -186,16 +187,34 @@ def test_routing_waits_while_update_all_holds_ingressctl(monkeypatch):
     import run_ingressctl
     answers = iter([(1, "ERROR: Resource is busy"), (1, "ERROR: Resource is busy"), (0, "removed")])
     calls = []
-    monkeypatch.setattr(run_ingressctl, "run", lambda argv, echo=True: calls.append(argv) or next(answers))
+    def run(argv, echo=True):
+        calls.append(argv)
+        return (0, "[]") if "status" in argv else next(answers)
+    monkeypatch.setattr(run_ingressctl, "run", run)
     monkeypatch.setattr(removeapp.time, "sleep", lambda s: calls.append(("sleep", s)))
     assert removeapp.remove_routing("demo") is True
     assert [c for c in calls if c[0] == "sleep"] == [("sleep", removeapp.BUSY_WAIT)] * 2
-    assert len([c for c in calls if c[0] != "sleep"]) == 3
+    assert len([c for c in calls if c[0] != "sleep"]) == 4
+
+
+def test_routing_removes_every_host_a_stack_has(monkeypatch):
+    import run_ingressctl
+    state = json.dumps([{"resource_id": "infrastructure/demo", "stack_id": "demo"},
+                        {"resource_id": "infrastructure/demo-openhands", "stack_id": "demo"},
+                        {"resource_id": "infrastructure/other", "stack_id": "other"}])
+    calls = []
+    def run(argv, echo=True):
+        calls.append(argv)
+        return (0, state) if "status" in argv else (0, "removed")
+    monkeypatch.setattr(run_ingressctl, "run", run)
+    assert removeapp.remove_routing("demo") is True
+    assert [c[c.index("--resource") + 1] for c in calls if "--resource" in c] == [
+        "infrastructure/demo", "infrastructure/demo-openhands"]
 
 
 def test_routing_gives_up_after_the_retries_and_reports_the_failure(monkeypatch):
     import run_ingressctl
-    monkeypatch.setattr(run_ingressctl, "run", lambda argv, echo=True: (1, "ERROR: Resource is busy"))
+    monkeypatch.setattr(run_ingressctl, "run", lambda argv, echo=True: (0, "[]") if "status" in argv else (1, "ERROR: Resource is busy"))
     monkeypatch.setattr(removeapp.time, "sleep", lambda s: None)
     assert removeapp.remove_routing("demo") is False
 
@@ -203,9 +222,13 @@ def test_routing_gives_up_after_the_retries_and_reports_the_failure(monkeypatch)
 def test_routing_does_not_retry_other_errors(monkeypatch):
     import run_ingressctl
     calls = []
-    monkeypatch.setattr(run_ingressctl, "run", lambda argv, echo=True: calls.append(argv) or (1, "BLOCKER: something else"))
+    def run(argv, echo=True):
+        calls.append(argv)
+        return (0, "[]") if "status" in argv else (1, "BLOCKER: something else")
+    monkeypatch.setattr(run_ingressctl, "run", run)
     monkeypatch.setattr(removeapp.time, "sleep", lambda s: pytest.fail("must not wait"))
-    assert removeapp.remove_routing("demo") is False and len(calls) == 1
+    assert removeapp.remove_routing("demo") is False
+    assert len([c for c in calls if "--resource" in c]) == 1
 
 
 def test_routing_is_skipped_when_the_installation_has_no_ingressctl_stack(monkeypatch):

@@ -20,9 +20,11 @@ RUN mkdir /out && cd /ctx/seed \
  && find /out -name 'test_*.py' -delete
 
 # One container: Hono serves the API and the built React app; python3 runs infra/graph/build.py from the repo
-# checkout mounted at /repo, git is for the PR flow.
+# checkout mounted at /repo, git is for the PR flow. apt-get upgrade picks up Debian security fixes (e.g. zlib1g) that
+# the base image has not rebuilt with yet.
 FROM node:26.13.0-slim
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends python3 python3-yaml git openssh-client ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 # The image only runs node: npm, npx and corepack (with their own dependencies, which scanners flag) are build tools.

@@ -505,6 +505,66 @@ services:
       start_period: 60s
     logging: *logging
 
+  # --- optional: agents (profile "agents"): an issue labelled ai:ready becomes a draft pull request --------------------------
+  # openhands is the all-in-one Agent Canvas image (Canvas, Agent Server, Automation Server). forgehands is the Forgejo webhook
+  # bridge. Neither is configured by the bootstrap: docs/stack.md has the manual steps (the OpenHands webhook registration and the
+  # Forgejo webhook both need secrets that setup.sh generates).
+  openhands:
+    image: ${OPENHANDS_IMAGE:-ghcr.io/openhands/agent-canvas:latest}
+    container_name: ${PROJECT_PREFIX:-homegraf}-openhands
+    profiles: [agents]
+    restart: unless-stopped
+    environment:
+      # Defaults keep `docker compose` valid for installs that never enabled this profile (Compose interpolates the whole file).
+      LOCAL_BACKEND_API_KEY: ${OPENHANDS_LOCAL_BACKEND_API_KEY:-}
+      # Makes the webhook URL that Canvas returns reachable from ForgeHands on the compose network. The service appends /api/automation itself.
+      AUTOMATION_BASE_URL: ${OPENHANDS_AUTOMATION_BASE_URL:-http://openhands:8000}
+    volumes:
+      - openhands-data:/root/.openhands
+    ports:
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_OPENHANDS:-8000}:8000
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    logging: *logging
+
+  forgehands:
+    image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:latest}
+    container_name: ${PROJECT_PREFIX:-homegraf}-forgehands
+    profiles: [agents]
+    restart: unless-stopped
+    init: true
+    depends_on:
+      openhands:
+        condition: service_healthy
+    environment:
+      FORGEJO_WEBHOOK_SECRET: ${FORGEHANDS_FORGEJO_WEBHOOK_SECRET:-}
+      OPENHANDS_WEBHOOK_SECRET: ${FORGEHANDS_OPENHANDS_WEBHOOK_SECRET:-}
+      # Empty until the webhook is registered in Canvas; ForgeHands then exits with a clear error. A `:?` here would block
+      # `docker compose up -d openhands`, which is the step that produces the URL.
+      OPENHANDS_WEBHOOK_URL: ${FORGEHANDS_OPENHANDS_WEBHOOK_URL:-}
+      ALLOWED_REPOS: ${FORGEHANDS_ALLOWED_REPOS:-}
+    volumes:
+      - forgehands-data:/app/data
+    ports:
+      - ${BIND_ADDRESS:-0.0.0.0}:${PORT_FORGEHANDS:-8080}:8080
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    logging: *logging
+
   # --- optional: backups (profile "backup"): a dump of every database once a day, seven days kept ----------------------------
   # Into ${DATA_DIR}/backups, on this host: copy them somewhere else too, a backup on the disk that fails is none. What is not in a
   # dump: the volumes with files (the repositories' git data in forgejo-data, Komodo's keys, the proxy's data); the databases carry the
@@ -648,6 +708,8 @@ volumes:
     name: ${PROJECT_PREFIX:-homegraf}-ingressctl-state
   homegraf-data:
   homegraf-work:
+  openhands-data:
+  forgehands-data:
   forgejo-data:
   forgejo-db:
   komodo-keys:

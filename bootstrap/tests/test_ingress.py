@@ -43,6 +43,14 @@ class OptionalServiceTests(unittest.TestCase):
         self.assertEqual(out.count("id: git "), 1)                       # the seed's own entry is left alone
         self.assertEqual(with_optional_services(out, cfg), out)          # and a second pass adds nothing
 
+    def test_the_agents_profile_exposes_canvas_and_not_the_bridge(self):
+        cfg = config(profiles=("agents",))
+        out = with_optional_services(EXTERNAL_YAML, cfg)
+        self.assertIn("- id: openhands ", out)
+        self.assertIn("domains: [openhands.home.lab]", out)
+        self.assertIn("upstream: {scheme: http, host: openhands, port: 8000}", out)
+        self.assertNotIn("forgehands", out)
+
     def test_without_the_profile_the_file_is_unchanged(self):
         self.assertEqual(with_optional_services(EXTERNAL_YAML, config()), EXTERNAL_YAML)
 

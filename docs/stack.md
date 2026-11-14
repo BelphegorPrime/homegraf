@@ -170,6 +170,8 @@ and the rewrite `*.<domain> -> <host address>`. Pitfalls:
 | `komodo-periphery` | the agent that runs `docker compose` on this host | (internal 8120) | **mounts the Docker socket, so it is root on this host**; registered as the first server `Local` |
 | `infisical` + `infisical-db` + `infisical-redis` | secrets of the stacks, later the certificate authority | 8079 | set up by the bootstrap |
 | `proxy` (Nginx Proxy Manager) | `http://<name>.<domain>` to the containers | 80, 443, admin 81 | set up by the bootstrap |
+| `openhands` (Agent Canvas), **only with the profile `agents`** | Canvas, Agent Server and Automation Server in one image; runs an agent on an issue | 8000 (`PORT_OPENHANDS`) | `LOCAL_BACKEND_API_KEY` from `.env`; data in the volume `openhands-data`; the model provider key is entered in Canvas, not in `.env` (see *Agents: from an issue to a draft pull request*) |
+| `forgehands`, **only with the profile `agents`** | a Forgejo webhook becomes a signed call to OpenHands' automation webhook | 8080 (`PORT_FORGEHANDS`) | the secrets and `FORGEHANDS_ALLOWED_REPOS` come from `setup.sh`; state (deliveries) in the volume `forgehands-data` |
 | `technitium` (Technitium DNS Server), **only with `DNS_MODE=technitium`** | answers for the domain: the wildcard to this host; an API token for the tools | 53 on the LAN address, console 8053 (user `admin`, not the e-mail address) | the profile `technitium`; set up by the bootstrap |
 | `dns` (AdGuard Home), **only with `DNS_MODE=adguard`** | answers for the domain: the wildcard to this host | 53 on the LAN address, setup 3300, admin 8053 | the profile `dns`; set up by the bootstrap |
 | `bootstrap` | one-shot: configures the services against each other | | image `ghcr.io/belphegorprime/homegraf-bootstrap`; keeps its state in the volume `bootstrap-state` |
@@ -183,9 +185,53 @@ Off by default. `setup.sh` asks (or `OPTIONAL_SERVICES="renovate backup status" 
 | Profile | What | Notes |
 | --- | --- | --- |
 | `status` | Uptime Kuma at `status.<domain>` | the bootstrap adds the proxy host and ingressctl gives it a certificate; the first visit asks for a Kuma account |
+| `agents` | `openhands` (Agent Canvas) and `forgehands`: label an issue `ai:ready` in an allowed repository and the agent works on it; the result is a draft pull request | `setup.sh` writes the three secrets and `FORGEHANDS_ALLOWED_REPOS` (default `<Forgejo owner>/infrastructure`), and the bootstrap proxies `openhands.<domain>`. **The rest is manual for now**: add the model provider key in Canvas, register the automation webhook and create the Forgejo webhook (see *Agents: from an issue to a draft pull request*). Both containers have a healthcheck |
+
 | `backup` | a dump of Forgejo's and Infisical's PostgreSQL and Komodo's MongoDB once a day, seven days kept, in `data/backups` | `BACKUP_INTERVAL` (seconds) and `BACKUP_KEEP_DAYS`; **on this host**, copy them elsewhere; `scripts/restore.sh` puts them back (see Restoring from the backups). Not in the dumps: the volumes with files (the repositories' git data, Komodo's keys, the proxy's data) |
 | `runner` | a Forgejo Actions runner, label `docker` | jobs run in a Docker daemon of their own (`runner-dind`, docker-in-docker: **privileged**, but a job cannot reach this host's Docker socket); the runner registers with a secret in `.env` (`RUNNER_SECRET`), no token to copy |
 | `renovate` | dependency updates for your repository as pull requests | brings the runner along. The bootstrap creates the user `renovate-bot`, its repository `renovate-bot/configure` (a workflow that runs Renovate twice a day on the runner, and `config.js` with `autodiscover`), the secret `RENOVATE_TOKEN` and adds the bot as **collaborator** of your repository: every repository the bot is a collaborator of is looked after, so add it to others the same way. Its first pull request is `Configure Renovate` (merge it to switch Renovate on) |
+
+### Agents: from an issue to a draft pull request
+
+Two containers, both only with the profile `agents`; with `COMPOSE_PROFILES=agents` (what `setup.sh` writes when you pick it) they join the
+same stack as the rest. ForgeHands is a bridge, not a coding agent: it verifies the Forgejo delivery, checks the repository allowlist and
+forwards a signed event to OpenHands' automation webhook, which starts the agent and opens the draft pull request.
+
+Automatic (from `setup.sh` and Compose):
+
+- The secrets: `OPENHANDS_LOCAL_BACKEND_API_KEY` (Canvas and Agent Server reject requests without it), `FORGEHANDS_FORGEJO_WEBHOOK_SECRET`
+  and `FORGEHANDS_OPENHANDS_WEBHOOK_SECRET`, plus `FORGEHANDS_ALLOWED_REPOS` and `COMPOSE_PROFILES=agents`.
+- `openhands` starts with `AUTOMATION_BASE_URL=http://openhands:8000` (the service appends `/api/automation`), so the webhook URL Canvas
+  hands out is the one the `forgehands` container can reach over the compose network. State lives in `openhands-data`; the port is
+  `PORT_OPENHANDS` (default 8000).
+- The bootstrap adds `openhands.<domain>` to the proxy and gets its certificate, like the other services (when the profile is already on
+  before the bootstrap runs).
+- `forgehands` starts after `openhands` is healthy, on `PORT_FORGEHANDS` (default 8080, configurable because 8080 is often taken), state in
+  `forgehands-data`. Both have a healthcheck (`/health` and `/healthz`).
+
+Manual, once:
+
+1. Start only the agent runtime: `docker compose up -d openhands`. Open Canvas at `http://<host>:${PORT_OPENHANDS}` and add a model provider
+   key there (it stays in the `openhands-data` volume, not in `.env`). Unset or empty `OPENHANDS_LOCAL_BACKEND_API_KEY` in `.env` then
+   leaves Canvas open to anyone who can reach the port: keep the port on the LAN or put it behind the proxy.
+2. In Canvas, `Automate -> Events` (custom webhook sources): name it `forgehands`, event key expression `type`, signature header
+   `X-Signature-256`, signature scheme `hmac_sha256_hex`, secret = `FORGEHANDS_OPENHANDS_WEBHOOK_SECRET` from `.env`. Copy the URL it
+   returns; it looks like `http://openhands:8000/api/automation/v1/events/<source-id>/forgehands`. Put it in `.env` as
+   `FORGEHANDS_OPENHANDS_WEBHOOK_URL`. ForgeHands refuses to start without it rather than accept deliveries it cannot forward, so from
+   here on `docker compose up -d` starts both.
+3. In Forgejo, in each allowed repository: `Settings -> Webhooks -> Add webhook -> Forgejo`, target URL
+   `http://forgehands:8080/webhooks/forgejo`, secret = `FORGEHANDS_FORGEJO_WEBHOOK_SECRET`, events: issues. Forgejo reaches ForgeHands by
+   its service name on the compose network; the published port is only for debugging from the host.
+4. Label an issue `ai:ready`. `issues.opened` counts only when the issue already carries the label; a later `issues.labeled` counts only
+   when the added label is `ai:ready`. The agent works in its own checkout and opens a draft pull request; nothing merges it.
+
+What stays manual: the model provider key and the two webhook registrations above. There is no `forgehands.<domain>` proxy host: Forgejo
+reaches the bridge on the compose network, and the published 8080 is only for debugging. Do not expose 8000 or 8080 unauthenticated.
+
+Troubleshooting: `docker compose logs -f forgehands` shows verdicts and delivery failures; a 401 there means the Forgejo secret differs, a
+502 means `OPENHANDS_WEBHOOK_URL` is not reachable from the container (host port vs. service name), and a 202 with no PR means OpenHands
+accepted the event but no automations matched the source or the repository is not in `FORGEHANDS_ALLOWED_REPOS`. A Forgejo webhook
+delivery log is the first place to look for signature errors (`Settings -> Webhooks -> Recent Deliveries`).
 
 The runner (and so Renovate) needs Forgejo on the **address of the host**, not on loopback: the job containers live in another Docker daemon, do not see
 this network and use the address the runner registered with (`http://<HOST_IP>:<PORT_FORGEJO>`). `BIND_ADDRESS=127.0.0.1` therefore does not work with them.

@@ -12,7 +12,8 @@ REPOSITORY = "infrastructure"
 SERVICES = [("git", "forgejo", 3000, "Forgejo"), ("komodo", "komodo-core", 9120, "Komodo"), ("secrets", "infisical", 8080, "Infisical"),
             ("proxy", "proxy", 81, "Nginx Proxy Manager"), ("homegraf", "homegraf", 8080, "homegraf")]
 # Services of the optional profiles, with a proxy host once the profile is on: (profile, name, container, port, label)
-OPTIONAL_SERVICES = [("status", "status", "kuma", 3001, "Uptime Kuma")]
+OPTIONAL_SERVICES = [("status", "status", "kuma", 3001, "Uptime Kuma"),
+                     ("agents", "openhands", "openhands", 8000, "OpenHands Agent Canvas")]
 
 
 class ConfigError(Exception):

@@ -13,9 +13,10 @@
 #   sslip      zero configuration: DOMAIN becomes <host address with dashes>.sslip.io, a public service that answers with the
 #              address inside the name. Good for trying it out (needs internet DNS on the clients); no private CA.
 #
-# Optional services are compose profiles: OPTIONAL_SERVICES="renovate backup status runner" (or answer the question) writes them into
+# Optional services are compose profiles: OPTIONAL_SERVICES="renovate backup status runner agents" (or answer the question) writes them into
 # COMPOSE_PROFILES. renovate: dependency updates as pull requests (brings the Actions runner along); runner: Forgejo Actions runner
-# (docker-in-docker); backup: daily dumps of the databases; status: Uptime Kuma.
+# (docker-in-docker); backup: daily dumps of the databases; status: Uptime Kuma; agents: OpenHands Agent Canvas and ForgeHands (an issue
+# labelled ai:ready becomes a draft pull request; the last steps stay manual, see docs/stack.md).
 #
 # Refuses to overwrite an existing .env (your secrets would be gone and the databases would no longer open).
 # Environment variables named like the knobs in .env.example (PORT_*, BIND_ADDRESS, PROJECT_PREFIX, HOMEGRAF_IMAGE, TZ, ...) are
@@ -136,15 +137,27 @@ if $interactive && [ -z "$optional" ]; then
   echo "  runner    a Forgejo Actions runner (jobs run in their own docker-in-docker daemon, which needs --privileged)"
   echo "  backup    a dump of every database once a day, seven days kept, in data/backups"
   echo "  status    Uptime Kuma at status.$domain"
+  echo "  agents    OpenHands Agent Canvas and ForgeHands: label an issue ai:ready, get a draft pull request"
+  echo "            (needs an LLM API key and a few manual steps afterwards; docs/stack.md)"
   read -r -p "Optional services: " optional
 fi
 profiles=""
 [ "$dns_mode" != adguard ] || profiles="dns"
 [ "$dns_mode" != technitium ] || profiles="technitium"
 for o in $optional; do
-  case "$o" in renovate | runner | backup | status) ;; *) die "unknown optional service '$o' (renovate, runner, backup, status)" ;; esac
+  case "$o" in renovate | runner | backup | status | agents) ;; *) die "unknown optional service '$o' (renovate, runner, backup, status, agents)" ;; esac
   case ",$profiles," in *,"$o",*) ;; *) profiles="${profiles:+$profiles,}$o" ;; esac
 done
+allowed_repos=${FORGEHANDS_ALLOWED_REPOS:-$forgejo_user/infrastructure}
+case ",$profiles," in
+  *,agents,*)
+    IFS=',' read -r -a allowed_repo_list <<< "$allowed_repos"
+    for repo in "${allowed_repo_list[@]}"; do
+      printf '%s' "${repo// /}" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' ||
+        die "FORGEHANDS_ALLOWED_REPOS is one or more owner/repository pairs separated by commas, not '$repo'"
+    done
+    ;;
+esac
 
 umask 077
 mkdir -p data/periphery data/backups
@@ -172,8 +185,14 @@ mkdir -p data/periphery data/backups
   echo "INFISICAL_AUTH_SECRET=$(b64 32)"
   echo "RUNNER_SECRET=$(hex 20)"
   echo
-  for knob in TZ BIND_ADDRESS PROJECT_PREFIX HOMEGRAF_IMAGE PORT_HTTP PORT_HTTPS PORT_NPM_ADMIN PORT_FORGEJO PORT_FORGEJO_SSH \
-              PORT_KOMODO PORT_INFISICAL PORT_HOMEGRAF PORT_DNS PORT_DNS_SETUP PORT_DNS_ADMIN DNS_FORWARDERS REPO_DIR BOOTSTRAP_IMAGE \
+  echo "OPENHANDS_LOCAL_BACKEND_API_KEY=$(alnum 40)"
+  echo "FORGEHANDS_FORGEJO_WEBHOOK_SECRET=$(hex 32)"
+  echo "FORGEHANDS_OPENHANDS_WEBHOOK_SECRET=$(hex 32)"
+  echo "FORGEHANDS_ALLOWED_REPOS=$allowed_repos"
+  echo
+  for knob in TZ BIND_ADDRESS PROJECT_PREFIX HOMEGRAF_IMAGE BOOTSTRAP_IMAGE OPENHANDS_IMAGE FORGEHANDS_IMAGE PORT_HTTP PORT_HTTPS PORT_NPM_ADMIN PORT_FORGEJO PORT_FORGEJO_SSH \
+              PORT_KOMODO PORT_INFISICAL PORT_HOMEGRAF PORT_KUMA PORT_OPENHANDS PORT_FORGEHANDS PORT_DNS PORT_DNS_SETUP PORT_DNS_ADMIN DNS_FORWARDERS REPO_DIR \
+              FORGEHANDS_OPENHANDS_WEBHOOK_URL \
               UNIFI_URL UNIFI_USER UNIFI_PASSWORD UNIFI_FINGERPRINT; do
     [ -z "${!knob:-}" ] || echo "$knob=${!knob}"
   done
@@ -201,6 +220,14 @@ case "$dns_mode" in
   external)
     echo "DNS: create this one wildcard entry in your DNS (router, Pi-hole, AdGuard, dnsmasq: address=/$domain/$host_ip):"
     echo "     *.$domain  ->  $host_ip"
+    ;;
+esac
+case ",$profiles," in
+  *,agents,*)
+    echo "Agents: ForgeHands needs the URL of a custom webhook registered in OpenHands. Start only that one first:"
+    echo "     docker compose up -d openhands    (then Canvas at http://$host_ip:${PORT_OPENHANDS:-8000}: Automate -> Events, source forgehands,"
+    echo "     event key type, header X-Signature-256, secret FORGEHANDS_OPENHANDS_WEBHOOK_SECRET). Put the URL it hands out in .env as"
+    echo "     FORGEHANDS_OPENHANDS_WEBHOOK_URL, then docker compose up -d. docs/stack.md has the Forgejo side too."
     ;;
 esac
 echo "Next: docker compose up -d --wait     then see docs/stack.md"

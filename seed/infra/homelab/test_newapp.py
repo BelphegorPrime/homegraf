@@ -92,6 +92,16 @@ def test_wizard_files_pass_ingressctl(tmp_path, monkeypatch):
     newapp.write_files(_app())
     specs = parse_manifest(tmp_path, tmp_path / "stacks/demo/ingress.yaml", load_inventory(tmp_path))
     assert [s.resource_id for s in specs] == ["infrastructure/demo"]
+    # A template with a further host writes a service of its own for it, and ingressctl accepts both.
+    agents = newapp.App("agents", "worker-1", newapp.skeleton("agents", "x:1", 8080, 8081, [], None), True,
+                        domain="agents.lab.example", upstream_port=8081,
+                        routes=[{"service": "openhands", "domain": "openhands.lab.example", "port": 8000, "websockets": True,
+                                 "health_path": "/health", "statuses": [200]}])
+    newapp.write_files(agents)
+    specs = parse_manifest(tmp_path, tmp_path / "stacks/agents/ingress.yaml", load_inventory(tmp_path))
+    assert [(s.resource_id, s.domains, s.upstream_port, s.websockets, s.health_path) for s in specs] == [
+        ("infrastructure/agents", ("agents.lab.example",), 8081, False, "/"),
+        ("infrastructure/agents-openhands", ("openhands.lab.example",), 8000, True, "/health")]
 
 
 @pytest.fixture

@@ -228,6 +228,12 @@ Manual, once:
 What stays manual: the model provider key and the two webhook registrations above. There is no `forgehands.<domain>` proxy host: Forgejo
 reaches the bridge on the compose network, and the published 8080 is only for debugging. Do not expose 8000 or 8080 unauthenticated.
 
+The same two containers also exist as a wizard template: `./homelab.py new-app --template agents` creates `stacks/<id>/`
+(`seed/infra/homelab/templates/agents/`) with its secrets in Infisical and two proxy hosts of its own, `<id>.<domain>` for ForgeHands and
+`openhands.<domain>` for Canvas (the wizard picks a free port for each). Use it when the agents should be an app next to the platform
+instead of part of the platform compose file; the manual steps are the same, the Forgejo webhook then points at
+`https://<id>.<domain>/webhooks/forgejo`.
+
 Troubleshooting: `docker compose logs -f forgehands` shows verdicts and delivery failures; a 401 there means the Forgejo secret differs, a
 502 means `OPENHANDS_WEBHOOK_URL` is not reachable from the container (host port vs. service name), and a 202 with no PR means OpenHands
 accepted the event but no automations matched the source or the repository is not in `FORGEHANDS_ALLOWED_REPOS`. A Forgejo webhook

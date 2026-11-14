@@ -9,6 +9,9 @@ A template is a folder in templates/<id>/. Its compose.yaml (so Renovate keeps t
     addon_env: true                   also add the blocks' own variables (POSTGRES_URL, ...) to the app; default: the template wires itself
     host_paths: [/media]              container paths whose host folder the person has to choose (the volume's source is a stand-in)
     first_run: text                   what to do once it runs (create the first user, ...)
+    routes: [{service, host, port}]   further proxy hosts its sidecars need: <host>.<domain of the installation> -> the
+                                      service's <port>, published on a free port of the server (health_path, websockets,
+                                      statuses as above; they default to the app's)
 
 Every other service of the compose file that is not a building block is a sidecar (a second container the app needs,
 for example a converter): it is added to the app's compose file as it is. The text may use __APP__ (the app ID), __URL__
@@ -38,6 +41,17 @@ MODELLED = {"image", "container_name", "restart", "ports", "network_mode", "envi
 
 
 @dataclasses.dataclass(frozen=True)
+class Route:
+    """A further proxy host a template brings: a sidecar, reached at <host>.<domain of the installation> on <port>."""
+    service: str
+    host: str
+    port: int
+    health_path: str = "/"
+    websockets: bool = False
+    statuses: tuple[int, ...] = ()
+
+
+@dataclasses.dataclass(frozen=True)
 class Template:
     id: str
     label: str
@@ -54,6 +68,7 @@ class Template:
     first_run: str = ""
     sidecars: dict[str, str] = dataclasses.field(default_factory=dict)     # service name -> its text (2 spaces indented, as in compose.yaml)
     extras: dict = dataclasses.field(default_factory=dict)                 # keys of the app's service the form does not model
+    routes: tuple[Route, ...] = ()
 
     def secrets(self) -> set[str]:
         """The variables the template uses as ${VAR} without a default: all of them are generated."""
@@ -94,11 +109,14 @@ def catalog(directory: pathlib.Path = DIR) -> dict[str, Template]:
         blocks = tuple(meta.get("addons") or ())
         sidecars = {n: t for n, t in service_blocks(text).items() if n != "app" and n not in known}
         extras = {k: v for k, v in doc["services"]["app"].items() if k not in MODELLED}
+        routes = tuple(Route(str(r["service"]), str(r["host"]), int(r["port"]), str(r.get("health_path") or "/"),
+                             bool(r.get("websockets")), tuple(int(s) for s in r.get("statuses") or ()))
+                       for r in meta.get("routes") or ())
         out[folder.name] = Template(
             folder.name, meta["label"], meta["description"], str(meta.get("health_path") or "/"), text, files,
             str(meta.get("category") or "tools"), blocks, bool(meta.get("addon_env")), bool(meta.get("websockets")),
             tuple(int(s) for s in meta.get("statuses") or ()), tuple(meta.get("host_paths") or ()),
-            str(meta.get("first_run") or "").strip(), sidecars, extras)
+            str(meta.get("first_run") or "").strip(), sidecars, extras, routes)
     return out
 
 

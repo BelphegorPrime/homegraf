@@ -262,3 +262,45 @@ def test_gather_generates_the_secrets_of_every_template_and_keeps_one_route(agen
     assert app.upstream_port == 9000 and app.template == "mealie, paperless"
     assert set(app.secrets) == {"POSTGRES_PASSWORD", "PAPERLESS_POSTGRES_PASSWORD", "PAPERLESS_ADMIN_PASSWORD", "PAPERLESS_SECRET_KEY"} and all(app.secrets.values())
     assert "Mealie: " in app.first_run and "Paperless-ngx: " in app.first_run and "demo-paperless/consume" in app.first_run
+
+
+# --- a template with a further host of its own (routes) ---
+
+
+def _agents(agent, **extra):
+    return newapp.gather({"app_id": "agents", "server": "worker-1", "template": "agents", "generate_secrets": True,
+                          "web_port": 8080, "domain": "agents.lab.example", "websockets": False, "health_path": "/healthz",
+                          "statuses": "200", **extra})
+
+
+def test_a_template_with_routes_routes_its_sidecar_and_keeps_its_secrets(agent):
+    app = _agents(agent)
+    assert app.domain == "agents.lab.example" and app.upstream_port == 8080
+    assert app.routes == [{"service": "openhands", "domain": "openhands.lab.example", "port": 8000,
+                           "websockets": True, "health_path": "/health", "statuses": [200]}]
+    assert set(app.secrets) == {"FORGEJO_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_URL",
+                                "LOCAL_BACKEND_API_KEY", "OH_SECRET_KEY"}
+    assert "ALLOWED_REPOS: owner/repository" in app.compose           # an input of the form, not a secret
+    assert "/srv/docker/agents/openhands:/root/.openhands" in app.compose
+    assert "__" not in app.compose
+
+
+def test_the_ingress_of_a_template_with_routes_declares_both_hosts(agent):
+    doc = yaml.safe_load(newapp.manifest(_agents(agent)))
+    assert [(s["id"], s["proxy"]["domains"]) for s in doc["services"]] == [
+        ("agents", ["agents.lab.example"]), ("agents-openhands", ["openhands.lab.example"])]
+    assert [(s["proxy"]["upstream"]["port"], s["proxy"]["websockets"], s["healthcheck"]["path"]) for s in doc["services"]] == [
+        (8080, False, "/healthz"), (8000, True, "/health")]
+    assert {s["stack"] for s in doc["services"]} == {"agents"}
+
+
+def test_a_route_port_is_one_the_server_does_not_use_yet(agent):
+    (agent / "stacks/other2").mkdir()
+    (agent / "stacks/other2/compose.yaml").write_text("services:\n  a:\n    ports: ['8000:80']\n")
+    (agent / "inventory/stacks.yaml").write_text((agent / "inventory/stacks.yaml").read_text() +
+                                                 "- id: other2\n  path: stacks/other2\n  compose_files: [compose.yaml]\n"
+                                                 "  server: worker-1\n  status: verified\n")
+    app = _agents(agent)
+    assert app.routes[0]["port"] == 8001
+    assert "8001:8000" in app.compose
+

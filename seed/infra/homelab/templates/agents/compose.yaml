@@ -1,0 +1,67 @@
+# Template of ./homelab.py new-app --template agents, see templates.py for the keys of x-template. Renovate keeps the images current.
+x-template:
+  label: AI agents
+  category: ai
+  description: >-
+    ForgeHands receives a Forgejo webhook and forwards it to OpenHands Agent Canvas, which works on the issue and opens a draft pull
+    request. Both run in this one stack, so ForgeHands reaches Canvas over the compose network.
+  health_path: /healthz
+  statuses: [200]
+  routes:
+    - service: openhands
+      host: openhands
+      port: 8000
+      health_path: /health
+      websockets: true
+      statuses: [200]
+  first_run: >-
+    Open the OpenHands host of this app (the second address in the summary), create the administrator and add a model provider key
+    there; it stays in the volume, not in the repository. Then register the webhook in Canvas (Automate -> Events: name forgehands,
+    event key expression type, signature header X-Signature-256, scheme hmac_sha256_hex, secret FORGEHANDS_OPENHANDS_WEBHOOK_SECRET)
+    and set the URL it returns with ./homelab.py secrets set __APP__ OPENHANDS_WEBHOOK_URL. Last, add the Forgejo webhook of every
+    repository that may use it: __URL__/webhooks/forgejo, secret FORGEHANDS_FORGEJO_WEBHOOK_SECRET, events: issues. Set ALLOWED_REPOS
+    to the owner/repository pairs the agent may work on (comma separated).
+services:
+  app:
+    image: ghcr.io/belphegorprime/forgehands:v0.2.5
+    ports:
+      - "8080:8080"
+    volumes:
+      - /srv/docker/app/data:/app/data
+    environment:
+      FORGEJO_WEBHOOK_SECRET: ${FORGEJO_WEBHOOK_SECRET}
+      OPENHANDS_WEBHOOK_SECRET: ${OPENHANDS_WEBHOOK_SECRET}
+      OPENHANDS_WEBHOOK_URL: ${OPENHANDS_WEBHOOK_URL}
+      ALLOWED_REPOS: owner/repository
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+  openhands:
+    # The all-in-one Agent Canvas image (Canvas, Agent Server and Automation Server), main on 2026-11-14.
+    image: ghcr.io/openhands/agent-canvas@sha256:360eb652ef69577d013326b2505d6bd04cbfeac257fc259e6012ae904f2270bb
+    ports:
+      - "8000:8000"
+    volumes:
+      - /srv/docker/__APP__/openhands:/root/.openhands
+      - /srv/docker/__APP__/projects:/projects
+    environment:
+      LOCAL_BACKEND_API_KEY: ${LOCAL_BACKEND_API_KEY}
+      OH_SECRET_KEY: ${OH_SECRET_KEY}
+      # The webhook URL Canvas hands out: the service appends /api/automation itself, and ForgeHands reaches it by name.
+      AUTOMATION_BASE_URL: http://openhands:8000
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s

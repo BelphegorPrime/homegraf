@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 /** The top of a manage page: what it is, in a sentence a newcomer understands. */
 export function PageHeader({ title, children }: { title: string; children: ReactNode }) {
@@ -26,13 +25,15 @@ export function Section({
   className?: string;
 }) {
   return (
-    <Card className={`mb-4 max-w-4xl ${className ?? ""}`}>
-      <CardHeader>
-        <CardTitle className="text-base">{title}</CardTitle>
-        {description && <CardDescription>{description}</CardDescription>}
-        {action && <CardAction>{action}</CardAction>}
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
+    <section className={`mb-4 max-w-4xl rounded-xl border bg-card p-4 ${className ?? ""}`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="!m-0 !text-base !font-semibold !normal-case !tracking-normal !text-foreground">{title}</h2>
+          {description && <p className="mb-0 mt-1 text-sm text-muted-foreground">{description}</p>}
+        </div>
+        {action}
+      </div>
+      <div className="mt-3">{children}</div>
+    </section>
   );
 }

@@ -255,70 +255,63 @@ export function Stacks({ session }: { session: Session }) {
             type="button"
             role="option"
             aria-selected={s.id === stackId}
-            className={`tile cursor-pointer text-left ${s.id === stackId ? "selected" : ""}`}
+            className={`block cursor-pointer rounded-xl border bg-card px-3 py-2.5 text-left hover:bg-muted/50 ${s.id === stackId ? "ring-2 ring-primary" : ""}`}
             onClick={() => {
               setStackId(s.id);
               setChanges([]);
             }}
           >
-            <span className="tile-head">
-              <strong>{s.id}</strong>
-            </span>
+            <strong className="block truncate font-medium">{s.id}</strong>
             <span className="muted block text-xs">
               on {s.server} · {s.secrets ? "has secrets" : "no secrets"}
             </span>
           </button>
         ))}
       </div>
-      {stack && (
+      {stack && !can("stacks:deploy") && !can("secrets:manage") && (
+        <p className="muted max-w-3xl">
+          You are signed in as {me.data.name}, who may neither redeploy stacks nor manage secrets. Ask an administrator for <code>stacks:deploy</code> or{" "}
+          <code>secrets:manage</code> (Users page).
+        </p>
+      )}
+      {stack && (can("stacks:deploy") || can("secrets:manage")) && (
         <>
-          <Section
-            title={`Redeploy ${stack.id}`}
-            description={`Pulls the latest images and restarts the Komodo stack ${stack.komodoStack} on ${stack.server}. Needs the permission stacks:deploy.`}
-          >
-            {can("stacks:deploy") ? (
+          {can("stacks:deploy") && (
+            <Section
+              title={`Redeploy ${stack.id}`}
+              description={`Pulls the latest images and restarts the Komodo stack ${stack.komodoStack} on ${stack.server}. Needs the permission stacks:deploy.`}
+            >
               <Redeploy
                 stack={stack}
                 session={session}
                 onStart={startJobLog}
                 hint={changes.length ? `${changes.join(", ")}: takes effect with the next deploy` : undefined}
               />
-            ) : (
-              <p className="muted m-0">
-                You may not redeploy (needs <code>stacks:deploy</code>).
-              </p>
-            )}
-            {job && (
-              <div className="job mt-3">
-                <p className="m-0 mb-1 text-sm font-medium">
-                  Log{" "}
-                  {job.done ? (
-                    <Badge variant="outline" className={job.done.state === "done" ? "border-ok text-ok" : "border-down text-down"}>
-                      {job.done.state === "done" ? "deployed" : `failed (exit ${job.done.exitCode})`}
-                    </Badge>
-                  ) : (
-                    <span className="muted">running…</span>
-                  )}
-                </p>
-                <pre>{job.log}</pre>
-              </div>
-            )}
-          </Section>
-          {stack.secrets ? (
-            can("secrets:manage") ? (
+              {job && (
+                <div className="job mt-3">
+                  <p className="m-0 mb-1 text-sm font-medium">
+                    Log{" "}
+                    {job.done ? (
+                      <Badge variant="outline" className={job.done.state === "done" ? "border-ok text-ok" : "border-down text-down"}>
+                        {job.done.state === "done" ? "deployed" : `failed (exit ${job.done.exitCode})`}
+                      </Badge>
+                    ) : (
+                      <span className="muted">running…</span>
+                    )}
+                  </p>
+                  <pre>{job.log}</pre>
+                </div>
+              )}
+            </Section>
+          )}
+          {can("secrets:manage") &&
+            (stack.secrets ? (
               <Secrets stack={stack} session={session} changed={(what) => setChanges((c) => [...c, what])} />
             ) : (
               <Section title="Secrets" description="Passwords and keys this stack reads.">
-                <p className="muted m-0">
-                  You may not manage secrets (needs <code>secrets:manage</code>).
-                </p>
+                <p className="muted m-0">{stack.id} keeps no secrets in Infisical.</p>
               </Section>
-            )
-          ) : (
-            <Section title="Secrets" description="Passwords and keys this stack reads.">
-              <p className="muted m-0">{stack.id} keeps no secrets in Infisical.</p>
-            </Section>
-          )}
+            ))}
         </>
       )}
     </div>

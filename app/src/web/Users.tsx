@@ -306,7 +306,31 @@ export function Users({ session }: { session: Session }) {
             )}
             {me.data.source === "user" && <ChangePassword session={session} />}
           </Section>
-          {me.data.permissions.includes("users:manage") && <Manage session={session} />}
+          {me.data.permissions.includes("users:manage") ? (
+            <Manage session={session} />
+          ) : (
+            <Section
+              title="Users and permissions"
+              description="Adding users, removing them and changing what they may do is reserved to accounts with the users:manage permission."
+            >
+              <p className="muted m-0 text-sm">
+                Your account does not have it, so the user list and the add form are hidden. Sign in as the built-in administrator (the password is{" "}
+                <code>HOMEGRAF_PASSWORD</code> in the environment), or ask an administrator to grant you <code>users:manage</code>. There are no groups: every
+                user gets individual permissions.
+              </p>
+              <p className="m-0 mt-3 text-sm font-medium">The permissions that exist</p>
+              <ul className="m-0 mt-1 list-none p-0 text-sm">
+                {PERMISSION_IDS.map((p) => (
+                  <li key={p} className="py-0.5">
+                    <Badge variant="outline" className="mr-2">
+                      {p}
+                    </Badge>
+                    <span className="muted">{PERMISSIONS[p]}</span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
         </>
       )}
     </div>

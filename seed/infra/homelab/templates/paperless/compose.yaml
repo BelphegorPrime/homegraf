@@ -12,7 +12,7 @@ x-template:
     /srv/docker/__APP__/consume on the server are imported. Add PAPERLESS_OCR_LANGUAGE and PAPERLESS_TIME_ZONE to the environment for your language.
 services:
   app:
-    image: ghcr.io/paperless-ngx/paperless-ngx:3.4.1
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.4.2
     ports:
       - "8000:8000"
     volumes:

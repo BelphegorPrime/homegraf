@@ -3,10 +3,10 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import type { ManagedStack, SecretKey } from "../shared/types";
 import { signedIn, startJob, useCapabilities, useStacks, type Session } from "./api";
 import type { Me } from "./Users";
+import { PageHeader, Section } from "./Page";
 import { useJob } from "./useJob";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -31,7 +31,7 @@ function Redeploy({ stack, session, hint, onStart }: { stack: ManagedStack; sess
           start.mutate();
         }}
       >
-        Redeploy {stack.komodoStack}
+        Redeploy
       </Button>
       {hint && <span className="muted ml-2">{hint}</span>}
       {error && <span className="warning !px-2">{error}</span>}
@@ -137,13 +137,13 @@ function AddSecret({ stack, session, changed }: { stack: ManagedStack; session: 
   });
   return (
     <form
-      className="mt-4 max-w-xl"
+      className="mt-5 max-w-xl border-t pt-4"
       onSubmit={(e) => {
         e.preventDefault();
         add.mutate(false);
       }}
     >
-      <h2>Add a secret</h2>
+      <p className="m-0 mb-2 text-sm font-medium">Add a secret</p>
       <div className="grid gap-2">
         <Input
           autoComplete="off"
@@ -161,7 +161,7 @@ function AddSecret({ stack, session, changed }: { stack: ManagedStack; session: 
           onChange={(e) => setValue(e.target.value)}
         />
       </div>
-      <div className="actions">
+      <div className="actions !mb-0 !mt-3">
         <Button type="submit" disabled={!key.trim() || !value || add.isPending}>
           Add
         </Button>
@@ -186,17 +186,28 @@ function Secrets({ stack, session, changed }: { stack: ManagedStack; session: Se
     void client.invalidateQueries({ queryKey: ["secrets", stack.id] });
   };
   return (
-    <>
-      <h2>Secrets</h2>
-      <p className="muted max-w-3xl">
-        Stored in Infisical, project <code>stacks-{stack.server}</code>, folder <code>/{stack.id}</code>. The page shows names only; values are never read back.
-      </p>
+    <Section
+      title="Secrets"
+      description={
+        <>
+          Passwords and keys the stack's compose files read as <code>${"{NAME}"}</code>. Kept in Infisical (project <code>stacks-{stack.server}</code>, folder{" "}
+          <code>/{stack.id}</code>). Only names are shown here; values are never read back.
+        </>
+      }
+    >
+      {q.isPending && <p className="muted m-0">Loading…</p>}
       {q.isError && <p className="warning !px-0">{message(q.error)}</p>}
       {q.data &&
         (q.data.keys.length === 0 ? (
-          <p className="muted">No secrets yet.</p>
+          <p className="muted m-0">This stack has no secrets yet.</p>
         ) : (
-          <table className="w-full max-w-4xl text-left text-sm">
+          <table className="w-full text-left text-sm">
+            <thead className="muted">
+              <tr>
+                <th className="pb-1 pr-4 font-normal">Name</th>
+                <th className="pb-1 font-normal">Change</th>
+              </tr>
+            </thead>
             <tbody>
               {q.data.keys.map((k) => (
                 <SecretRow key={k.key} stack={stack} secret={k} session={session} changed={done} />
@@ -205,7 +216,7 @@ function Secrets({ stack, session, changed }: { stack: ManagedStack; session: Se
           </table>
         ))}
       {q.data && <AddSecret stack={stack} session={session} changed={done} />}
-    </>
+    </Section>
   );
 }
 
@@ -221,71 +232,92 @@ export function Stacks({ session }: { session: Session }) {
   if (caps && !caps.create.enabled)
     return (
       <div className="list">
-        <p className="muted">Managing stacks from here is off{caps.create.reason ? ` (${caps.create.reason})` : ""}.</p>
+        <PageHeader title="Stacks">Managing stacks from here is off{caps.create.reason ? ` (${caps.create.reason})` : ""}.</PageHeader>
       </div>
     );
   if (!me.data) return <div className="list">{me.isError && <p className="warning !px-0">{message(me.error)}</p>}</div>;
   const can = (p: string) => me.data.permissions.includes(p as never);
   const startJobLog = (jobId: string) => follow(jobId, () => undefined);
+  const list = stacks.data ?? [];
   return (
     <div className="list">
-      <p className="muted max-w-3xl">
-        Redeploy a stack and manage its secrets. Needs the permissions <code>stacks:deploy</code> and <code>secrets:manage</code>.
-      </p>
+      <PageHeader title="Stacks">
+        A stack is one app's set of containers, deployed through Komodo. Pick a stack to redeploy it or to manage the secrets it reads. The platform stacks
+        (secrets store, reverse proxy, this UI, Komodo itself) are not listed.
+      </PageHeader>
       {stacks.isError && <p className="warning !px-0">{stacks.error.message}</p>}
-      <div className="max-w-xl">
-        <Select
-          aria-label="Stack"
-          className="w-full"
-          value={stackId}
-          onValueChange={(v) => {
-            setStackId(v);
-            setChanges([]);
-          }}
-          options={[{ value: "", label: "Choose a stack…" }, ...(stacks.data ?? []).map((s) => ({ value: s.id, label: `${s.id} (${s.server})` }))]}
-        />
+      {stacks.isPending && <p className="muted">Loading stacks…</p>}
+      {stacks.data && list.length === 0 && <p className="muted">No stacks to manage yet. Create an app first.</p>}
+      <div className="tiles mb-5 max-w-4xl" role="listbox" aria-label="Stacks">
+        {list.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            role="option"
+            aria-selected={s.id === stackId}
+            className={`tile cursor-pointer text-left ${s.id === stackId ? "selected" : ""}`}
+            onClick={() => {
+              setStackId(s.id);
+              setChanges([]);
+            }}
+          >
+            <span className="tile-head">
+              <strong>{s.id}</strong>
+            </span>
+            <span className="muted block text-xs">
+              on {s.server} · {s.secrets ? "has secrets" : "no secrets"}
+            </span>
+          </button>
+        ))}
       </div>
-      <p className="muted max-w-3xl">The platform stacks (secrets store, reverse proxy, this UI, Komodo's own) are not listed.</p>
       {stack && (
         <>
-          <h2>Redeploy</h2>
-          {can("stacks:deploy") ? (
-            <Redeploy
-              stack={stack}
-              session={session}
-              onStart={startJobLog}
-              hint={changes.length ? `${changes.join(", ")}: takes effect with the next deploy` : undefined}
-            />
-          ) : (
-            <p className="muted">
-              You may not redeploy (needs <code>stacks:deploy</code>).
-            </p>
-          )}
-          {job && (
-            <div className="job">
-              <h2>
-                Log{" "}
-                {job.done ? (
-                  <Badge variant="outline" className={job.done.state === "done" ? "border-ok text-ok" : "border-down text-down"}>
-                    {job.done.state === "done" ? "deployed" : `failed (exit ${job.done.exitCode})`}
-                  </Badge>
-                ) : (
-                  <span className="muted">running…</span>
-                )}
-              </h2>
-              <pre>{job.log}</pre>
-            </div>
-          )}
+          <Section
+            title={`Redeploy ${stack.id}`}
+            description={`Pulls the latest images and restarts the Komodo stack ${stack.komodoStack} on ${stack.server}. Needs the permission stacks:deploy.`}
+          >
+            {can("stacks:deploy") ? (
+              <Redeploy
+                stack={stack}
+                session={session}
+                onStart={startJobLog}
+                hint={changes.length ? `${changes.join(", ")}: takes effect with the next deploy` : undefined}
+              />
+            ) : (
+              <p className="muted m-0">
+                You may not redeploy (needs <code>stacks:deploy</code>).
+              </p>
+            )}
+            {job && (
+              <div className="job mt-3">
+                <p className="m-0 mb-1 text-sm font-medium">
+                  Log{" "}
+                  {job.done ? (
+                    <Badge variant="outline" className={job.done.state === "done" ? "border-ok text-ok" : "border-down text-down"}>
+                      {job.done.state === "done" ? "deployed" : `failed (exit ${job.done.exitCode})`}
+                    </Badge>
+                  ) : (
+                    <span className="muted">running…</span>
+                  )}
+                </p>
+                <pre>{job.log}</pre>
+              </div>
+            )}
+          </Section>
           {stack.secrets ? (
             can("secrets:manage") ? (
               <Secrets stack={stack} session={session} changed={(what) => setChanges((c) => [...c, what])} />
             ) : (
-              <p className="muted">
-                You may not manage secrets (needs <code>secrets:manage</code>).
-              </p>
+              <Section title="Secrets" description="Passwords and keys this stack reads.">
+                <p className="muted m-0">
+                  You may not manage secrets (needs <code>secrets:manage</code>).
+                </p>
+              </Section>
             )
           ) : (
-            <p className="muted">{stack.id} keeps no secrets in Infisical.</p>
+            <Section title="Secrets" description="Passwords and keys this stack reads.">
+              <p className="muted m-0">{stack.id} keeps no secrets in Infisical.</p>
+            </Section>
           )}
         </>
       )}

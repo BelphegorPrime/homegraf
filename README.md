@@ -81,6 +81,12 @@ with the wildcard rewrite (when you chose it); and hands homegraf everything it 
 (Renovate with a runner, database backups with `scripts/restore.sh` to put them back, Uptime Kuma). What is where, what is still manual, what was verified and the
 plan: [docs/stack.md](docs/stack.md).
 
+## How this repository is developed
+**Forgejo is the primary repository.** Work, issues, pull requests and the agent factory live in your Forgejo; the agent factory uses the labels `ai:plan`, `ai:ready`, `ai:escalate` and `ai:review`.
+**GitHub is a mirror.** Every commit on Forgejo is pushed to GitHub automatically by a push mirror: within about a minute, and again every 8 hours. The GitHub workflows in `.github/workflows` build and publish the images from that mirror. The Forgejo CI in `.forgejo/workflows/ci.yaml` only runs tests.
+Changes made directly on GitHub are overwritten by the next mirror push. Pull requests opened on GitHub are not merged there; for now the maintainer brings them into Forgejo by hand (a bridge is planned).
+In a local clone, `origin` is the Forgejo repository; a `github` remote, if present, is read-only.
+
 ## Contributing and security
 
 [CONTRIBUTING.md](CONTRIBUTING.md) says what is developed where and which checks to run, [SECURITY.md](SECURITY.md) how to report a vulnerability

@@ -196,6 +196,9 @@ Off by default. `setup.sh` asks (or `OPTIONAL_SERVICES="renovate backup status" 
 Two containers, both only with the profile `agents`; with `COMPOSE_PROFILES=agents` (what `setup.sh` writes when you pick it) they join the
 same stack as the rest.
 
+How to operate the flow (watching and stopping runs, re-running an issue, the factory loop, limits and the known failure modes) is in
+[agents.md](agents.md).
+
 ForgeHands has two modes:
 
 - **Webhook mode** (the default: `FORGEHANDS_OPENHANDS_API_URL` empty, so an `.env` from before direct mode changes nothing). ForgeHands

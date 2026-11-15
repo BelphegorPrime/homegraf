@@ -24,7 +24,8 @@ class Req:
 
 
 class Server:
-    """handler(req) -> (status, payload); payload is JSON-encoded, None means an empty body. Every request is kept in .requests."""
+    """handler(req) -> (status, payload[, headers]); payload is JSON-encoded (bytes go out as they are), None means an empty body,
+    headers are added to the answer. Every request is kept in .requests."""
 
     def __init__(self, handler):
         self.requests: list[Req] = []
@@ -35,10 +36,15 @@ class Server:
                 length = int(self.headers.get("content-length") or 0)
                 req = Req(self.command, self.path, {k.lower(): v for k, v in self.headers.items()}, self.rfile.read(length))
                 outer.requests.append(req)
-                status, payload = handler(req)
+                answer = handler(req)
+                status, payload = answer[0], answer[1]
+                extra = answer[2] if len(answer) > 2 else {}
                 body = b"" if payload is None else (payload if isinstance(payload, bytes) else json.dumps(payload).encode())
                 self.send_response(status)
-                self.send_header("content-type", "application/json")
+                if not any(k.lower() == "content-type" for k in extra):
+                    self.send_header("content-type", "application/json")
+                for name, value in extra.items():
+                    self.send_header(name, value)
                 self.send_header("content-length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)

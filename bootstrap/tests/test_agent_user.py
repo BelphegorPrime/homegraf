@@ -1,6 +1,7 @@
-"""The Forgejo user of the agents: creation, token, collaborations, rotation, and what may never be logged."""
+"""The Forgejo user of the agents: creation, token, collaborations, rotation, its mail notifications, and what may never be logged."""
 import io
 import unittest
+import urllib.parse
 from contextlib import redirect_stderr, redirect_stdout
 
 from hgboot.agent_user import LOGIN, TOKEN, TOKEN_PREFIX, TOKEN_SCOPES, ensure_agent_user
@@ -11,15 +12,22 @@ from .helpers import config
 
 REPO = "owner/infrastructure"
 OTHER = "owner/other"
+ACCOUNT = "/user/settings/account"
+CSRF = "csrf-token-of-the-form"
+COOKIE = "i_like_gitea"
 
 
 class FakeAgentForgejo(FakeForgejo):
     """The fake of the neighbouring tests, plus what only this step uses: who a token belongs to, is_admin, the refusal of the admin
-    endpoints, and the reset of a password through the admin API."""
+    endpoints, the reset of a password through the admin API, and the web pages that turn the mail notifications off."""
 
     def __init__(self):
         super().__init__()
         self.admins: set[str] = set()
+        self.notifications: dict[str, str] = {}       # login -> enabled, onmention or disabled
+        self.sessions: dict[str, str] = {}            # cookie value -> login
+        self.session_n = 0
+        self.fail_form = False                        # the account form answers with a validation error, the preference stays
 
     def owner(self, req) -> str | None:
         auth = req.headers.get("authorization", "")
@@ -31,8 +39,56 @@ class FakeAgentForgejo(FakeForgejo):
                 return user
         return self.admin if value in self.tokens.values() else None
 
+    def _form(self, req) -> dict:
+        return {k: v[0] for k, v in urllib.parse.parse_qs(req.body.decode()).items()}
+
+    def _session(self, req) -> str | None:
+        for part in req.headers.get("cookie", "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == COOKIE:
+                return self.sessions.get(value)
+        return None
+
+    def _account_page(self, login: str) -> bytes:
+        selected = self.notifications.get(login, "enabled")
+        options = "".join(f'<option value="{value}"{" selected" if value == selected else ""}>{value}</option>'
+                          for value in ("enabled", "onmention", "disabled"))
+        return (f'<html><body><form action="{ACCOUNT}/email" method="post">'
+                f'<input type="hidden" name="_csrf" value="{CSRF}">'
+                f'<select name="language"><option value="en" selected>en</option><option value="de">de</option></select>'
+                f'<select name="preference">{options}</select></form></body></html>').encode()
+
+    def _login_page(self) -> bytes:
+        return (f'<html><body><form action="/user/login" method="post">'
+                f'<input type="hidden" name="_csrf" value="{CSRF}">'
+                f'<input name="user_name"><input name="password" type="password"></form></body></html>').encode()
+
     def __call__(self, req):
         p = req.path.split("?")[0]
+        if p == "/user/login" and req.method == "GET":
+            return 200, self._login_page(), {"content-type": "text/html", "Set-Cookie": f"{COOKIE}=anonymous; Path=/; HttpOnly"}
+        if p == "/user/login" and req.method == "POST":
+            form = self._form(req)
+            if form.get("_csrf") != CSRF or self.users.get(form.get("user_name")) != form.get("password"):
+                return 200, self._login_page(), {"content-type": "text/html"}
+            self.session_n += 1
+            sid = f"web-session-{self.session_n}"
+            self.sessions[sid] = form["user_name"]
+            return 303, b"", {"Location": "/", "Set-Cookie": f"{COOKIE}={sid}; Path=/; HttpOnly", "content-type": "text/html"}
+        if p == ACCOUNT and req.method == "GET":
+            login = self._session(req)
+            if not login:
+                return 303, b"", {"Location": "/user/login", "content-type": "text/html"}
+            return 200, self._account_page(login), {"content-type": "text/html"}
+        if p == ACCOUNT + "/email" and req.method == "POST":
+            login = self._session(req)
+            if not login:
+                return 303, b"", {"Location": "/user/login", "content-type": "text/html"}
+            form = self._form(req)
+            if self.fail_form or form.get("_csrf") != CSRF or form.get("_method") != "NOTIFICATION":
+                return 422, {"message": "invalid form"}, {"content-type": "text/html"}
+            self.notifications[login] = form.get("preference", "")
+            return 303, b"", {"Location": ACCOUNT, "content-type": "text/html"}
         owner = self.owner(req)
         if p == "/api/v1/user" and req.method == "GET" and owner:
             return 200, {"login": owner}
@@ -90,6 +146,7 @@ class AgentUserTest(unittest.TestCase):
         self.assertEqual(settings.login, LOGIN)
         self.assertEqual(settings.allowed_senders, f"owner, {LOGIN}")
         self.assertEqual(self.store.get(TOKEN), next(iter(self.forgejo.user_tokens[LOGIN].values())))
+        self.assertEqual(self.forgejo.notifications[LOGIN], "disabled")
 
     def test_the_token_carries_only_the_three_scopes_and_the_admin_endpoints_refuse_it(self):
         self.run_step()
@@ -105,6 +162,19 @@ class AgentUserTest(unittest.TestCase):
         self.assertEqual((body["must_change_password"], body["send_notify"], body["admin"], body["restricted"]), (False, False, False, False))
         self.assertEqual(body["email"], f"{LOGIN}@noreply.home.lab")
 
+    def test_the_mail_notifications_are_turned_off_on_creation(self):
+        self.run_step()
+        self.assertEqual(self.forgejo.notifications[LOGIN], "disabled")
+        body = self.calls("POST", f"{ACCOUNT}/email")[0].body.decode()
+        self.assertIn("_method=NOTIFICATION", body)
+        self.assertIn("preference=disabled", body)
+
+    def test_an_existing_user_with_mail_on_gets_it_turned_off(self):
+        self.forgejo.users[LOGIN] = "an-old-password"
+        self.forgejo.notifications[LOGIN] = "enabled"
+        self.run_step()
+        self.assertEqual(self.forgejo.notifications[LOGIN], "disabled")
+
     def test_a_second_run_changes_nothing(self):
         self.run_step()
         tokens = dict(self.forgejo.user_tokens[LOGIN])
@@ -112,6 +182,22 @@ class AgentUserTest(unittest.TestCase):
         self.assertEqual(self.forgejo.user_tokens[LOGIN], tokens)
         self.assertEqual(self.forgejo.repos[REPO]["collaborators"], {LOGIN: "write"})
         self.assertEqual(self.calls("PATCH"), [])
+        self.assertEqual(len(self.calls("POST", f"{ACCOUNT}/email")), 1)   # the account form is not posted again
+
+    def test_a_failing_notification_form_is_a_step_error_without_a_secret(self):
+        self.forgejo.fail_form = True
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            with self.assertRaises(StepError) as caught:
+                self.run_step()
+        password = self.calls("POST", "/api/v1/admin/users")[0].json["password"]
+        cookie = next(iter(self.forgejo.sessions))
+        message = str(caught.exception)
+        self.assertIn("mail notifications", message)
+        for text in (message, out.getvalue(), err.getvalue()):
+            self.assertNotIn(password, text)
+            self.assertNotIn(cookie, text)
+            self.assertNotIn(CSRF, text)
 
     def test_a_lost_secret_gets_a_new_token_and_the_old_one_is_deleted(self):
         self.run_step()
@@ -162,10 +248,13 @@ class AgentUserTest(unittest.TestCase):
             settings = self.run_step()
         password = self.calls("POST", "/api/v1/admin/users")[0].json["password"]
         token = self.store.get(TOKEN)
+        cookie = next(iter(self.forgejo.sessions))
         texts = [out.getvalue(), err.getvalue(), repr(settings), str(settings)]
         for text in texts:
             self.assertNotIn(token, text)
             self.assertNotIn(password, text)
+            self.assertNotIn(cookie, text)
+            self.assertNotIn(CSRF, text)
 
 
 if __name__ == "__main__":

@@ -6,18 +6,21 @@ would be a review by their author. And no record says who did what. With a user 
 to it.
 
 The shape is the one of the reference installation, done by hand there: the user is created through the admin API (no forced
-password change, no notification mail, a noreply address, not an administrator, not restricted); its token carries only
-write:repository, write:issue and read:user, and the admin endpoints answer 403 for it; the user is a collaborator with write on
-every repository the agents may work on; and ALLOWED_SENDERS names the human first and the agent user after him, because every label
-the agents set, every push, comment and CI run they cause has the agent user as its sender, and ForgeHands ignores events from
-senders that are not listed.
+password change, no notification mail, a noreply address, not an administrator, not restricted); its mail notification
+preference is turned off, because Forgejo mails the participants of a pull request and the noreply address cannot deliver (every
+such mail bounces to the operator); its token carries only write:repository, write:issue and read:user, and the admin endpoints
+answer 403 for it; the user is a collaborator with write on every repository the agents may work on; and ALLOWED_SENDERS names the
+human first and the agent user after him, because every label the agents set, every push, comment and CI run they cause has the
+agent user as its sender, and ForgeHands ignores events from senders that are not listed.
 
 The step is idempotent and is not wired into hgboot yet: #58 calls it before the profiles and the webhooks. The HTTP call and the
 secret store are passed in, so the tests run it against fakes.
 """
 from __future__ import annotations
 
+import re
 import secrets
+import urllib.parse
 from dataclasses import dataclass
 
 from .http import request
@@ -29,6 +32,13 @@ TOKEN = "FORGEJO_TOKEN"          # the stack secret ForgeHands holds and hands t
 TOKEN_PREFIX = "agent-"          # every token this step makes is named so: older ones are found and deleted by it
 TOKEN_SCOPES = ("write:repository", "write:issue", "read:user")
 PERMISSION = "write"
+ACCOUNT = "/user/settings/account"
+FORM = "application/x-www-form-urlencoded"
+PREFERENCE = "disabled"          # its noreply address cannot deliver, so every notification mail would bounce to the operator
+_CSRF = (re.compile(r'name="_csrf"[^>]*value="([^"]+)"'), re.compile(r'value="([^"]+)"[^>]*name="_csrf"'))
+_PREFERENCE_SELECT = re.compile(r'<select\b[^>]*name="preference"[^>]*>(.*?)</select>', re.IGNORECASE | re.DOTALL)
+_OPTION = re.compile(r"<option\b[^>]*>", re.IGNORECASE)
+_VALUE = re.compile(r'value="([^"]*)"', re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -74,6 +84,8 @@ def ensure_agent_user(cfg, store, *, http=request, human=None, rotate=False, log
     else:
         if not password:
             password = _reset_password(http, api, login, admin)
+        # before the token is stored: a failed web step must be retried by the next run, which still has no token then
+        _notifications_off(http, cfg.forgejo_url, login, password)
         name, token = _create_token(http, api, login, password)
         store.set(TOKEN, token)                     # stored before the older one goes: a lost write would leave no token at all
         _delete_older(http, api, login, password, name)
@@ -142,3 +154,79 @@ def _delete_older(http, api: str, login: str, password: str, keep: str) -> None:
             raise StepError(f"Forgejo refused to delete the older token {old} of {login}: {r.status}")
     if older:
         log(STEP, f"token of {login}: the older one is deleted")
+
+
+def _notifications_off(http, web: str, login: str, password: str) -> None:
+    """Turns the mail notifications of the agent user off: Forgejo mails the participants of a pull request, and its noreply address
+    cannot deliver, so every such mail bounces to the operator. There is no API for the preference; the account page and its form
+    do it, and the page is read back. Needs the password, so it happens in the run that created or reset it; the cookie jar stays
+    in memory, and neither the password nor a cookie goes into a log line or an error."""
+    jar: dict[str, str] = {}
+    page = _sign_in(http, web, login, password, jar)
+    if _preference(page) == PREFERENCE:
+        log(STEP, f"user {login}: mail notifications already off")
+        return
+    r = _web(http, web, "POST", ACCOUNT + "/email", jar,
+             form={"_csrf": _csrf(page, login), "_method": "NOTIFICATION", "preference": PREFERENCE})
+    if r.status not in (200, 302, 303):
+        raise StepError(f"Forgejo refused to turn off the mail notifications of {login}: {r.status}")
+    page = _account(http, web, login, jar)
+    if _preference(page) != PREFERENCE:
+        raise StepError(f"Forgejo accepted the account form of {login} but its mail notifications are not {PREFERENCE}")
+    log(STEP, f"user {login}: mail notifications {PREFERENCE} (the noreply address does not deliver)")
+
+
+def _sign_in(http, web: str, login: str, password: str, jar: dict[str, str]) -> str:
+    """A web session as the agent user, and the account page it answers; its csrf token comes from the sign-in form."""
+    r = _web(http, web, "GET", "/user/login", jar)
+    if not r.ok:
+        raise StepError(f"Forgejo answered {r.status} for the web sign-in of {login}: the mail notifications cannot be turned off")
+    r = _web(http, web, "POST", "/user/login", jar,
+             form={"user_name": login, "password": password, "_csrf": _csrf(r.text, login)})
+    if r.status not in (302, 303):
+        raise StepError(f"Forgejo refused the web sign-in of {login} ({r.status}): the mail notifications cannot be turned off")
+    return _account(http, web, login, jar)
+
+
+def _account(http, web: str, login: str, jar: dict[str, str]) -> str:
+    r = _web(http, web, "GET", ACCOUNT, jar)
+    if not r.ok:
+        raise StepError(f"Forgejo answered {r.status} for the account page of {login}: the web session is not accepted")
+    return r.text
+
+
+def _web(http, web: str, method: str, path: str, jar: dict[str, str], *, form: dict | None = None):
+    """One request of the web session: the cookies of the jar go in, the ones of the answer come out. A redirect is an answer of
+    its own here, because that is where the sign-in sets the session cookie."""
+    headers = {"Cookie": "; ".join(f"{k}={v}" for k, v in jar.items())} if jar else {}
+    body = None
+    if form is not None:
+        body = urllib.parse.urlencode(form)
+        headers["Content-Type"] = FORM
+    r = http(method, web + path, headers=headers, body=body, redirect=False)
+    for line in r.header("set-cookie").split("\n"):
+        name, sep, value = line.split(";", 1)[0].strip().partition("=")
+        if sep and name.strip():
+            jar[name.strip()] = value.strip()
+    return r
+
+
+def _csrf(page: str, login: str) -> str:
+    for pattern in _CSRF:
+        found = pattern.search(page)
+        if found:
+            return found.group(1)
+    raise StepError(f"the web form of {login} carries no csrf token: the mail notifications cannot be turned off")
+
+
+def _preference(page: str) -> str | None:
+    """The selected option of the notification preference on the account page (the page renders `selected` on it). The page has
+    other selects (language, theme), so only the one named preference counts."""
+    select = _PREFERENCE_SELECT.search(page)
+    if not select:
+        return None
+    for tag in _OPTION.findall(select.group(1)):
+        if re.search(r"\bselected\b", tag, re.IGNORECASE):
+            value = _VALUE.search(tag)
+            return value.group(1) if value else None
+    return None

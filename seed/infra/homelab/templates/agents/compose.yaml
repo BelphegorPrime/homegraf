@@ -24,7 +24,7 @@ x-template:
     pairs the agents may work on (comma separated).
 services:
   app:
-    image: ghcr.io/belphegorprime/forgehands:v0.2.5
+    image: ghcr.io/belphegorprime/forgehands:v0.2.11
     ports:
       - "8080:8080"
     volumes:

@@ -25,6 +25,7 @@ from .infisical import InfisicalClient
 from .inventory import Inventory
 from .manifest import ServiceSpec
 from .npm import CERT_NAME_PREFIX, MANAGED_HOST_FIELDS, NpmClient, host_matches_domains
+from .public import MANAGED_MARKER, is_managed_config, remove_managed_config, render_public_config
 from .state import State
 
 OP_ISSUE = "issue"
@@ -74,7 +75,12 @@ class ServicePlan:
         if self.create_host:
             lines.append("  + Proxy Host anlegen")
         for k, (old, new) in self.host_changes.items():
-            lines.append(f"  ~ {k}: {old!r} -> {new!r}")
+            if k == "advanced_config":
+                lines.append("  ~ advanced_config:")
+                lines += [f"      - {l}" for l in (str(old or "").splitlines() or [""])]
+                lines += [f"      + {l}" for l in (str(new or "").splitlines() or [""])]
+            else:
+                lines.append(f"  ~ {k}: {old!r} -> {new!r}")
         for r in self.cert_reasons:
             lines.append(f"  * Zertifikat ausstellen: {r}")
         lines += [f"  i {n}" for n in self.notes]
@@ -84,7 +90,7 @@ class ServicePlan:
 
 
 def desired_host(spec: ServiceSpec, cert_id: int | None) -> dict:
-    return {
+    host = {
         "domain_names": list(spec.domains),
         "forward_scheme": spec.upstream_scheme,
         "forward_host": spec.upstream_host,
@@ -94,6 +100,9 @@ def desired_host(spec: ServiceSpec, cert_id: int | None) -> dict:
         "allow_websocket_upgrade": spec.websockets,
         "enabled": True,
     }
+    if spec.public is not None:
+        host["advanced_config"] = render_public_config(spec.public)
+    return host
 
 
 def _norm(field_name: str, value):
@@ -183,6 +192,21 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
                 continue  # wird mit dem neuen Zertifikat ohnehin gesetzt
             if _norm(k, owned.get(k)) != _norm(k, want[k]):
                 p.host_changes[k] = (owned.get(k), want[k])
+        current_advanced = owned.get("advanced_config") or ""
+        last_written = st.get("public_config") if st else None
+        if spec.public is not None:
+            wanted_advanced = render_public_config(spec.public)
+            if current_advanced != wanted_advanced:
+                if not is_managed_config(current_advanced):
+                    p.blockers.append(
+                        f"NPM-Host {owned.get('id')}: advanced_config enthält fremde Konfiguration "
+                        f"(kein '{MANAGED_MARKER}'-Marker); Übernahme nur von Hand")
+                else:
+                    p.host_changes["advanced_config"] = (current_advanced, wanted_advanced)
+        elif current_advanced:
+            remaining = remove_managed_config(current_advanced, last_written)
+            if remaining != current_advanced:
+                p.host_changes["advanced_config"] = (current_advanced, remaining)
         if st and st.get("manifest") == spec.to_json() and p.host_changes:
             p.drift += [f"in NPM manuell geändert: {k}" for k in p.host_changes]
     return p
@@ -313,6 +337,7 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
         raise ConflictError("; ".join(plan.blockers))
 
     st = state.get(spec.resource_id)
+    public_config = render_public_config(spec.public) if spec.public is not None else None
     base = dict(namespace=spec.namespace, service_id=spec.service_id, stack_id=spec.stack_id,
                 npm_instance=spec.npm_instance, domains=spec.domains, target_commit=commit,
                 source_repo=ctx.source_repo)
@@ -322,7 +347,7 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
 
     if plan.noop:
         state.upsert(spec.resource_id, reconciled_commit=commit, manifest=spec.to_json(), last_result="noop",
-                     last_error=None)
+                     last_error=None, public_config=public_config)
         log.event("apply", "noop")
         return "noop"
 
@@ -343,7 +368,10 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
     if plan.create_host:
         hop = state.open_op(spec.resource_id, OP_HOST) or state.start_op(spec.resource_id, OP_HOST)
         if plan.resume_host_id:
-            host = npm.update_proxy_host(plan.resume_host_id, {k: want[k] for k in MANAGED_HOST_FIELDS})
+            resume = {k: want[k] for k in MANAGED_HOST_FIELDS}
+            if "advanced_config" in want:
+                resume["advanced_config"] = want["advanced_config"]
+            host = npm.update_proxy_host(plan.resume_host_id, resume)
         else:
             state.step(hop, "creating")
             host = npm.create_proxy_host(want)
@@ -352,7 +380,9 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
         log.event("host", "created", npm_host_id=host["id"])
     else:
         host_id = st["npm_host_id"]
-        changes = {k: want[k] for k in plan.host_changes}
+        changes = {k: want[k] for k in plan.host_changes if k != "advanced_config"}
+        if "advanced_config" in plan.host_changes:
+            changes["advanced_config"] = plan.host_changes["advanced_config"][1]
         if new_cert:
             changes["certificate_id"] = cert_id
             changes["ssl_forced"] = want["ssl_forced"]
@@ -384,7 +414,8 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
         log.event("verify", "failed", error=msg)
         raise IngressError(msg)
 
-    fields = dict(manifest=spec.to_json(), reconciled_commit=commit, last_result="ok", last_error=None)
+    fields = dict(manifest=spec.to_json(), reconciled_commit=commit, last_result="ok", last_error=None,
+                  public_config=public_config)
     if new_cert:
         info = new_cert["info"]
         fields.update(npm_cert_id=cert_id, infisical_cert_id=new_cert["infisical_cert_id"],

@@ -4,7 +4,7 @@ import pytest
 
 from ingressctl.errors import ManifestError
 from ingressctl.inventory import load_inventory
-from ingressctl.manifest import load_all, normalize_domain
+from ingressctl.manifest import ServiceSpec, load_all, normalize_domain
 
 
 def test_domains_are_normalized(env):
@@ -121,6 +121,44 @@ def test_external_manifest_requires_external_stack(env):
     ns.write_text(ns.read_text().replace("paths: [stacks/nas/]", "paths: [stacks/nas/, external/]"))
     with pytest.raises(ManifestError, match="stack 'external'"):
         env.specs()
+
+
+def test_existing_manifest_has_no_public_spec(env):
+    (spec,) = env.specs("omniroute")
+    assert spec.public is None
+
+
+def test_public_block_is_validated_and_round_trips(env):
+    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
+        "      force_https: true\n",
+        "      force_https: true\n"
+        "      public: "
+        '{paths: [/hook/abc, "/files/*"], methods: [post], allow_cidrs: [10.0.0.0/8]}\n')
+    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    (spec,) = env.specs("omniroute")
+    assert spec.public is not None
+    assert spec.public.paths == ("/files/*", "/hook/abc")
+    assert spec.public.methods == ("POST",)
+    assert spec.public.allow_cidrs == ("10.0.0.0/8",)
+    assert ServiceSpec.from_json(spec.to_json()) == spec
+
+
+def test_invalid_public_block_is_rejected(env):
+    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
+        "      force_https: true\n",
+        "      force_https: true\n      public: {paths: [/]}\n")
+    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    with pytest.raises(ManifestError, match="proxy.public.paths"):
+        env.specs("omniroute")
+
+
+def test_public_block_unknown_field_is_rejected(env):
+    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
+        "      force_https: true\n",
+        "      force_https: true\n      public: {paths: [/hook], typo: 1}\n")
+    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    with pytest.raises(ManifestError, match="typo"):
+        env.specs("omniroute")
 
 
 def test_stack_without_inventory_entry_is_derived_from_its_folder(env):

@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+
 import pytest
 
 from ingressctl.errors import ManifestError
@@ -155,7 +158,9 @@ def test_golden_example():
     spec = parse_public({"paths": ["/hook/abc", "/files/*"], "methods": ["POST"]})
     assert render_public_config(spec) == r"""# managed by ingressctl: public paths only
 if ($uri !~ "^(/files/.*|/hook/abc|/\.well-known/acme-challenge/.*)$") { return 404; }
-if ($uri !~ "^/\.well-known/acme-challenge/.*$") { if ($request_method !~ "^(POST)$") { return 405; } }"""
+set $ingressctl_method $request_method;
+if ($uri ~ "^/\.well-known/acme-challenge/.*$") { set $ingressctl_method "-acme-"; }
+if ($ingressctl_method !~ "^(POST|-acme-)$") { return 405; }"""
 
 
 def test_golden_with_cidrs_and_two_methods():
@@ -166,7 +171,9 @@ def test_golden_with_cidrs_and_two_methods():
     })
     assert render_public_config(spec) == r"""# managed by ingressctl: public paths only
 if ($uri !~ "^(/api/.*|/\.well-known/acme-challenge/.*)$") { return 404; }
-if ($uri !~ "^/\.well-known/acme-challenge/.*$") { if ($request_method !~ "^(GET|POST)$") { return 405; } }
+set $ingressctl_method $request_method;
+if ($uri ~ "^/\.well-known/acme-challenge/.*$") { set $ingressctl_method "-acme-"; }
+if ($ingressctl_method !~ "^(GET|POST|-acme-)$") { return 405; }
 allow 10.0.0.0/8;
 allow 2001:db8::/48;
 deny all;"""
@@ -223,10 +230,26 @@ def _assert_no_injection(spec: PublicSpec) -> None:
     assert text.startswith("# managed by ingressctl: public paths only\n")
     assert text.count("{") == 3
     assert text.count("}") == 3
-    assert text.count('"') == 6
-    assert text.count(";") == 2 + cidr_lines
-    assert len(text.splitlines()) == 3 + cidr_lines
+    assert text.count('"') == 8
+    assert text.count(";") == 4 + cidr_lines
+    assert len(text.splitlines()) == 5 + cidr_lines
     assert "\r" not in text
+    _assert_no_nested_if(text)
+
+
+def _assert_no_nested_if(text: str) -> None:
+    """nginx erlaubt kein `if` in einem `if`; jede Direktive steht in einer Zeile."""
+    for line in text.splitlines():
+        assert line.count("if (") <= 1, line
+        assert line.count("{") == line.count("}") <= 1, line
+
+
+@pytest.mark.parametrize("spec", [
+    parse_public({"paths": ["/a"]}),
+    parse_public({"paths": ["/a", "/b/*"], "methods": ["post", "GET"], "allow_cidrs": ["10.0.0.0/8"]}),
+])
+def test_rendered_config_has_no_nested_if(spec):
+    _assert_no_nested_if(render_public_config(spec))
 
 
 @pytest.mark.parametrize("path", ["/a", "/a/b", "/a..b", "/a-b_c.d~e", "/files-1_2~3.txt/*", "/.well-known/other"])
@@ -242,3 +265,46 @@ def test_accepted_method_cannot_inject(method):
 @pytest.mark.parametrize("cidr", ["10.0.0.0/8", "203.0.113.0/24", "2001:db8::/32", "::1/128"])
 def test_accepted_cidr_cannot_inject(cidr):
     _assert_no_injection(parse_public({"paths": ["/a"], "methods": ["post"], "allow_cidrs": [cidr]}))
+
+
+def _nginx_runner() -> str | None:
+    if shutil.which("nginx"):
+        return "nginx"
+    if shutil.which("docker"):
+        probe = subprocess.run(["docker", "info"], capture_output=True)
+        if probe.returncode == 0:
+            return "docker"
+    return None
+
+
+def _server_block(text: str) -> str:
+    body = "\n".join("        " + line for line in text.splitlines())
+    return f"server {{\n    listen 8080;\n    location / {{\n{body}\n        return 200;\n    }}\n}}\n"
+
+
+@pytest.mark.skipif(not (shutil.which("nginx") or shutil.which("docker")), reason="needs nginx or docker to validate the rendered config")
+def test_rendered_config_is_accepted_by_nginx(tmp_path):
+    runner = _nginx_runner()
+    if runner is None:
+        pytest.skip("docker is installed but its daemon does not answer")
+    text = render_public_config(parse_public({
+        "paths": ["/hook/abc", "/files/*"],
+        "methods": ["POST"],
+        "allow_cidrs": ["10.0.0.0/8"],
+    }))
+    conf = tmp_path / "default.conf"
+    conf.write_text(_server_block(text))
+    if runner == "nginx":
+        main = tmp_path / "nginx.conf"
+        main.write_text(
+            "worker_processes 1;\nerror_log stderr;\npid " + str(tmp_path / "nginx.pid") + ";\n"
+            "events {}\nhttp {\n" + _server_block(text) + "}\n"
+        )
+        command = ["nginx", "-t", "-p", str(tmp_path), "-c", str(main)]
+    else:
+        command = [
+            "docker", "run", "--rm", "-v", f"{conf}:/etc/nginx/conf.d/default.conf:ro",
+            "nginx:alpine", "nginx", "-t",
+        ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

@@ -13,6 +13,7 @@ import yaml
 
 from .errors import ManifestError
 from .inventory import Inventory
+from .public import PublicSpec, parse_public
 
 MANIFEST_NAME = "ingress.yaml"
 EXTERNAL_DIR = "external"      # external/ingress.yaml: Dienste außerhalb des Repos
@@ -41,6 +42,7 @@ class ServiceSpec:
     renew_before_days: int
     health_path: str
     health_statuses: tuple[int, ...]
+    public: PublicSpec | None = None
 
     def policy_hash(self) -> str:
         """Ändert sich nur bei Werten, die eine Neuausstellung erfordern (nicht beim Upstream)."""
@@ -53,8 +55,13 @@ class ServiceSpec:
     @classmethod
     def from_json(cls, text: str) -> "ServiceSpec":
         d = json.loads(text)
+        d.setdefault("public", None)
         d["domains"] = tuple(d["domains"])
         d["health_statuses"] = tuple(d["health_statuses"])
+        if d["public"] is not None:
+            p = d["public"]
+            d["public"] = PublicSpec(paths=tuple(p["paths"]), methods=tuple(p["methods"]),
+                                     allow_cidrs=tuple(p["allow_cidrs"]))
         return cls(**d)
 
 
@@ -125,6 +132,10 @@ def parse_manifest(root: pathlib.Path, path: pathlib.Path, inv: Inventory) -> li
                 raise ManifestError(f"{rel}: {rid}: Stack-Namespace '{stack['namespace']}' != '{ns}'")
 
         proxy, up, cert, hc = svc["proxy"], svc["proxy"]["upstream"], svc["certificate"], svc["healthcheck"]
+        try:
+            public = parse_public(proxy["public"]) if "public" in proxy else None
+        except ManifestError as e:
+            raise ManifestError(f"{rel}: {rid}: {e}") from None
         domains = [normalize_domain(d) for d in proxy["domains"]]
         if len(set(domains)) != len(domains):
             raise ManifestError(f"{rel}: {rid}: doppelte Domains nach Normalisierung")
@@ -158,6 +169,7 @@ def parse_manifest(root: pathlib.Path, path: pathlib.Path, inv: Inventory) -> li
             upstream_port=up["port"], websockets=proxy.get("websockets", False),
             force_https=proxy.get("force_https", True), issuer_ref=cert["issuer_ref"], validity_days=validity,
             renew_before_days=renew_before, health_path=hc["path"], health_statuses=tuple(sorted(hc["accepted_statuses"])),
+            public=public,
         ))
     return specs
 

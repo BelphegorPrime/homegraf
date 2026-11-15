@@ -1,0 +1,46 @@
+# Tests for the generated homegraf repository (this file is copied by the bootstrap, with the placeholders filled in).
+# The stack's Forgejo runner carries the label `docker`; the job fetches the triggering commit with a plain authenticated
+# git fetch (no actions/checkout), and the container is pinned by version and digest. This workflow only tests: it never
+# publishes an image or deploys a stack.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  seed:
+    name: seed
+    runs-on: docker
+    timeout-minutes: 15
+    container:
+      image: python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
+    steps:
+      - name: git
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+      - name: checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q . && git config --global --add safe.directory "$PWD"
+          git -c http.extraheader="Authorization: token $TOKEN" fetch -q --no-tags "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
+          git checkout -q "${{ github.sha }}"
+      - name: dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -q -e 'infra/ingress-controller[test]'
+      - name: inventory, graph and stackctl
+        run: |
+          .venv/bin/python -c "import sys; sys.path.insert(0, 'infra/homelab'); import newapp, stackctl; errors, warnings = stackctl.validate(newapp.ROOT); assert not errors, errors"
+          .venv/bin/python infra/graph/build.py --check
+          .venv/bin/ingressctl validate --root .
+      - name: tests
+        run: .venv/bin/pytest -q -p no:cacheprovider infra/graph infra/homelab infra/infisical infra/stackctl infra/ingress-controller/tests

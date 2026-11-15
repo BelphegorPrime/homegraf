@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from .errors import ManifestError
@@ -15,12 +16,16 @@ _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
 _DEFAULT_METHODS = ("GET", "HEAD")
 _PATH_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-/")
 
+# Muss den Schlüsseln von presets.PRESETS entsprechen (geprüft in slice (c)).
+KNOWN_PRESETS = frozenset({"github-hooks"})
+
 
 @dataclass(frozen=True)
 class PublicSpec:
     paths: tuple[str, ...]        # sortiert, eindeutig
     methods: tuple[str, ...]      # sortiert, Großbuchstaben
     allow_cidrs: tuple[str, ...]  # sortiert, kanonisch
+    allow_presets: tuple[str, ...] = ()  # sortiert, eindeutig
 
 
 def parse_public(raw: dict) -> PublicSpec:
@@ -34,14 +39,16 @@ def parse_public(raw: dict) -> PublicSpec:
 
     if "paths" not in raw:
         raise _error("paths", "fehlt")
+    cidrs, presets = _parse_cidrs(raw["allow_cidrs"]) if "allow_cidrs" in raw else ((), ())
     return PublicSpec(
         paths=_parse_paths(raw["paths"]),
         methods=_parse_methods(raw["methods"]) if "methods" in raw else _DEFAULT_METHODS,
-        allow_cidrs=_parse_cidrs(raw["allow_cidrs"]) if "allow_cidrs" in raw else (),
+        allow_cidrs=cidrs,
+        allow_presets=presets,
     )
 
 
-def render_public_config(spec: PublicSpec) -> str:
+def render_public_config(spec: PublicSpec, preset_cidrs: Mapping[str, Sequence[str]] | None = None) -> str:
     alternatives = [_path_regex(path) for path in sorted(spec.paths)]
     alternatives.append(_ACME_REGEX)
     uri_regex = "^(" + "|".join(alternatives) + ")$"
@@ -56,10 +63,27 @@ def render_public_config(spec: PublicSpec) -> str:
         f'if ($uri ~ "{acme_regex}") {{ set $ingressctl_method "{_ACME_METHOD}"; }}',
         f'if ($ingressctl_method !~ "{method_regex}") {{ return 405; }}',
     ]
-    if spec.allow_cidrs:
-        lines.extend(f"allow {cidr};" for cidr in sorted(spec.allow_cidrs))
+    if spec.allow_cidrs or spec.allow_presets:
+        networks = set(spec.allow_cidrs) | _resolved_preset_cidrs(spec.allow_presets, preset_cidrs or {})
+        lines.extend(f"allow {cidr};" for cidr in sorted(networks))
         lines.append("deny all;")
     return "\n".join(lines)
+
+
+def _resolved_preset_cidrs(names: tuple[str, ...], preset_cidrs: Mapping[str, Sequence[str]]) -> set[str]:
+    """Netze der Presets, erneut geprüft: nichts Ausgelöstes darf ungeprüft in die nginx-Konfiguration."""
+    networks = set()
+    for name in names:
+        if name not in preset_cidrs:
+            raise _error("allow_cidrs", f"preset '{name}' ist nicht aufgelöst")
+        for cidr in preset_cidrs[name]:
+            if not isinstance(cidr, str):
+                raise _error("allow_cidrs", f"Preset '{name}': {cidr!r} ist kein IPv4-/IPv6-Netz")
+            try:
+                networks.add(str(ipaddress.ip_network(cidr, strict=True)))
+            except ValueError as exc:
+                raise _error("allow_cidrs", f"Preset '{name}': '{cidr}' ist kein IPv4-/IPv6-Netz: {exc}") from None
+    return networks
 
 
 def is_managed_config(text: str | None) -> bool:
@@ -136,13 +160,16 @@ def _parse_methods(value) -> tuple[str, ...]:
     return tuple(sorted(methods))
 
 
-def _parse_cidrs(value) -> tuple[str, ...]:
-    if isinstance(value, dict) and "preset" in value:
-        raise _error("allow_cidrs", "preset wird noch nicht unterstützt")
-    if not isinstance(value, (list, tuple)):
+def _parse_cidrs(value) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Statische Netze und Preset-Namen; ein einzelnes `{preset: <name>}` steht für eine Liste mit einem Eintrag."""
+    items = [value] if isinstance(value, dict) else value
+    if not isinstance(items, (list, tuple)):
         raise _error("allow_cidrs", "muss eine Liste sein")
-    cidrs = set()
-    for item in value:
+    cidrs, presets = set(), set()
+    for item in items:
+        if isinstance(item, dict):
+            presets.add(_parse_preset(item))
+            continue
         if not isinstance(item, str):
             raise _error("allow_cidrs", f"{item!r} ist kein String")
         try:
@@ -150,7 +177,19 @@ def _parse_cidrs(value) -> tuple[str, ...]:
         except ValueError as exc:
             raise _error("allow_cidrs", f"'{item}' ist kein IPv4-/IPv6-Netz: {exc}") from None
         cidrs.add(str(network))
-    return tuple(sorted(cidrs))
+    return tuple(sorted(cidrs)), tuple(sorted(presets))
+
+
+def _parse_preset(item: dict) -> str:
+    if set(item) != {"preset"}:
+        raise _error("allow_cidrs", "Preset-Eintrag muss genau das Feld 'preset' haben")
+    name = item["preset"]
+    if not isinstance(name, str):
+        raise _error("allow_cidrs", f"{name!r} ist kein Preset-Name")
+    if name not in KNOWN_PRESETS:
+        known = ", ".join(sorted(KNOWN_PRESETS))
+        raise _error("allow_cidrs", f"unbekanntes Preset '{name}' (bekannt: {known})")
+    return name
 
 
 _ACME_REGEX = ACME_CHALLENGE.replace(".", r"\.") + ".*"

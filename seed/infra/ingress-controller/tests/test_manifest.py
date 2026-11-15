@@ -1,3 +1,4 @@
+import json
 import textwrap
 
 import pytest
@@ -140,7 +141,35 @@ def test_public_block_is_validated_and_round_trips(env):
     assert spec.public.paths == ("/files/*", "/hook/abc")
     assert spec.public.methods == ("POST",)
     assert spec.public.allow_cidrs == ("10.0.0.0/8",)
+    assert spec.public.allow_presets == ()
     assert ServiceSpec.from_json(spec.to_json()) == spec
+
+
+def test_public_block_accepts_a_preset(env):
+    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
+        "      force_https: true\n",
+        "      force_https: true\n"
+        "      public: {paths: [/hook/abc], allow_cidrs: {preset: github-hooks}}\n")
+    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    (spec,) = env.specs("omniroute")
+    assert spec.public is not None
+    assert spec.public.allow_cidrs == ()
+    assert spec.public.allow_presets == ("github-hooks",)
+    assert ServiceSpec.from_json(spec.to_json()) == spec
+
+
+def test_from_json_accepts_public_without_allow_presets(env):
+    """Zustandszeilen, die vor dieser Scheibe geschrieben wurden, tragen kein allow_presets."""
+    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
+        "      force_https: true\n",
+        "      force_https: true\n      public: {paths: [/a], allow_cidrs: [10.0.0.0/8]}\n")
+    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    (spec,) = env.specs("omniroute")
+    data = json.loads(spec.to_json())
+    del data["public"]["allow_presets"]
+    loaded = ServiceSpec.from_json(json.dumps(data))
+    assert loaded == spec
+    assert loaded.public.allow_presets == ()
 
 
 def test_invalid_public_block_is_rejected(env):

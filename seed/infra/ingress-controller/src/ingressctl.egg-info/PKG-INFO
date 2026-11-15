@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: ingressctl
+Version: 0.1.0
+Summary: Deklarative HTTPS-Zugänge: ingress.yaml -> Nginx Proxy Manager + Infisical private CA
+Requires-Python: >=3.11
+Requires-Dist: PyYAML==6.0.3
+Requires-Dist: requests==2.34.2
+Requires-Dist: cryptography==50.0.2
+Requires-Dist: jsonschema==4.26.0
+Provides-Extra: test
+Requires-Dist: pytest==9.2.0; extra == "test"
+Requires-Dist: vermin==1.9.2; extra == "test"

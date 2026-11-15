@@ -506,9 +506,9 @@ services:
     logging: *logging
 
   # --- optional: agents (profile "agents"): an issue labelled ai:ready becomes a draft pull request --------------------------
-  # openhands is the all-in-one Agent Canvas image (Canvas, Agent Server, Automation Server). forgehands is the Forgejo webhook
-  # bridge. Neither is configured by the bootstrap: docs/stack.md has the manual steps (the OpenHands webhook registration and the
-  # Forgejo webhook both need secrets that setup.sh generates).
+  # openhands is the all-in-one Agent Canvas image (Canvas, Agent Server, Automation Server). forgehands starts the agent itself in
+  # direct mode (a Forgejo label routes to an agent profile) or forwards the Forgejo webhook to an OpenHands automation. Neither is
+  # configured by the bootstrap: docs/stack.md has the manual steps (the Forgejo webhook in both modes; the profile ids for direct mode).
   openhands:
     image: ${OPENHANDS_IMAGE:-ghcr.io/openhands/agent-canvas:latest}
     container_name: ${PROJECT_PREFIX:-homegraf}-openhands
@@ -542,21 +542,23 @@ services:
       openhands:
         condition: service_healthy
     environment:
-      # Webhook mode (the two below): ForgeHands forwards a signed event to an OpenHands automation. Empty until the webhook is
+      # Both modes: Forgejo delivers the issues events ForgeHands works from (at least 16 characters).
+      FORGEJO_WEBHOOK_SECRET: ${FORGEHANDS_FORGEJO_WEBHOOK_SECRET:-}
+      # Webhook mode only (empty OPENHANDS_API_URL): the HMAC secret and the URL of the Canvas automation. Empty until the webhook is
       # registered in Canvas; ForgeHands then exits with a clear error. A `:?` here would block `docker compose up -d openhands`,
       # which is the step that produces the URL.
-      FORGEJO_WEBHOOK_SECRET: ${FORGEHANDS_FORGEJO_WEBHOOK_SECRET:-}
       OPENHANDS_WEBHOOK_SECRET: ${FORGEHANDS_OPENHANDS_WEBHOOK_SECRET:-}
       OPENHANDS_WEBHOOK_URL: ${FORGEHANDS_OPENHANDS_WEBHOOK_URL:-}
-      # Direct mode: with both set, ForgeHands starts the conversation itself and ignores the webhook settings above. Empty
-      # OPENHANDS_API_URL keeps webhook mode, so an existing .env changes nothing.
+      # Direct mode: with OPENHANDS_API_URL set, ForgeHands calls POST /api/conversations itself and the two OpenHands webhook settings
+      # above are ignored (FORGEJO_WEBHOOK_SECRET is not). Empty keeps webhook mode, so an existing .env changes nothing.
       OPENHANDS_API_URL: ${FORGEHANDS_OPENHANDS_API_URL:-}
       OPENHANDS_API_KEY: ${OPENHANDS_LOCAL_BACKEND_API_KEY:-}
       # Variables handed to every conversation: without them the agent has no Forgejo token (saved secrets need to be named).
       AGENT_SECRETS: ${FORGEHANDS_AGENT_SECRETS:-}
       FORGEJO_URL: ${FORGEHANDS_FORGEJO_URL:-http://forgejo:3000}
       FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
-      # Label -> profile, tier, max_iterations; hgboot renders it from the profile ids of the agents profile.
+      # Label -> profile id, tier, max_iterations (and optional max_budget, max_concurrent); ids from GET /api/agent-profiles, a name is
+      # rejected with HTTP 422. Empty keeps direct mode off.
       LABEL_ROUTES: ${FORGEHANDS_LABEL_ROUTES:-}
       ALLOWED_REPOS: ${FORGEHANDS_ALLOWED_REPOS:-}
       ALLOWED_SENDERS: ${FORGEHANDS_ALLOWED_SENDERS:-}

@@ -150,8 +150,6 @@ for o in $optional; do
 done
 allowed_repos=${FORGEHANDS_ALLOWED_REPOS:-$forgejo_user/infrastructure}
 allowed_senders=${FORGEHANDS_ALLOWED_SENDERS:-$forgejo_user}
-# Label routes of ForgeHands direct mode: the agent profiles of the agents stack (planner, worker, worker-strong, reviewer).
-label_routes=${FORGEHANDS_LABEL_ROUTES:-'{"ai:plan":{"profile":"planner","tier":"planner","max_iterations":40},"ai:ready":{"profile":"worker","tier":"worker","max_iterations":120},"ai:escalate":{"profile":"worker-strong","tier":"worker-strong","max_iterations":120},"ai:review":{"profile":"reviewer","tier":"reviewer","max_iterations":60}}'}
 case ",$profiles," in
   *,agents,*)
     IFS=',' read -r -a allowed_repo_list <<< "$allowed_repos"
@@ -194,17 +192,18 @@ mkdir -p data/periphery data/backups
   echo "FORGEHANDS_ALLOWED_REPOS=$allowed_repos"
   case ",$profiles," in
     *,agents,*)
-      # Direct mode: ForgeHands starts the conversation itself. The Forgejo token is the one the Forgejo user made by hand for the
-      # agents (scopes write:repository, read:user); empty keeps it out of the agent, which then cannot push.
-      echo "FORGEHANDS_OPENHANDS_API_URL=http://openhands:8000"
-      echo "FORGEHANDS_FORGEJO_URL=http://forgejo:3000"
-      echo "FORGEHANDS_AGENT_SECRETS=${FORGEHANDS_AGENT_SECRETS:-FORGEJO_TOKEN,FORGEJO_URL}"
-      echo "FORGEHANDS_ALLOWED_SENDERS=$allowed_senders"
-      echo "FORGEHANDS_LABEL_ROUTES=$label_routes"
-      echo "FORGEHANDS_MAX_CONCURRENT_PER_TIER=${FORGEHANDS_MAX_CONCURRENT_PER_TIER:-2}"
-      echo "FORGEHANDS_MAX_CONCURRENT=${FORGEHANDS_MAX_CONCURRENT:-4}"
-      echo "FORGEHANDS_MAX_RUNS_PER_HOUR=${FORGEHANDS_MAX_RUNS_PER_HOUR:-30}"
-      echo "FORGEHANDS_MAX_RUN_MINUTES=${FORGEHANDS_MAX_RUN_MINUTES:-120}"
+      # ForgeHands starts in webhook mode (docs/stack.md). Direct mode is opt-in: the routes name the agent profile ids, which a fresh
+      # stack does not have yet, so the defaults stay commented until Canvas has the four profiles (GET /api/agent-profiles).
+      echo "# Direct mode: uncomment with the profile ids from GET /api/agent-profiles (a name is rejected with HTTP 422)."
+      echo "# FORGEHANDS_OPENHANDS_API_URL=http://openhands:8000"
+      echo "# FORGEHANDS_LABEL_ROUTES='{\"ai:plan\":{\"profile\":\"<planner-id>\",\"tier\":\"planner\",\"max_iterations\":80},\"ai:ready\":{\"profile\":\"<worker-id>\",\"tier\":\"worker\",\"max_iterations\":120},\"ai:escalate\":{\"profile\":\"<worker-strong-id>\",\"tier\":\"worker-strong\",\"max_iterations\":120},\"ai:review\":{\"profile\":\"<reviewer-id>\",\"tier\":\"reviewer\",\"max_iterations\":60}}'"
+      echo "# FORGEHANDS_FORGEJO_URL=http://forgejo:3000"
+      echo "# FORGEHANDS_AGENT_SECRETS=FORGEJO_TOKEN,FORGEJO_URL"
+      echo "# FORGEHANDS_ALLOWED_SENDERS=$allowed_senders"
+      echo "# FORGEHANDS_MAX_CONCURRENT_PER_TIER=${FORGEHANDS_MAX_CONCURRENT_PER_TIER:-2}"
+      echo "# FORGEHANDS_MAX_CONCURRENT=${FORGEHANDS_MAX_CONCURRENT:-4}"
+      echo "# FORGEHANDS_MAX_RUNS_PER_HOUR=${FORGEHANDS_MAX_RUNS_PER_HOUR:-30}"
+      echo "# FORGEHANDS_MAX_RUN_MINUTES=${FORGEHANDS_MAX_RUN_MINUTES:-120}"
       ;;
   esac
   echo
@@ -242,10 +241,10 @@ case "$dns_mode" in
 esac
 case ",$profiles," in
   *,agents,*)
-    echo "Agents: ForgeHands runs in direct mode (OPENHANDS_API_URL is the openhands service). It needs a Forgejo token for the agents:"
-    echo "     put FORGEJO_TOKEN (scopes write:repository, read:user) in .env and restart forgehands. Add the model provider key and the"
-    echo "     agent profiles in Canvas (http://$host_ip:${PORT_OPENHANDS:-8000}); no OpenHands webhook or Forgejo webhook is needed in this"
-    echo "     mode. Without FORGEHANDS_OPENHANDS_API_URL the old webhook mode applies: docs/stack.md has both."
+    echo "Agents: ForgeHands starts in webhook mode. Add the model provider key and the agent profiles in Canvas"
+    echo "     (http://$host_ip:${PORT_OPENHANDS:-8000}), register the OpenHands automation webhook and add the Forgejo webhook (events: issues)"
+    echo "     as docs/stack.md says; both modes need the Forgejo webhook. Direct mode is opt-in once the profiles exist: set"
+    echo "     FORGEHANDS_OPENHANDS_API_URL and FORGEHANDS_LABEL_ROUTES with the profile ids, then docker compose up -d forgehands."
     ;;
 esac
 echo "Next: docker compose up -d --wait     then see docs/stack.md"

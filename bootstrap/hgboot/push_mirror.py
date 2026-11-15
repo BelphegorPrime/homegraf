@@ -281,15 +281,20 @@ class PushMirror:
             rows = r.json()
             if not isinstance(rows, list):
                 raise StepError(f"{service} returned no branch list for {repo}")
+            if not rows:
+                return branches
+            fresh = False
             for row in rows:
                 name = row.get("name") if isinstance(row, dict) else None
                 commit = (row.get("commit") or {}) if isinstance(row, dict) else {}
                 sha = commit.get("id") or commit.get("sha")
                 if not name or not sha:
                     raise StepError(f"{service} returned a branch without a name or commit for {repo}")
+                fresh = fresh or name not in branches
                 branches[name] = sha
-            if len(rows) < PER_PAGE:
-                return branches
+            if not fresh:
+                raise StepError(f"{service} repeated a page of the branches of {repo}: refusing to compare an unreliable list")
+        # A short page is not the last one: Forgejo caps a page at its max_response_items (50 by default), whatever limit is asked.
         raise StepError(f"{service} returned more than {MAX_PAGES * PER_PAGE} branches for {repo}: "
                         "refusing to compare a truncated list")
 

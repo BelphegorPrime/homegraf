@@ -17,9 +17,10 @@ GITHUB_TOKEN = "test-github-token"
 UPDATED = "2026-11-15T00:00:00Z"
 
 
-def page(rows, query, parameter):
+def page(rows, query, parameter, cap=100):
+    """One page of rows; cap is the largest page the service gives (Forgejo's max_response_items is 50)."""
     number = int((query.get("page") or ["1"])[0])
-    size = int((query.get(parameter) or ["100"])[0])
+    size = min(int((query.get(parameter) or ["100"])[0]), cap)
     return rows[(number - 1) * size:number * size]
 
 
@@ -73,7 +74,7 @@ class FakeMirror:
             if req.headers.get("authorization") != f"token {FORGEJO_TOKEN}":
                 return 401, {"message": "no Forgejo token"}
             return 200, [{"name": n, "commit": {"id": s}}
-                         for n, s in page(list(self.forgejo_branches.items()), query, "limit")]
+                         for n, s in page(list(self.forgejo_branches.items()), query, "limit", cap=50)]
         if parts.path.startswith(f"/api/v1/repos/{FORGEJO_REPO}/compare/") and req.method == "GET":
             if req.headers.get("authorization") != f"token {FORGEJO_TOKEN}":
                 return 401, {"message": "no Forgejo token"}
@@ -200,7 +201,29 @@ class MirrorTest(unittest.TestCase):
         fake = FakeMirror(forgejo, github)
         with self.assertRaisesRegex(StepError, "z-stale"):
             self.mirror(fake).sync()
-        self.assertEqual(len(self.srv.calls("GET", f"/repos/{GITHUB_REPO}/branches")), 3)
+        self.assertEqual(len(self.srv.calls("GET", f"/repos/{GITHUB_REPO}/branches")), 4)
+        self.assertEqual(self.writes(), [])
+
+    def test_forgejo_pages_of_fifty_are_read_to_the_end(self):
+        branches = {"main": "9" * 40, **{f"feature-{i:03d}": f"{i + 1:040d}" for i in range(119)}}
+        fake = FakeMirror(branches, dict(branches))
+        mirror = self.mirror(fake)
+        fake.mirrors = [self.correct_mirror()]
+        result = mirror.sync()
+        self.assertEqual(len(result.branches), 120)
+        self.assertEqual(len(self.srv.calls("GET", f"/api/v1/repos/{FORGEJO_REPO}/branches")), 4)
+
+    def test_a_diverged_branch_beyond_the_first_forgejo_page_still_blocks_every_write(self):
+        common, forgejo, github = "3" * 40, "1" * 40, "2" * 40
+        names = [f"feature-{i:03d}" for i in range(60)]
+        source = {n: "4" * 40 for n in names}
+        target = dict(source)
+        source[names[55]], target[names[55]] = forgejo, github
+        fake = FakeMirror(source, target, history={forgejo: [common], github: [common]})
+        mirror = self.mirror(fake)
+        fake.mirrors = [self.correct_mirror()]
+        with self.assertRaisesRegex(StepError, names[55]):
+            mirror.sync()
         self.assertEqual(self.writes(), [])
 
     def test_a_branch_missing_on_github_is_created_by_the_sync(self):

@@ -23,7 +23,9 @@ echo "validate: bootstrap tests (standard library only)"
 )
 
 echo "validate: shell syntax"
-bash -n setup.sh scripts/*.sh
+for file in setup.sh scripts/*.sh; do
+	bash -n "$file"
+done
 
 echo "validate: whitespace"
 git diff --check

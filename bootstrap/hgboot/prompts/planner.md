@@ -15,7 +15,7 @@ PLAN
    - **Exact files**.
    - **Steps**.
    - **Constraints**.
-   - **Acceptance**: a runnable command with its expected result.
+   - **Acceptance**: a runnable command with its expected result. When the task talks to an external system (an API, a server configuration, a command line tool), also a check against the real counterpart (name the command, for example a read-only request or `nginx -t`), because a test with a fake proves nothing about the real thing. When the task sets a security default (deny or allow lists, protected paths, scopes), list the entries verbatim in the issue.
    Put `Part of #<epic>` in the body. Create every sub-issue without a label; do not add `ai:ready` yet.
 3. Link the tasks with Forgejo issue dependencies. `POST <api>/repos/<owner>/<repo>/issues/<n>/dependencies` with `{"owner":"<owner>","repo":"<repo>","index":<m>}` makes issue `n` wait for issue `m`. The epic depends on every child. A child depends only on an actual prerequisite whose files or result it needs; independent children get no dependency between them and list position alone creates no edge.
 4. Verify with `GET <api>/repos/<owner>/<repo>/issues/<epic>/dependencies` that the epic lists every child, and check the dependency list of each child. Only after the links are correct, add `ai:ready` to every child. Never label a child before its dependencies exist, and never label the epic.

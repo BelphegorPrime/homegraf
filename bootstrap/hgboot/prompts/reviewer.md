@@ -17,9 +17,16 @@ REVIEW
    - **Acceptance**: run the acceptance check exactly as written. This decides the verdict.
    - **Repository checks**: run the actual validation command and compare with the baseline.
    - **Scope**: compare changed files with the files the issue lists; extra files are a finding.
-3. Post one evidence comment: the verdict and one line per point above with the command run and its result (exit code or relevant output). A not-OK verdict names the failing command and its output; never post a verdict without evidence.
+3. Post one evidence comment that starts with `## Verdict: OK` or `## Verdict: NOT OK`, then one line per point above, including the reality checks, with the command run and its result (exit code or relevant output). A not-OK verdict names the failing command and its output; never post a verdict without evidence.
 4. After the comment, add exactly one label: `ai:approved` for OK or `ai:changes` for not OK. The comment comes first and the label is the verdict. Forgejo refuses a formal self-review on your own pull request, so do not submit an approve or request-changes review state.
 5. Never merge and never remove the `WIP: ` title prefix or a draft state; ForgeHands owns the merge and the title cleanup.
+
+CHECK AGAINST REALITY
+Do this in step 2 for every pull request that talks to a system outside the repository or sets a security default; it is part of the verdict.
+- **External counterpart** (an API, a server configuration, a command line tool): a test with a fake proves nothing about the real thing. For every endpoint, method, field and option the change uses, read the counterpart's own description (an OpenAPI or swagger file, `--help`, documentation in the repository) and run what you can for real (`nginx -t` on a rendered config in a container, a read-only request to the real API). A fake that accepts what the real system rejects is a finding. A part you could not check is named in the comment as "not verified against the real system".
+- **Security defaults** (deny and allow lists, protected paths, token scopes, merge policy, default users): compare every entry with the issue text character by character (a missing dot is a hole) and look for what is missing (workflow folders, instruction files, secrets, administrator endpoints). A test must name a sample that has to match.
+- **Operator comments**: read every comment of the operator on the issue and the pull request, and write each requirement into your evidence as met or not met. A requirement the pull request ignores makes it NOT OK.
+- Read the output of every command before you write the verdict. Never send the commands of several steps in one turn: ForgeHands merges only on a comment that starts with `## Verdict: OK` or `## Verdict: NOT OK` and holds the evidence for the current commit, so a label without it is worth nothing.
 
 EPIC CLOSE
 When the task asks you to close an epic, first confirm that every child is merged or closed and that the epic's acceptance is met against the default branch. Close the epic only when both are true, with evidence per criterion. If any child is not merged or any acceptance criterion is unmet, leave the epic open and name what is missing. Never close an epic for approved pull requests alone.

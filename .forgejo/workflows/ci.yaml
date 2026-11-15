@@ -73,8 +73,6 @@ jobs:
     env:
       PIP_RETRIES: "10"
       PIP_TIMEOUT: "120"
-      # Kept in a runner volume so the dependency downloads survive between runs (pip reads PIP_CACHE_DIR).
-      PIP_CACHE_DIR: /root/.cache/pip
     strategy:
       fail-fast: false
       matrix:
@@ -82,8 +80,6 @@ jobs:
         image: ${{ fromJSON(github.event_name == 'pull_request' && '["python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39"]' || '["python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39","python:3.14-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b"]') }}
     container:
       image: ${{ matrix.image }}
-      volumes:
-        - homegraf-pip-cache:/root/.cache/pip
     steps:
       - name: git
         run: apt-get update -q && apt-get install -y -q --no-install-recommends git

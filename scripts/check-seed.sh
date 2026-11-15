@@ -7,13 +7,32 @@
 #   KEEP=1 scripts/check-seed.sh     keeps the directory and prints where it is
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
+start=$SECONDS
+step_start=$start
+step_names=()
+step_seconds=()
+pending="copy the seed"
+# Every step is timed; summary prints one line per step, so a slow one is visible without another run.
+step() {
+  step_names+=("$pending")
+  step_seconds+=($((SECONDS - step_start)))
+  step_start=$SECONDS
+  pending=$1
+  printf '\n== %s\n' "$1"
+}
+summary() {
+  step_names+=("$pending")
+  step_seconds+=($((SECONDS - step_start)))
+  printf '\n== timings (seconds)\n'
+  local i
+  for i in "${!step_names[@]}"; do printf '%4d  %s\n' "${step_seconds[$i]}" "${step_names[$i]}"; done
+  printf '%4d  total\n' "$((SECONDS - start))"
+}
 work=$(mktemp -d)
 [ -n "${KEEP:-}" ] || trap 'rm -rf "$work"' EXIT
 repo=$work/repo
 cp -a "$here/seed" "$repo"
 cd "$repo"
-
-step() { printf '\n== %s\n' "$*"; }
 
 # The tools need PyYAML (the homegraf image has python3-yaml); ingressctl's dependencies bring it, with pytest for the tests.
 step "python $(python3 --version | cut -d' ' -f2) and the dependencies"
@@ -117,5 +136,6 @@ print('graph:', len(g['nodes']), 'nodes, no hardware layer, platform and sample 
 step "the tests of the tools"
 "$work/venv/bin/pytest" -q -p no:cacheprovider infra/graph infra/homelab infra/infisical infra/stackctl infra/ingress-controller/tests
 
+summary
 echo
 echo "seed ok${KEEP:+ (kept in $repo)}"

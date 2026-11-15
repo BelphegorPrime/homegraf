@@ -17,6 +17,10 @@ FILES = {
           ca: {label: Homelab CA, stack: app, kind: certificates}
     """),
     "inventory/servers.yaml": "servers:\n  nas: {address: 10.0.0.1}\n  box: {address: 10.0.0.2}\n",
+    "inventory/ingress.yaml": textwrap.dedent("""
+        issuers:
+          homelab-private-ca: {allowed_domains: ["*.lab.example"]}
+    """),
     "inventory/stacks.yaml": textwrap.dedent("""
         stacks:
           - {id: app, path: stacks/app, compose_files: [compose.yaml], server: nas, komodo_stack: app, status: verified, secrets: infisical}
@@ -47,7 +51,10 @@ FILES = {
         services:
           - id: app
             stack: app
-            proxy: {domains: [app.lab.example, www.lab.example], upstream: {scheme: http, server: nas, port: 8080}}
+            proxy:
+              domains: [app.lab.example, www.lab.example]
+              public: {paths: [/hook/abc, "/files/*"], methods: [post], allow_cidrs: [203.0.113.0/24]}
+              upstream: {scheme: http, server: nas, port: 8080}
     """),
     "stacks/other/compose.yaml": "services:\n  api:\n    image: other:1\n    ports: ['9000:3000']\n",
     "stacks/old/compose.yaml": "services: {x: {image: x}}\n",
@@ -69,13 +76,21 @@ FILES = {
 }
 
 
-@pytest.fixture
-def graph(tmp_path):
-    for rel, content in FILES.items():
-        f = tmp_path / rel
+def write_files(root, files):
+    for rel, content in files.items():
+        f = root / rel
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(content)
+
+
+@pytest.fixture
+def graph(tmp_path):
+    write_files(tmp_path, FILES)
     return build.build_graph(tmp_path)
+
+
+def nodes(graph):
+    return {n["id"]: n for n in graph["nodes"]}
 
 
 def edges(graph, type_):
@@ -170,11 +185,78 @@ def test_real_repo_builds_without_dangling_edges():
 
 def test_without_platform_settings_the_map_has_no_platform_and_no_dangling_edges(tmp_path):
     files = {k: v for k, v in FILES.items() if k != "inventory/homegraf.yaml"}
-    for rel, content in files.items():
-        f = tmp_path / rel
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(content)
+    write_files(tmp_path, files)
     g = build.build_graph(tmp_path)
     assert not [n for n in g["nodes"] if n["type"] == "infra"]
     assert not [e for e in g["edges"] if e["type"] in ("deployed-by", "uses-secrets", "terminated-by", "proxies", "certificates-from")]
+    assert [w for w in g["warnings"] if "dangling" in w] == []
+
+
+def test_public_block_marks_the_domain_and_its_owner(graph):
+    n = nodes(graph)
+    assert n["domain:app.lab.example"]["exposure"] == {
+        "domain": "app.lab.example", "reason": "proxy-public", "paths": ["/files/*", "/hook/abc"],
+        "methods": ["POST"], "allowCidrs": ["203.0.113.0/24"]}
+    assert [e["domain"] for e in n["stack:app"]["exposure"]] == ["app.example.org", "app.lab.example", "www.lab.example"]
+    assert n["stack:app"]["exposure"][1] == n["domain:app.lab.example"]["exposure"]
+
+
+def test_manual_host_with_a_public_name_has_no_paths(graph):
+    exposure = nodes(graph)["domain:app.example.org"]["exposure"]
+    assert exposure == {"domain": "app.example.org", "reason": "public-name"}
+    assert "paths" not in exposure and "allowCidrs" not in exposure
+
+
+def test_a_domain_the_issuer_allows_has_no_exposure(graph):
+    n = nodes(graph)
+    assert "exposure" not in n["domain:vm.lab.example"]
+    assert ("domain:vm.lab.example", "infra:npm") in edges(graph, "terminated-by")
+
+
+def test_a_disabled_host_has_no_exposure(graph):
+    assert "exposure" not in nodes(graph)["domain:off.example.org"]
+
+
+def test_without_the_issuer_inventory_only_proxy_public_marks_a_domain(tmp_path):
+    files = {k: v for k, v in FILES.items() if k != "inventory/ingress.yaml"}
+    write_files(tmp_path, files)
+    g = build.build_graph(tmp_path)
+    n = nodes(g)
+    assert n["domain:app.lab.example"]["exposure"]["reason"] == "proxy-public"
+    assert "exposure" not in n["domain:app.example.org"]
+
+
+def test_allow_cidrs_preset_and_default_methods(tmp_path):
+    files = dict(FILES)
+    files["stacks/app/ingress.yaml"] = textwrap.dedent("""
+        services:
+          - id: app
+            stack: app
+            proxy:
+              domains: [app.lab.example]
+              public: {paths: [/hook/abc], allow_cidrs: {preset: github-hooks}}
+              upstream: {scheme: http, server: nas, port: 8080}
+    """)
+    write_files(tmp_path, files)
+    exposure = nodes(build.build_graph(tmp_path))["domain:app.lab.example"]["exposure"]
+    assert exposure["allowCidrs"] == ["preset:github-hooks"]
+    assert exposure["methods"] == ["GET", "HEAD"]
+    assert exposure["paths"] == ["/hook/abc"]
+
+
+def test_a_malformed_public_block_does_not_break_the_build(tmp_path):
+    files = dict(FILES)
+    files["stacks/app/ingress.yaml"] = textwrap.dedent("""
+        services:
+          - id: app
+            stack: app
+            proxy:
+              domains: [app.lab.example]
+              public: {paths: /hook/abc, methods: POST, allow_cidrs: 203.0.113.0/24}
+              upstream: {scheme: http, server: nas, port: 8080}
+    """)
+    write_files(tmp_path, files)
+    g = build.build_graph(tmp_path)
+    assert nodes(g)["domain:app.lab.example"]["exposure"] == {
+        "domain": "app.lab.example", "reason": "proxy-public", "methods": ["GET", "HEAD"]}
     assert [w for w in g["warnings"] if "dangling" in w] == []

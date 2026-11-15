@@ -11,11 +11,14 @@ Output: {"generated", "nodes": [{id, type, label, ...}], "edges": [{id, source, 
 Node ids are "<type>:<name>" (machine:nas, stack:paperless, container:paperless/webserver, domain:x.lab.example);
 the hand-kept nodes of network.yaml keep the ids they are given.
 Edges run along the request or ownership direction: machine -hosts-> stack -contains-> container.
+domains and their owners carry `exposure` when a host is reachable from the internet (a `proxy.public` block or a
+name no issuer of inventory/ingress.yaml allows).
 """
 from __future__ import annotations
 
 import argparse
 import datetime
+import fnmatch
 import ipaddress
 import os
 import json
@@ -27,6 +30,9 @@ import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "homelab"))
 import stacklist  # noqa: E402
+
+# A seed file still carries the bootstrap's placeholder marker until it is rendered, so such a pattern names nothing.
+SEED_MARK = "@" * 2
 
 # The platform services around the stacks (proxy, deployer, forge, secrets, certificate authority, ...) are what this installation
 # says they are: inventory/homegraf.yaml `platform:` (id -> label, the stack that runs it, kind). Without them the map just has none;
@@ -58,6 +64,61 @@ def managed_domains(root: pathlib.Path) -> set[str]:
     """Domains the repo's ingress manifests manage (everything else in NPM was set up by hand)."""
     return {d for f in ingress_files(root) if f.exists()
             for svc in _read(f).get("services") or [] for d in (svc.get("proxy") or {}).get("domains") or []}
+
+
+def _private_patterns(root: pathlib.Path) -> list[str]:
+    """The allowed_domains patterns of the certificate issuers: a name matching one is not public."""
+    path = root / "inventory" / "ingress.yaml"
+    if not path.is_file():
+        return []
+    try:
+        cfg = _read(path)
+    except (OSError, yaml.YAMLError):
+        return []
+    issuers = cfg.get("issuers") if isinstance(cfg, dict) else None
+    if not isinstance(issuers, dict):
+        return []
+    patterns = set()
+    for issuer in issuers.values():
+        if not isinstance(issuer, dict) or not isinstance(issuer.get("allowed_domains"), (list, tuple)):
+            continue
+        patterns.update(p for p in issuer["allowed_domains"] if isinstance(p, str) and p and SEED_MARK not in p)
+    return sorted(patterns)
+
+
+def _public_cidrs(raw) -> list[str]:
+    """proxy.public.allow_cidrs: strings keep their value, a preset (as dict or list item) becomes "preset:<name>"."""
+    items = [raw] if isinstance(raw, dict) else (raw if isinstance(raw, (list, tuple)) else [])
+    out = set()
+    for item in items:
+        if isinstance(item, str):
+            out.add(item)
+        elif isinstance(item, dict) and isinstance(item.get("preset"), str) and item["preset"]:
+            out.add(f"preset:{item['preset']}")
+    return sorted(out)
+
+
+def _exposure(domain: str, proxy: dict, patterns: list[str]) -> dict | None:
+    """How a domain is reachable from the internet, or None when it is not (raw manifest values, wrong types are absent)."""
+    raw = proxy.get("public") if isinstance(proxy, dict) else None
+    if not isinstance(raw, dict):
+        # Without a usable pattern nothing can be told apart from a private name, so only proxy.public marks a host.
+        if not patterns or any(fnmatch.fnmatchcase(domain, p) for p in patterns):
+            return None
+        return {"domain": domain, "reason": "public-name"}
+    entry = {"domain": domain, "reason": "proxy-public"}
+    paths = raw.get("paths")
+    if isinstance(paths, (list, tuple)):
+        kept = sorted({p for p in paths if isinstance(p, str)})
+        if kept:
+            entry["paths"] = kept
+    methods = raw.get("methods")
+    kept_methods = sorted({m.upper() for m in methods if isinstance(m, str)}) if isinstance(methods, (list, tuple)) else []
+    entry["methods"] = kept_methods or ["GET", "HEAD"]
+    cidrs = _public_cidrs(raw.get("allow_cidrs"))
+    if cidrs:
+        entry["allowCidrs"] = cidrs
+    return entry
 
 
 def _ports(spec) -> list[dict]:
@@ -199,6 +260,7 @@ class Builder:
 
     def ingress(self) -> None:
         files = ingress_files(self.root)
+        patterns = _private_patterns(self.root)
         # Any machine with an address counts, not only Komodo servers: the Proxmox host and the LXCs are in network.yaml.
         addr_server = {n["address"]: n["id"].split(":", 1)[1] for n in self.nodes.values()
                        if n["type"] == "machine" and n.get("address")}
@@ -211,12 +273,17 @@ class Builder:
             port = up.get("port")
             domains = proxy.get("domains") or []
             enabled = svc.get("enabled", True)
-            # A disabled host answers nothing, so it gets its domain node but no route.
+            # A disabled host answers nothing, so it gets its domain node but no route and no exposure.
             target = self._upstream_target(svc, server, up, port) if enabled else None
+            exposed = []
             for d in domains:
                 self.node(f"domain:{d}", "domain", d, url=f"https://{d}", service=svc["id"],
                           scheme=up.get("scheme"), health=(svc.get("healthcheck") or {}).get("path"),
                           manual=manual or None, disabled=None if enabled else True)
+                entry = _exposure(d, proxy, patterns) if enabled else None
+                if entry:
+                    self.nodes[f"domain:{d}"]["exposure"] = entry
+                    exposed.append(entry)
                 if "npm" in self.platform_services:
                     self.edge(f"domain:{d}", "infra:npm", "terminated-by")
             if target and "npm" in self.platform_services:
@@ -224,6 +291,9 @@ class Builder:
                 self.edge("infra:npm", target, "proxies", domains=sorted({*known, *domains}), port=port)
                 stack = self.nodes[target].get("stack") or (target.split(":", 1)[1] if target.startswith("stack:") else None)
                 owner = self.nodes.get(f"stack:{stack}") if stack else self.nodes[target]
+                if exposed:
+                    owner["exposure"] = sorted({e["domain"]: e for e in [*owner.get("exposure", []), *exposed]}.values(),
+                                               key=lambda e: e["domain"])
                 for d in domains:
                     self.nodes[f"domain:{d}"]["target"] = target
                     owner["urls"] = sorted({*owner.get("urls", []), f"https://{d}"})

@@ -48,8 +48,13 @@ from .config import ConfigError
 OPT_IN = "FORGEHANDS_BOOTSTRAP"
 DEFAULT_RUNTIME_DIR = "/factory-runtime"
 DEFAULT_MERGE_DENY = (
-    "forgejo/**",
+    ".forgejo/**",
     ".github/**",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    ".agents/**",
+    ".claude/**",
     "compose.yaml",
     "**/compose.yaml",
     "setup.sh",

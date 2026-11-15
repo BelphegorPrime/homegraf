@@ -1,5 +1,6 @@
 """The factory's opt-in settings, their validation and the repository merge policy."""
 import json
+import re
 import unittest
 
 from hgboot.factory_config import DEFAULT_MERGE_DENY, DEFAULT_RUNTIME_DIR, FactoryConfig, FactoryConfigError
@@ -167,11 +168,28 @@ class MergePolicyTests(unittest.TestCase):
     def test_a_fresh_opt_in_protects_the_own_repository_and_leaves_others_manual(self):
         cfg = FactoryConfig.from_env(ENV, REPOSITORY)
         self.assertEqual(cfg.denied_paths(REPOSITORY), DEFAULT_MERGE_DENY)
-        self.assertEqual(set(DEFAULT_MERGE_DENY), {"forgejo/**", ".github/**", "compose.yaml", "**/compose.yaml", "setup.sh",
+        self.assertEqual(set(DEFAULT_MERGE_DENY), {".forgejo/**", ".github/**", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md",
+                                                   ".agents/**", ".claude/**", "compose.yaml", "**/compose.yaml", "setup.sh",
                                                    "scripts/**", "infra/**", "stacks/**"})
         self.assertEqual(cfg.repository_merge_policy(REPOSITORY), {"deny": DEFAULT_MERGE_DENY})
         self.assertIsNone(cfg.repository_merge_policy("owner/other"))
         self.assertIsNone(cfg.denied_paths("owner/other"))
+
+    def test_the_default_policy_matches_every_path_it_has_to_protect(self):
+        protected = (".forgejo/workflows/ci.yaml", ".github/workflows/ci.yml", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md",
+                     ".agents/skills/code-review.md", ".claude/settings.json", "compose.yaml", "stacks/app/compose.yaml",
+                     "setup.sh", "scripts/deploy.sh", "infra/ci/validate.sh", "stacks/app/stack.yaml")
+        for path in protected:
+            with self.subTest(path=path):
+                self.assertTrue(any(_glob_matches(glob, path) for glob in DEFAULT_MERGE_DENY),
+                                f"{path} is not protected by the default policy")
+        for path in ("app/src/web/main.tsx", "README.md", "docs/CONTRIBUTING.md", "app/AGENTS.md", "stacks.md"):
+            with self.subTest(path=path):
+                self.assertFalse(any(_glob_matches(glob, path) for glob in DEFAULT_MERGE_DENY),
+                                 f"{path} must stay mergeable by default")
+        self.assertTrue(_glob_matches("scripts/**", "scripts/nested/run.sh"))
+        self.assertFalse(_glob_matches("scripts/*", "scripts/nested/run.sh"))
+        self.assertTrue(_glob_matches("scripts/*", "scripts/run.sh"))
 
     def test_an_explicit_empty_policy_stays_empty(self):
         cfg = FactoryConfig.from_env({**ENV, "FORGEHANDS_MERGE_POLICY": "{}"}, REPOSITORY)
@@ -223,6 +241,26 @@ class MergePolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(FactoryConfigError, "repeats"):
             FactoryConfig.from_env({**ENV, "FORGEHANDS_MERGE_POLICY":
                                     '{"owner/repo": {"deny": []}, "owner/repo": {"deny": ["x"]}}'}, REPOSITORY)
+
+
+def _glob_matches(pattern: str, path: str) -> bool:
+    """``**`` crosses folders, ``*`` does not; enough to check the default deny list."""
+    parts = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            parts.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            parts.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            parts.append("[^/]*")
+            i += 1
+        else:
+            parts.append(re.escape(pattern[i]))
+            i += 1
+    return re.fullmatch("".join(parts), path) is not None
 
 
 def _attribute(name: str) -> str:

@@ -24,6 +24,7 @@ and an authenticated request never follows a redirect to another origin.
 """
 from __future__ import annotations
 
+import datetime
 import re
 import time
 from dataclasses import dataclass
@@ -34,7 +35,6 @@ from .steps import StepError, log
 
 STEP = "push-mirror"
 INTERVAL = "8h0m0s"
-ZERO_TIME = "0001-01-01"
 REMOTE_USER = "git"
 PER_PAGE = 100
 MAX_PAGES = 50
@@ -162,7 +162,16 @@ class PushMirror:
 
     @staticmethod
     def _never_synced(mirror: dict) -> bool:
-        return not mirror.get("last_update") or str(mirror["last_update"]).startswith(ZERO_TIME)
+        value = mirror.get("last_update")
+        if not value:
+            return True
+        try:
+            when = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=datetime.timezone.utc)
+        return when.timestamp() <= 0
 
     def _sync_now(self, mirror: dict) -> None:
         before = mirror.get("last_update")

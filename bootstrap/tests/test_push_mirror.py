@@ -28,7 +28,7 @@ class FakeMirror:
 
     def __init__(self, forgejo_branches, github_branches=None, mirrors=None, sync_error=None,
                  sync_branches=True, sync_main_sha=None, github_status=200, history=None,
-                 default_branch="main"):
+                 default_branch="main", sync_last_update=UPDATED):
         self.forgejo_branches = dict(forgejo_branches)
         self.github_branches = dict(github_branches or {})
         self.mirrors = [dict(m) for m in (mirrors or [])]
@@ -36,6 +36,7 @@ class FakeMirror:
         self.github_status = github_status
         self.history = {sha: list(parents) for sha, parents in (history or {}).items()}
         self.default_branch = default_branch
+        self.sync_last_update = sync_last_update
         self.syncs = 0
 
     def _reachable(self, sha):
@@ -116,8 +117,9 @@ class FakeMirror:
                 self.github_branches = dict(self.forgejo_branches)
             if self.sync_main_sha:
                 self.github_branches[self.default_branch] = self.sync_main_sha
-            for mirror in self.mirrors:
-                mirror["last_update"] = UPDATED
+            if self.sync_last_update:
+                for mirror in self.mirrors:
+                    mirror["last_update"] = self.sync_last_update
             return 200, {}
         if parts.path.startswith(base + "/") and req.method == "DELETE":
             name = parts.path[len(base) + 1:]
@@ -259,19 +261,33 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(second.branches, ("main",))
         self.assertEqual((second.default_branch, second.default_sha), ("main", "1" * 40))
 
-    def test_a_mirror_never_synced_with_the_epoch_is_synced(self):
-        fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40})
+    def test_a_mirror_never_synced_with_the_zero_time_or_epoch_is_synced(self):
+        for stamp in (None, "", "0001-01-01T00:00:00Z", "1969-12-31T16:00:00-08:00",
+                      "1970-01-01T00:00:00Z", "1970-01-01T08:00:00+08:00"):
+            with self.subTest(last_update=stamp):
+                fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40})
+                mirror = self.mirror(fake)
+                fake.mirrors = [{**self.correct_mirror(), "last_update": stamp}]
+                result = mirror.sync()
+                self.assertTrue(result.synced)
+                self.assertEqual(fake.syncs, 1)
+                self.assertEqual([urlsplit(r.path).path for r in self.writes()],
+                                 [f"/api/v1/repos/{FORGEJO_REPO}/push_mirrors-sync"])
+                started = fake.syncs
+                second = mirror.sync()
+                self.assertFalse(second.synced)
+                self.assertEqual(fake.syncs, started)
+
+    def test_a_first_sync_that_never_reports_completion_is_a_bounded_failure(self):
+        fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40}, sync_last_update=None)
         mirror = self.mirror(fake)
-        fake.mirrors = [{**self.correct_mirror(), "last_update": "0001-01-01T00:00:00Z"}]
-        result = mirror.sync()
-        self.assertTrue(result.synced)
+        fake.mirrors = [{**self.correct_mirror(), "last_update": "1969-12-31T16:00:00-08:00"}]
+        with self.assertRaisesRegex(StepError, "did not report a finished sync"):
+            mirror.sync()
         self.assertEqual(fake.syncs, 1)
-        self.assertEqual([urlsplit(r.path).path for r in self.writes()],
-                         [f"/api/v1/repos/{FORGEJO_REPO}/push_mirrors-sync"])
-        started = fake.syncs
-        second = mirror.sync()
-        self.assertFalse(second.synced)
-        self.assertEqual(fake.syncs, started)
+        reads = [r for r in self.srv.calls("GET", f"/api/v1/repos/{FORGEJO_REPO}/push_mirrors")
+                 if urlsplit(r.path).path == f"/api/v1/repos/{FORGEJO_REPO}/push_mirrors"]
+        self.assertEqual(len(reads), 1 + 3)
 
     def test_drift_is_repaired_by_delete_and_create_and_the_next_run_is_converged(self):
         fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40})

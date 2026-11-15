@@ -1,13 +1,16 @@
 """The Forgejo user of the agents: creation, token, collaborations, rotation, its mail notifications, and what may never be logged."""
 import io
+import json
+import threading
 import unittest
 import urllib.parse
 from contextlib import redirect_stderr, redirect_stdout
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hgboot.agent_user import LOGIN, TOKEN, TOKEN_PREFIX, TOKEN_SCOPES, ensure_agent_user
 from hgboot.steps import StepError
 
-from .fakes import FakeForgejo, Server
+from .fakes import FakeForgejo, Req
 from .helpers import config
 
 REPO = "owner/infrastructure"
@@ -15,6 +18,48 @@ OTHER = "owner/other"
 ACCOUNT = "/user/settings/account"
 CSRF = "csrf-token-of-the-form"
 COOKIE = "i_like_gitea"
+
+
+class Server:
+    """A fake HTTP server whose answer may carry headers: handler(req) -> (status, payload[, headers]). Account and sign-in
+    pages need `Set-Cookie` and `Location`, which the shared fake in fakes.py does not send. Every request is kept in .requests."""
+    def __init__(self, handler):
+        self.requests: list[Req] = []
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def _handle(self):
+                length = int(self.headers.get("content-length") or 0)
+                req = Req(self.command, self.path, {k.lower(): v for k, v in self.headers.items()}, self.rfile.read(length))
+                outer.requests.append(req)
+                answer = handler(req)
+                status, payload = answer[0], answer[1]
+                extra = answer[2] if len(answer) > 2 else {}
+                body = b"" if payload is None else (payload if isinstance(payload, bytes) else json.dumps(payload).encode())
+                self.send_response(status)
+                if not any(k.lower() == "content-type" for k in extra):
+                    self.send_header("content-type", "application/json")
+                for name, value in extra.items():
+                    self.send_header(name, value)
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _handle
+
+            def log_message(self, *a):
+                pass
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def calls(self, method=None, prefix=""):
+        return [r for r in self.requests if (method is None or r.method == method) and r.path.startswith(prefix)]
 
 
 class FakeAgentForgejo(FakeForgejo):
@@ -28,6 +73,7 @@ class FakeAgentForgejo(FakeForgejo):
         self.sessions: dict[str, str] = {}            # cookie value -> login
         self.session_n = 0
         self.fail_form = False                        # the account form answers with a validation error, the preference stays
+        self.csrf = ""                                # when set, the pages carry a csrf token, as Forgejo before 17 did
 
     def owner(self, req) -> str | None:
         auth = req.headers.get("authorization", "")
@@ -49,19 +95,26 @@ class FakeAgentForgejo(FakeForgejo):
                 return self.sessions.get(value)
         return None
 
+    def _cross_origin(self, req) -> bool:
+        """What Forgejo 17 refuses before a form is read: a POST whose Origin or Referer names another host."""
+        origin = req.headers.get("origin") or req.headers.get("referer")
+        return bool(origin) and urllib.parse.urlsplit(origin).netloc != req.headers.get("host", "")
+
     def _account_page(self, login: str) -> bytes:
         selected = self.notifications.get(login, "enabled")
-        options = "".join(f'<option value="{value}"{" selected" if value == selected else ""}>{value}</option>'
-                          for value in ("enabled", "onmention", "disabled"))
-        return (f'<html><body><form action="{ACCOUNT}/email" method="post">'
-                f'<input type="hidden" name="_csrf" value="{CSRF}">'
-                f'<select name="language"><option value="en" selected>en</option><option value="de">de</option></select>'
-                f'<select name="preference">{options}</select></form></body></html>').encode()
+        items = "".join(f'<div data-value="{value}" class="{"active selected " if value == selected else ""}item">{value}</div>'
+                        for value in ("enabled", "andyourown", "onmention", "disabled"))
+        # Forgejo 17 renders no csrf token: a hidden input holds the preference and the selected state is on a div.
+        csrf = f'<input name="_csrf" type="hidden" value="{self.csrf}">' if self.csrf else ""
+        return (f'<html><body><form action="{ACCOUNT}/email" class="ui form" method="post">'
+                f'{csrf}<input name="_method" type="hidden" value="NOTIFICATION">'
+                f'<div class="ui selection dropdown"><input name="preference" type="hidden" value="{selected}">'
+                f'<div class="menu">{items}</div></div></form></body></html>').encode()
 
     def _login_page(self) -> bytes:
-        return (f'<html><body><form action="/user/login" method="post">'
-                f'<input type="hidden" name="_csrf" value="{CSRF}">'
-                f'<input name="user_name"><input name="password" type="password"></form></body></html>').encode()
+        csrf = f'<input name="_csrf" type="hidden" value="{self.csrf}">' if self.csrf else ""
+        return ('<html><body><form class="ui form" action="/user/login" method="post">'
+                f'{csrf}<input name="user_name"><input name="password" type="password"></form></body></html>').encode()
 
     def __call__(self, req):
         p = req.path.split("?")[0]
@@ -69,23 +122,27 @@ class FakeAgentForgejo(FakeForgejo):
             return 200, self._login_page(), {"content-type": "text/html", "Set-Cookie": f"{COOKIE}=anonymous; Path=/; HttpOnly"}
         if p == "/user/login" and req.method == "POST":
             form = self._form(req)
-            if form.get("_csrf") != CSRF or self.users.get(form.get("user_name")) != form.get("password"):
+            if (self.csrf and form.get("_csrf") != self.csrf) or self.users.get(form.get("user_name")) != form.get("password"):
                 return 200, self._login_page(), {"content-type": "text/html"}
             self.session_n += 1
             sid = f"web-session-{self.session_n}"
             self.sessions[sid] = form["user_name"]
             return 303, b"", {"Location": "/", "Set-Cookie": f"{COOKIE}={sid}; Path=/; HttpOnly", "content-type": "text/html"}
+        if p == "/" and req.method == "GET":
+            return 200, b"<html><body>dashboard</body></html>", {"content-type": "text/html"}
         if p == ACCOUNT and req.method == "GET":
             login = self._session(req)
             if not login:
                 return 303, b"", {"Location": "/user/login", "content-type": "text/html"}
             return 200, self._account_page(login), {"content-type": "text/html"}
         if p == ACCOUNT + "/email" and req.method == "POST":
+            if self._cross_origin(req):
+                return 403, b"cross-origin request", {"content-type": "text/plain"}
             login = self._session(req)
             if not login:
                 return 303, b"", {"Location": "/user/login", "content-type": "text/html"}
             form = self._form(req)
-            if self.fail_form or form.get("_csrf") != CSRF or form.get("_method") != "NOTIFICATION":
+            if self.fail_form or (self.csrf and form.get("_csrf") != self.csrf) or form.get("_method") != "NOTIFICATION":
                 return 422, {"message": "invalid form"}, {"content-type": "text/html"}
             self.notifications[login] = form.get("preference", "")
             return 303, b"", {"Location": ACCOUNT, "content-type": "text/html"}
@@ -166,9 +223,21 @@ class AgentUserTest(unittest.TestCase):
     def test_the_mail_notifications_are_turned_off_on_creation(self):
         self.run_step()
         self.assertEqual(self.forgejo.notifications[LOGIN], "disabled")
-        body = self.calls("POST", f"{ACCOUNT}/email")[0].body.decode()
+        login = self.calls("POST", "/user/login")[0]
+        self.assertNotIn("_csrf", login.body.decode())       # Forgejo 17 has no token in the form
+        self.assertEqual(login.headers.get("origin"), self.server.url)
+        form = self.calls("POST", f"{ACCOUNT}/email")[0]
+        self.assertEqual(form.headers.get("origin"), self.server.url)
+        self.assertTrue(form.headers.get("referer", "").startswith(self.server.url + ACCOUNT))
+        body = form.body.decode()
         self.assertIn("_method=NOTIFICATION", body)
         self.assertIn("preference=disabled", body)
+
+    def test_a_form_that_carries_a_csrf_token_gets_it_back(self):
+        self.forgejo.csrf = CSRF                             # Forgejo before 17; the current one carries no token
+        self.run_step()
+        for path in ("/user/login", f"{ACCOUNT}/email"):
+            self.assertIn(f"_csrf={CSRF}", self.calls("POST", path)[0].body.decode())
 
     def test_an_existing_user_with_mail_on_gets_it_turned_off(self):
         self.forgejo.users[LOGIN] = "an-old-password"

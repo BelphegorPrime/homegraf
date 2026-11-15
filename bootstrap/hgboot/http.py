@@ -31,8 +31,19 @@ class Unreachable(Exception):
     """The service did not answer at all (not even with an error status)."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Keeps a redirect as the answer instead of following it to another origin with the credentials attached."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_NO_REDIRECT = urllib.request.build_opener(_NoRedirect)
+
+
 def request(method: str, url: str, *, body=None, headers: dict | None = None, basic: tuple[str, str] | None = None,
-            timeout: float = 30) -> Response:
+            timeout: float = 30, redirect: bool = True) -> Response:
+    """redirect: follow a 3xx answer; False keeps it as the response, so no header reaches another origin."""
     h = {"Accept": "application/json", **(headers or {})}
     data = None
     if body is not None:
@@ -41,8 +52,9 @@ def request(method: str, url: str, *, body=None, headers: dict | None = None, ba
     if basic:
         h["Authorization"] = "Basic " + base64.b64encode(f"{basic[0]}:{basic[1]}".encode()).decode()
     req = urllib.request.Request(url, data=data, headers=h, method=method)
+    open_ = urllib.request.urlopen if redirect else _NO_REDIRECT.open
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with open_(req, timeout=timeout) as resp:
             return Response(resp.status, resp.read())
     except urllib.error.HTTPError as e:
         with e:   # an error answer holds the connection until it is closed (Python 3.15 warns about it)

@@ -19,7 +19,8 @@ Forgejo's API has no way to update a push mirror in place.
 
 The GitHub token is sent only to the GitHub API and, as the remote password, to
 the Forgejo push mirror credential field. It never appears in a remote address,
-a log line or an error: everything echoed back by a service is cleaned first.
+a log line or an error: everything echoed back by a service is cleaned first,
+and an authenticated request never follows a redirect to another origin.
 """
 from __future__ import annotations
 
@@ -100,11 +101,15 @@ class PushMirror:
         return MirrorResult(created, repaired, synced, tuple(sorted(source)), source["main"])
 
     # -- Forgejo side -------------------------------------------------------------------------------------------------
+    def _call(self, method: str, url: str, **kwargs):
+        """A request that carries a token must not follow a redirect with that token to another origin."""
+        return self.http(method, url, redirect=False, **kwargs)
+
     def _forgejo_headers(self) -> dict:
         return {"Authorization": f"token {self.forgejo_token}"}
 
     def _mirrors(self) -> list[dict]:
-        r = self.http("GET", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors", headers=self._forgejo_headers())
+        r = self._call("GET", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors", headers=self._forgejo_headers())
         if not r.ok:
             raise StepError(f"Forgejo answered {r.status} when reading the push mirrors of {self.forgejo_repo}: "
                             f"{self._clean(r.text)}")
@@ -114,7 +119,7 @@ class PushMirror:
         return mirrors
 
     def _create(self, *, repaired: bool = False) -> dict:
-        r = self.http("POST", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors", headers=self._forgejo_headers(), body={
+        r = self._call("POST", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors", headers=self._forgejo_headers(), body={
             "remote_address": self.remote_address, "remote_username": REMOTE_USER,
             "remote_password": self.github_token, "sync_on_commit": True, "interval": INTERVAL})
         if not r.ok:
@@ -129,7 +134,7 @@ class PushMirror:
 
     def _replace(self, mirror: dict) -> dict:
         name = mirror.get("remote_name") or mirror.get("name") or "github"
-        r = self.http("DELETE", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors/{quote(str(name), safe='')}",
+        r = self._call("DELETE", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors/{quote(str(name), safe='')}",
                       headers=self._forgejo_headers())
         if not r.ok:
             raise StepError(f"Forgejo refused to remove the drifted push mirror to {self.github_repo}: "
@@ -148,7 +153,7 @@ class PushMirror:
 
     def _sync_now(self, mirror: dict) -> None:
         before = mirror.get("last_update")
-        r = self.http("POST", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors-sync", headers=self._forgejo_headers())
+        r = self._call("POST", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors-sync", headers=self._forgejo_headers())
         if not r.ok:
             raise StepError(f"Forgejo refused to sync the push mirror to {self.github_repo}: "
                             f"{r.status} {self._clean(r.text)}")
@@ -202,7 +207,7 @@ class PushMirror:
 
     def _compare(self, base: str, head: str) -> str | None:
         """GitHub's relation of head to base, or None when GitHub does not know the newer commit yet."""
-        r = self.http("GET", f"{self.github_api}/repos/{self.github_repo}/compare/"
+        r = self._call("GET", f"{self.github_api}/repos/{self.github_repo}/compare/"
                               f"{quote(base, safe='')}...{quote(head, safe='')}", headers=self._github_headers())
         if r.status == 404:
             return None
@@ -217,7 +222,7 @@ class PushMirror:
 
     def _forgejo_compare(self, base: str, head: str) -> int | None:
         """Commits Forgejo has in head but not base, or None when it does not know a commit."""
-        r = self.http("GET", f"{self.forgejo_api}/repos/{self.forgejo_repo}/compare/"
+        r = self._call("GET", f"{self.forgejo_api}/repos/{self.forgejo_repo}/compare/"
                               f"{quote(base, safe='')}...{quote(head, safe='')}", headers=self._forgejo_headers())
         if r.status == 404:
             return None
@@ -243,7 +248,7 @@ class PushMirror:
     def _branches(self, api: str, repo: str, page_param: str, headers: dict, service: str) -> dict[str, str]:
         branches: dict[str, str] = {}
         for page in range(1, MAX_PAGES + 1):
-            r = self.http("GET", f"{api}/repos/{repo}/branches?{page_param}={PER_PAGE}&page={page}", headers=headers)
+            r = self._call("GET", f"{api}/repos/{repo}/branches?{page_param}={PER_PAGE}&page={page}", headers=headers)
             if not r.ok:
                 raise StepError(f"{service} answered {r.status} when reading the branches of {repo}: "
                                 f"{self._clean(r.text)}")

@@ -301,6 +301,24 @@ class MirrorTest(unittest.TestCase):
         self.assertNotIn(GITHUB_TOKEN, message)
         self.assertEqual(self.writes(), [])
 
+    def test_an_authenticated_request_does_not_follow_a_redirect_to_another_origin(self):
+        reached = Server(lambda req: (200, {"message": "reached"}))
+        self.addCleanup(reached.close)
+        elsewhere = reached.url.replace("127.0.0.1", "localhost")
+        github = Server(lambda req: (302, {"message": "moved"}, {"Location": elsewhere + req.path}))
+        self.addCleanup(github.close)
+        forgejo = Server(FakeMirror({"main": "1" * 40}))
+        self.addCleanup(forgejo.close)
+        self.srv = forgejo
+        mirror = PushMirror(forgejo_url=forgejo.url, forgejo_repo=FORGEJO_REPO, forgejo_token=FORGEJO_TOKEN,
+                            github_repo=GITHUB_REPO, github_token=GITHUB_TOKEN, github_url=github.url,
+                            github_api=github.url, sleep=lambda s: None, attempts=1)
+        with self.assertRaises(StepError) as caught:
+            mirror.sync()
+        self.assertIn("302", str(caught.exception))
+        self.assertEqual(reached.requests, [])
+        self.assertEqual(github.requests[0].headers["authorization"], f"Bearer {GITHUB_TOKEN}")
+
     def test_a_commit_forgejo_does_not_know_is_an_explicit_and_redacted_failure(self):
         fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40})
         with self.assertRaises(StepError) as caught:

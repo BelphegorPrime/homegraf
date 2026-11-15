@@ -532,7 +532,8 @@ services:
     logging: *logging
 
   forgehands:
-    image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:latest}
+    # Releases before 0.2.5 started nothing for a label added to an existing issue; pin the version.
+    image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:v0.2.5}
     container_name: ${PROJECT_PREFIX:-homegraf}-forgehands
     profiles: [agents]
     restart: unless-stopped
@@ -541,14 +542,33 @@ services:
       openhands:
         condition: service_healthy
     environment:
+      # Webhook mode (the two below): ForgeHands forwards a signed event to an OpenHands automation. Empty until the webhook is
+      # registered in Canvas; ForgeHands then exits with a clear error. A `:?` here would block `docker compose up -d openhands`,
+      # which is the step that produces the URL.
       FORGEJO_WEBHOOK_SECRET: ${FORGEHANDS_FORGEJO_WEBHOOK_SECRET:-}
       OPENHANDS_WEBHOOK_SECRET: ${FORGEHANDS_OPENHANDS_WEBHOOK_SECRET:-}
-      # Empty until the webhook is registered in Canvas; ForgeHands then exits with a clear error. A `:?` here would block
-      # `docker compose up -d openhands`, which is the step that produces the URL.
       OPENHANDS_WEBHOOK_URL: ${FORGEHANDS_OPENHANDS_WEBHOOK_URL:-}
+      # Direct mode: with both set, ForgeHands starts the conversation itself and ignores the webhook settings above. Empty
+      # OPENHANDS_API_URL keeps webhook mode, so an existing .env changes nothing.
+      OPENHANDS_API_URL: ${FORGEHANDS_OPENHANDS_API_URL:-}
+      OPENHANDS_API_KEY: ${OPENHANDS_LOCAL_BACKEND_API_KEY:-}
+      # Variables handed to every conversation: without them the agent has no Forgejo token (saved secrets need to be named).
+      AGENT_SECRETS: ${FORGEHANDS_AGENT_SECRETS:-}
+      FORGEJO_URL: ${FORGEHANDS_FORGEJO_URL:-http://forgejo:3000}
+      FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+      # Label -> profile, tier, max_iterations; hgboot renders it from the profile ids of the agents profile.
+      LABEL_ROUTES: ${FORGEHANDS_LABEL_ROUTES:-}
       ALLOWED_REPOS: ${FORGEHANDS_ALLOWED_REPOS:-}
+      ALLOWED_SENDERS: ${FORGEHANDS_ALLOWED_SENDERS:-}
+      MAX_CONCURRENT_PER_TIER: ${FORGEHANDS_MAX_CONCURRENT_PER_TIER:-2}
+      MAX_CONCURRENT: ${FORGEHANDS_MAX_CONCURRENT:-4}
+      MAX_RUNS_PER_HOUR: ${FORGEHANDS_MAX_RUNS_PER_HOUR:-30}
+      MAX_RUN_MINUTES: ${FORGEHANDS_MAX_RUN_MINUTES:-120}
+      WORKSPACE_DIR: /workspace
+      JOBS_FILE: /app/data/jobs.json
     volumes:
       - forgehands-data:/app/data
+      - forgehands-workspace:/workspace
     ports:
       - ${BIND_ADDRESS:-0.0.0.0}:${PORT_FORGEHANDS:-8080}:8080
     read_only: true
@@ -710,6 +730,7 @@ volumes:
   homegraf-work:
   openhands-data:
   forgehands-data:
+  forgehands-workspace:
   forgejo-data:
   forgejo-db:
   komodo-keys:

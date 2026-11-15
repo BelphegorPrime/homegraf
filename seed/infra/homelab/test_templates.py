@@ -1,5 +1,6 @@
 """Tests for the templates of new-app (pytest infra/homelab)."""
 import dataclasses
+import json
 import pathlib
 import re
 import sys
@@ -273,6 +274,24 @@ def _agents(agent, **extra):
                           "statuses": "200", **extra})
 
 
+def _forgehands_matches(pattern, path):
+    """ForgeHands' own glob (src/forgejo/glob.ts): * within a segment, ** across, ? one character, the rest literal."""
+    source, i = [], 0
+    while i < len(pattern):
+        char = pattern[i]
+        if char == "*" and i + 1 < len(pattern) and pattern[i + 1] == "*":
+            i += 2
+            if i < len(pattern) and pattern[i] == "/":
+                i += 1
+                source.append("(?:.*/)?")
+            else:
+                source.append(".*")
+            continue
+        source.append("[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char))
+        i += 1
+    return re.fullmatch("".join(source), path) is not None
+
+
 def test_a_template_with_routes_routes_its_sidecar_and_keeps_its_secrets(agent):
     app = _agents(agent)
     assert app.domain == "agents.lab.example" and app.upstream_port == 8080
@@ -310,6 +329,65 @@ def test_the_agents_form_limits_are_numbers_forgehands_accepts(agent):
     assert {name: int(value) for name, value in limits.items()} == {
         "MAX_CONCURRENT_PER_TIER": 2, "MAX_CONCURRENT": 4, "MAX_RUNS_PER_HOUR": 30, "MAX_RUN_MINUTES": 120, "MAX_ROUNDS": 3}
     assert int(limits["MAX_CONCURRENT_PER_TIER"]) <= int(limits["MAX_CONCURRENT"])   # as FactoryConfig requires
+
+
+def test_the_agents_template_pins_a_supported_forgehands_release(agent):
+    image = yaml.safe_load(_agents(agent).compose)["services"]["agents"]["image"]
+    name, _, version = image.rpartition(":")
+    assert name == "ghcr.io/belphegorprime/forgehands"
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", version), version
+    assert tuple(int(part) for part in version[1:].split(".")) >= (0, 3, 1)   # the first release with these routes
+
+
+def test_the_agents_round_settings_are_operator_inputs_named_by_forgehands(agent):
+    env = yaml.safe_load(_agents(agent).compose)["services"]["agents"]["environment"]
+    assert int(env["MAX_ROUNDS"]) == 3
+    assert (env["BLOCKED_LABEL"], env["APPROVED_LABEL"], env["EPIC_LABEL"]) == (
+        "ai:blocked", "ai:approved", "ai:plan,ai:close")
+    assert env["UPDATE_BRANCHES"] == "1"
+    assert (int(env["BRANCH_UPDATE_DELAY_SECONDS"]), int(env["BRANCH_UPDATE_MIN_INTERVAL_MINUTES"])) == (60, 30)
+    assert int(env["MIN_REVIEW_CHARS"]) == 300
+    assert env["MERGE_METHOD"] in ("merge", "squash", "rebase", "rebase-merge", "fast-forward-only")
+
+
+def test_the_agents_merge_policy_is_an_operator_input_not_a_repository_file(agent):
+    env = yaml.safe_load(_agents(agent).compose)["services"]["agents"]["environment"]
+    policy = json.loads(env["MERGE_POLICY"])
+    assert list(policy) == ["owner/repository"]                         # a repository without an entry stays manual
+    denied = policy["owner/repository"]["deny"]
+    samples = (
+        (".forgejo/**", ".forgejo/workflows/ci.yaml"),
+        (".github/**", ".github/workflows/ci.yaml"),
+        ("AGENTS.md", "AGENTS.md"),
+        ("CLAUDE.md", "CLAUDE.md"),
+        ("CONTRIBUTING.md", "CONTRIBUTING.md"),
+        (".agents/**", ".agents/skills/qa-changes/SKILL.md"),
+        (".claude/**", ".claude/settings.json"),
+        ("compose.yaml", "compose.yaml"),
+        ("**/compose.yaml", "stacks/demo/compose.yaml"),
+        ("setup.sh", "setup.sh"),
+        ("scripts/**", "scripts/check-seed.sh"),
+        ("infra/**", "infra/ci/validate.sh"),
+        ("stacks/**", "stacks/demo/compose.yaml"),
+    )
+    assert sorted(denied) == sorted(pattern for pattern, _ in samples)
+    for pattern, path in samples:
+        assert pattern in denied
+        assert _forgehands_matches(pattern, path), path             # ForgeHands' glob, not a substring test
+    assert templates.catalog()["agents"].files == {}               # the pull request cannot change the policy
+
+
+def test_the_agents_direct_mode_stays_off_until_real_profile_ids_are_given(agent):
+    app = _agents(agent)
+    env = yaml.safe_load(app.compose)["services"]["agents"]["environment"]
+    assert env["OPENHANDS_API_URL"] == "" and env["LABEL_ROUTES"] == ""
+    for label in ("ai:plan", "ai:ready", "ai:escalate", "ai:review", "ai:changes"):
+        assert label in app.first_run
+    for kind in ("pull_request", "ci_failure", "ci_success", "epic_done", "conflict"):
+        assert f'"on": "{kind}"' in app.first_run                     # every route direct mode needs
+    assert "Empty profile ids keep direct mode off" in app.first_run
+    assert "a name is rejected" in app.first_run
+    assert not re.search(r'"profile"\s*:\s*"(planner|worker|worker-strong|reviewer)"', app.compose + app.first_run)
 
 
 def test_the_agents_form_keeps_every_credential_out_of_the_generated_compose(agent):
@@ -351,11 +429,14 @@ def test_the_agents_form_values_pass_the_factory_configuration(agent):
         "FORGEHANDS_MAX_CONCURRENT": env["MAX_CONCURRENT"],
         "FORGEHANDS_MAX_RUNS_PER_HOUR": env["MAX_RUNS_PER_HOUR"],
         "FORGEHANDS_MAX_RUN_MINUTES": env["MAX_RUN_MINUTES"],
+        "FORGEHANDS_MERGE_POLICY": env["MERGE_POLICY"],   # ForgeHands reads MERGE_POLICY, the bootstrap its prefixed name
     }, "owner/repository")
     assert factory.enabled and factory.allowed_repos == ("owner/repository",)
     assert (factory.agent_login, factory.human_login) == (env["FORGEHANDS_AGENT_LOGIN"], env["HUMAN_LOGIN"])
     assert factory.max_concurrent == int(env["MAX_CONCURRENT"]) and factory.max_concurrent_per_tier == 2
     assert factory.max_runs_per_hour == 30 and factory.max_run_minutes == 120
+    assert factory.denied_paths("owner/repository") == tuple(json.loads(env["MERGE_POLICY"])["owner/repository"]["deny"])
+    assert factory.denied_paths("owner/other") is None   # a repository without an entry stays manual
 
 
 def test_the_ingress_of_a_template_with_routes_declares_both_hosts(agent):

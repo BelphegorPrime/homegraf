@@ -53,9 +53,11 @@ The optional `proxy.public` block becomes the host's NPM advanced config:
 
 | Field | Meaning |
 | --- | --- |
-| `paths` | Required, non-empty. Path prefixes that stay reachable; `/` and a bare `*` are rejected. A trailing `/*` matches everything below the prefix. The ACME challenge path is always reachable. |
+| `paths` | Required, non-empty. Every entry is an exact path unless it ends in `/*`, which makes it a prefix match: `/hook/abc` does not match `/hook/abcd`, `/files/*` matches `/files/x/y`. `/` and a bare `*` are rejected. The ACME challenge path `/.well-known/acme-challenge/` is exempt from the path and method rules, but not from `allow_cidrs`. |
 | `methods` | HTTP methods allowed under those paths (default `GET`, `HEAD`). |
 | `allow_cidrs` | Optional IPv4/IPv6 networks; when set, every other source is denied. |
+
+`allow_cidrs` applies to the whole location, so with it set a source outside the listed networks also gets 403 on `/.well-known/acme-challenge/...` and HTTP-01 validation from outside fails for such a host. Let's Encrypt support is tracked in #21.
 
 ```yaml
 proxy:

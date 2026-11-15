@@ -171,7 +171,7 @@ and the rewrite `*.<domain> -> <host address>`. Pitfalls:
 | `infisical` + `infisical-db` + `infisical-redis` | secrets of the stacks, later the certificate authority | 8079 | set up by the bootstrap |
 | `proxy` (Nginx Proxy Manager) | `http://<name>.<domain>` to the containers | 80, 443, admin 81 | set up by the bootstrap |
 | `openhands` (Agent Canvas), **only with the profile `agents`** | Canvas, Agent Server and Automation Server in one image; runs an agent on an issue | 8000 (`PORT_OPENHANDS`) | `LOCAL_BACKEND_API_KEY` from `.env`; data in the volume `openhands-data`; the model provider key is entered in Canvas, not in `.env` (see *Agents: from an issue to a draft pull request*) |
-| `forgehands`, **only with the profile `agents`** | a Forgejo webhook becomes a signed call to OpenHands' automation webhook | 8080 (`PORT_FORGEHANDS`) | the secrets and `FORGEHANDS_ALLOWED_REPOS` come from `setup.sh`; state (deliveries) in the volume `forgehands-data` |
+| `forgehands`, **only with the profile `agents`** | in direct mode a Forgejo label starts the matching agent profile; without `FORGEHANDS_OPENHANDS_API_URL` a Forgejo webhook becomes a signed call to OpenHands' automation webhook | 8080 (`PORT_FORGEHANDS`) | direct mode: `LABEL_ROUTES`, `AGENT_SECRETS`, `FORGEHANDS_ALLOWED_REPOS`/`SENDERS` and the limits from `.env`, pinned `v0.2.5`; state (ledger, deliveries) in the volume `forgehands-data`, runs in `forgehands-workspace` |
 | `technitium` (Technitium DNS Server), **only with `DNS_MODE=technitium`** | answers for the domain: the wildcard to this host; an API token for the tools | 53 on the LAN address, console 8053 (user `admin`, not the e-mail address) | the profile `technitium`; set up by the bootstrap |
 | `dns` (AdGuard Home), **only with `DNS_MODE=adguard`** | answers for the domain: the wildcard to this host | 53 on the LAN address, setup 3300, admin 8053 | the profile `dns`; set up by the bootstrap |
 | `bootstrap` | one-shot: configures the services against each other | | image `ghcr.io/belphegorprime/homegraf-bootstrap`; keeps its state in the volume `bootstrap-state` |
@@ -185,7 +185,7 @@ Off by default. `setup.sh` asks (or `OPTIONAL_SERVICES="renovate backup status" 
 | Profile | What | Notes |
 | --- | --- | --- |
 | `status` | Uptime Kuma at `status.<domain>` | the bootstrap adds the proxy host and ingressctl gives it a certificate; the first visit asks for a Kuma account |
-| `agents` | `openhands` (Agent Canvas) and `forgehands`: label an issue `ai:ready` in an allowed repository and the agent works on it; the result is a draft pull request | `setup.sh` writes the three secrets and `FORGEHANDS_ALLOWED_REPOS` (default `<Forgejo owner>/infrastructure`), and the bootstrap proxies `openhands.<domain>`. **The rest is manual for now**: add the model provider key in Canvas, register the automation webhook and create the Forgejo webhook (see *Agents: from an issue to a draft pull request*). Both containers have a healthcheck |
+| `agents` | `openhands` (Agent Canvas) and `forgehands` in **direct mode**: a label (`ai:plan`, `ai:ready`, `ai:escalate`, `ai:review`) starts the matching agent profile with its limits, and the result is a draft pull request | `setup.sh` writes the secrets, the four label routes, `FORGEHANDS_AGENT_SECRETS`, the allowlists and the limits, and the bootstrap proxies `openhands.<domain>`. **The rest is manual**: add the model provider key and create the four agent profiles in Canvas, and put a Forgejo token in `.env` (see *Agents: from an issue to a draft pull request*). Leaving `FORGEHANDS_OPENHANDS_API_URL` empty keeps webhook mode. Both containers have a healthcheck |
 
 | `backup` | a dump of Forgejo's and Infisical's PostgreSQL and Komodo's MongoDB once a day, seven days kept, in `data/backups` | `BACKUP_INTERVAL` (seconds) and `BACKUP_KEEP_DAYS`; **on this host**, copy them elsewhere; `scripts/restore.sh` puts them back (see Restoring from the backups). Not in the dumps: the volumes with files (the repositories' git data, Komodo's keys, the proxy's data) |
 | `runner` | a Forgejo Actions runner, label `docker` | jobs run in a Docker daemon of their own (`runner-dind`, docker-in-docker: **privileged**, but a job cannot reach this host's Docker socket); the runner registers with a secret in `.env` (`RUNNER_SECRET`), no token to copy |
@@ -194,50 +194,106 @@ Off by default. `setup.sh` asks (or `OPTIONAL_SERVICES="renovate backup status" 
 ### Agents: from an issue to a draft pull request
 
 Two containers, both only with the profile `agents`; with `COMPOSE_PROFILES=agents` (what `setup.sh` writes when you pick it) they join the
-same stack as the rest. ForgeHands is a bridge, not a coding agent: it verifies the Forgejo delivery, checks the repository allowlist and
-forwards a signed event to OpenHands' automation webhook, which starts the agent and opens the draft pull request.
+same stack as the rest.
+
+ForgeHands has two modes:
+
+- **Direct mode** (`FORGEHANDS_OPENHANDS_API_URL` set, what `setup.sh` writes: `http://openhands:8000`). ForgeHands calls
+  `POST /api/conversations` itself: it passes the agent profile of the label, the iteration cap, the tag `source=forgehands` and the
+  variables named in `AGENT_SECRETS`. No OpenHands automation and no Forgejo webhook is needed. The OpenHands backend key is the stack's
+  own `OPENHANDS_LOCAL_BACKEND_API_KEY`; ForgeHands holds no LLM credentials.
+- **Webhook mode** (no `OPENHANDS_API_URL`, so an `.env` from before direct mode changes nothing). ForgeHands verifies the Forgejo
+  delivery, checks the allowlist and forwards a signed event to an OpenHands automation, which starts the agent. The manual webhook steps
+  are under *Webhook mode* below.
+
+Direct mode routes a label to an agent profile and its limits (`LABEL_ROUTES`, JSON; `setup.sh` writes these defaults):
+
+| Label | Agent profile | Tier | `max_iterations` |
+| --- | --- | --- | --- |
+| `ai:plan` | `planner` | `planner` | 40 |
+| `ai:ready` | `worker` | `worker` | 120 |
+| `ai:escalate` | `worker-strong` | `worker-strong` | 120 |
+| `ai:review` | `reviewer` | `reviewer` | 60 |
+
+A route may also set `max_budget` (per run) and `max_concurrent` (that tier). The profiles are the tiers of the agents stack: `planner`,
+`worker`, `worker-strong` and `reviewer` with a strong and a cheap LLM profile; create them in Canvas before labelling. `hgboot` renders
+the same routes from the profile ids once it has created them.
+
+Label semantics (ForgeHands 0.2.5 and newer; the stack pins `v0.2.5`):
+
+- Forgejo reports a label added to an existing issue as an `issues` event with action `label_updated` and the *current* labels, not the
+  added one. ForgeHands remembers the labels last seen per issue and starts a run for a trigger label that is **new**. So `ai:escalate`
+  next to `ai:ready` starts the stronger worker, removing and re-adding a label runs the issue again, and an unrelated label does nothing.
+  Older versions started nothing for a label added to an existing issue.
+- The ledger `jobs.json` (`repo#issue:label` -> conversation, queue, hourly count, timeout, retries) is in `forgehands-data`; a label on
+  an issue with an active run starts no second run. Run one label twice: one run.
+
+`setup.sh` writes the rest of the direct-mode settings; each can be overridden in `.env`:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `FORGEHANDS_OPENHANDS_API_URL` | `http://openhands:8000` | empty: webhook mode |
+| `OPENHANDS_LOCAL_BACKEND_API_KEY` | generated | handed to ForgeHands as `OPENHANDS_API_KEY` |
+| `FORGEHANDS_AGENT_SECRETS` | `FORGEJO_TOKEN,FORGEJO_URL` | variables handed to every conversation; without them the agent has no Forgejo access |
+| `FORGEJO_TOKEN` | empty | a Forgejo token (scopes `write:repository`, `read:user`) made by hand; set it in `.env` |
+| `FORGEHANDS_FORGEJO_URL` | `http://forgejo:3000` | Forgejo as the agent reaches it |
+| `FORGEHANDS_ALLOWED_REPOS`, `FORGEHANDS_ALLOWED_SENDERS` | Forgejo owner / its repository | repositories and Forgejo logins that may trigger runs |
+| `FORGEHANDS_MAX_CONCURRENT_PER_TIER` | 2 | queue per tier |
+| `FORGEHANDS_MAX_CONCURRENT` | 4 | queue of the whole stack |
+| `FORGEHANDS_MAX_RUNS_PER_HOUR` | 30 | hourly cap |
+| `FORGEHANDS_MAX_RUN_MINUTES` | 120 | a run that takes longer is stopped |
+| `TIER_WEEKLY_BUDGETS` | unset | optional cost cap per tier; it only works when the LLM gateway reports a price, so leave it unset otherwise |
+
+`WORKSPACE_DIR` (`/workspace`, volume `forgehands-workspace`) and `JOBS_FILE` (`/app/data/jobs.json`) are fixed in the compose file; the
+ForgeHands container stays read-only and drops every capability. A started conversation is marked untrusted: the issue text goes into
+the first message between markers.
 
 Automatic (from `setup.sh` and Compose):
 
-- The secrets: `OPENHANDS_LOCAL_BACKEND_API_KEY` (Canvas and Agent Server reject requests without it), `FORGEHANDS_FORGEJO_WEBHOOK_SECRET`
-  and `FORGEHANDS_OPENHANDS_WEBHOOK_SECRET`, plus `FORGEHANDS_ALLOWED_REPOS` and `COMPOSE_PROFILES=agents`.
-- `openhands` starts with `AUTOMATION_BASE_URL=http://openhands:8000` (the service appends `/api/automation`), so the webhook URL Canvas
-  hands out is the one the `forgehands` container can reach over the compose network. State lives in `openhands-data`; the port is
-  `PORT_OPENHANDS` (default 8000).
+- The secrets: `OPENHANDS_LOCAL_BACKEND_API_KEY` (Canvas and Agent Server reject requests without it), the webhook-mode
+  `FORGEHANDS_FORGEJO_WEBHOOK_SECRET` and `FORGEHANDS_OPENHANDS_WEBHOOK_SECRET`, plus `FORGEHANDS_ALLOWED_REPOS`,
+  `FORGEHANDS_ALLOWED_SENDERS`, the label routes and the limits.
+- `openhands` starts with `AUTOMATION_BASE_URL=http://openhands:8000` (the service appends `/api/automation`). State lives in
+  `openhands-data`; the port is `PORT_OPENHANDS` (default 8000).
 - The bootstrap adds `openhands.<domain>` to the proxy and gets its certificate, like the other services (when the profile is already on
   before the bootstrap runs).
 - `forgehands` starts after `openhands` is healthy, on `PORT_FORGEHANDS` (default 8080, configurable because 8080 is often taken), state in
   `forgehands-data`. Both have a healthcheck (`/health` and `/healthz`).
 
-Manual, once:
+Manual, once (direct mode):
 
 1. Start only the agent runtime: `docker compose up -d openhands`. Open Canvas at `http://<host>:${PORT_OPENHANDS}` and add a model provider
-   key there (it stays in the `openhands-data` volume, not in `.env`). Unset or empty `OPENHANDS_LOCAL_BACKEND_API_KEY` in `.env` then
-   leaves Canvas open to anyone who can reach the port: keep the port on the LAN or put it behind the proxy.
-2. In Canvas, `Automate -> Events` (custom webhook sources): name it `forgehands`, event key expression `type`, signature header
-   `X-Signature-256`, signature scheme `hmac_sha256_hex`, secret = `FORGEHANDS_OPENHANDS_WEBHOOK_SECRET` from `.env`. Copy the URL it
-   returns; it looks like `http://openhands:8000/api/automation/v1/events/<source-id>/forgehands`. Put it in `.env` as
-   `FORGEHANDS_OPENHANDS_WEBHOOK_URL`. ForgeHands refuses to start without it rather than accept deliveries it cannot forward, so from
-   here on `docker compose up -d` starts both.
-3. In Forgejo, in each allowed repository: `Settings -> Webhooks -> Add webhook -> Forgejo`, target URL
-   `http://forgehands:8080/webhooks/forgejo`, secret = `FORGEHANDS_FORGEJO_WEBHOOK_SECRET`, events: issues. Forgejo reaches ForgeHands by
-   its service name on the compose network; the published port is only for debugging from the host.
-4. Label an issue `ai:ready`. `issues.opened` counts only when the issue already carries the label; a later `issues.labeled` counts only
-   when the added label is `ai:ready`. The agent works in its own checkout and opens a draft pull request; nothing merges it.
+   key there (it stays in the `openhands-data` volume, not in `.env`). Create the LLM profiles (strong, cheap) and the four agent profiles
+   of the table. Unset or empty `OPENHANDS_LOCAL_BACKEND_API_KEY` leaves Canvas open to anyone who can reach the port: keep the port on the
+   LAN or put it behind the proxy.
+2. In Forgejo, create a token for its user (`Settings -> Applications`, scopes `write:repository` and `read:user`) and put it in `.env` as
+   `FORGEJO_TOKEN`. This is the only credential ForgeHands hands to the agent; without it the agent can read but not push.
+3. `docker compose up -d`. Label an issue `ai:plan`, `ai:ready`, `ai:escalate` or `ai:review` in an allowed repository, either when you
+   create it or later. The matching profile works in its own checkout under `/workspace` and opens a draft pull request; nothing merges
+   it.
 
-What stays manual: the model provider key and the two webhook registrations above. There is no `forgehands.<domain>` proxy host: Forgejo
-reaches the bridge on the compose network, and the published 8080 is only for debugging. Do not expose 8000 or 8080 unauthenticated.
+Webhook mode (only when `FORGEHANDS_OPENHANDS_API_URL` is empty): in Canvas, `Automate -> Events`, name it `forgehands`, event key
+expression `type`, signature header `X-Signature-256`, scheme `hmac_sha256_hex`, secret `FORGEHANDS_OPENHANDS_WEBHOOK_SECRET`; put the URL
+it returns in `.env` as `FORGEHANDS_OPENHANDS_WEBHOOK_URL` (ForgeHands refuses to start without it). In each repository, `Settings ->
+Webhooks -> Add webhook -> Forgejo`, target `http://forgehands:8080/webhooks/forgejo`, secret `FORGEHANDS_FORGEJO_WEBHOOK_SECRET`, events:
+issues. If you create an automation instead, set its `agent_profile_id`: an agent profile clears `model`.
+
+What stays manual: the model provider key, the agent profiles and (webhook mode) the two webhook registrations above. There is no
+`forgehands.<domain>` proxy host: Forgejo reaches the bridge on the compose network in webhook mode too, and the published 8080 is only
+for debugging. Do not expose 8000 or 8080 unauthenticated.
 
 The same two containers also exist as a wizard template: `./homelab.py new-app --template agents` creates `stacks/<id>/`
 (`seed/infra/homelab/templates/agents/`) with its secrets in Infisical and two proxy hosts of its own, `<id>.<domain>` for ForgeHands and
-`openhands.<domain>` for Canvas (the wizard picks a free port for each). Use it when the agents should be an app next to the platform
-instead of part of the platform compose file; the manual steps are the same, the Forgejo webhook then points at
-`https://<id>.<domain>/webhooks/forgejo`.
+`openhands.<domain>` for Canvas (the wizard picks a free port for each). It runs direct mode with the same label routes; the form has
+fields for `ALLOWED_REPOS`, `ALLOWED_SENDERS` and the limits. Use it when the agents should be an app next to the platform instead of part
+of the platform compose file.
 
-Troubleshooting: `docker compose logs -f forgehands` shows verdicts and delivery failures; a 401 there means the Forgejo secret differs, a
-502 means `OPENHANDS_WEBHOOK_URL` is not reachable from the container (host port vs. service name), and a 202 with no PR means OpenHands
-accepted the event but no automations matched the source or the repository is not in `FORGEHANDS_ALLOWED_REPOS`. A Forgejo webhook
-delivery log is the first place to look for signature errors (`Settings -> Webhooks -> Recent Deliveries`).
+Troubleshooting: `docker compose logs -f forgehands` shows verdicts, queue decisions and delivery failures. A 401 means the Forgejo secret
+differs (webhook mode); a 502 means `OPENHANDS_WEBHOOK_URL` is not reachable from the container (webhook mode); in direct mode a refused
+`POST /api/conversations` names the profile or the key. A label that starts nothing: the repository or the sender is not in
+`FORGEHANDS_ALLOWED_REPOS` / `ALLOWED_SENDERS`, the label is not a trigger, or it is unchanged since the last look. `jobs.json` holds the
+label state; deleting it makes ForgeHands treat every current trigger label as new. A Forgejo webhook delivery log is the first place to
+look for signature errors (`Settings -> Webhooks -> Recent Deliveries`, webhook mode).
 
 The runner (and so Renovate) needs Forgejo on the **address of the host**, not on loopback: the job containers live in another Docker daemon, do not see
 this network and use the address the runner registered with (`http://<HOST_IP>:<PORT_FORGEJO>`). `BIND_ADDRESS=127.0.0.1` therefore does not work with them.

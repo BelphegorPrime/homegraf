@@ -304,6 +304,7 @@ def extra_template(app_id: str, server: str, t: "templates.Template", taken: set
     """The services a further template adds to the app's compose file (see isolate): its own app, its building blocks,
     its sidecars. It publishes a free port of its own (added to taken); its folders below /srv/docker/<id>-<template>."""
     name = f"{app_id}-{t.id}"
+    t = route_ports(t, taken)
     d = template_defaults(t)
     cport = d["containerPort"]
     hport = next(n for n in range(cport if cport >= 1024 else 8000, 65535) if n not in taken) if cport else None
@@ -324,6 +325,41 @@ def extra_template(app_id: str, server: str, t: "templates.Template", taken: set
     if tail:
         raise SystemExit(f"--template {t.id}: its volumes or networks need top-level entries, it cannot share an app with another template")
     return isolate(body, name, var_prefix(t))
+
+
+def _published(text: str, service: str, container: int, host: int) -> str:
+    """The sidecar text with `container` published on `host` instead of the host port it names; its other ports stay."""
+    out, in_ports, found = [], False, False
+    for line in text.splitlines():
+        if re.match(r"^    ports:\s*$", line):
+            in_ports = True
+            out.append(line)
+            continue
+        if in_ports:
+            m = re.match(r'^      - "?(\d+):(\d+)"?\s*$', line)
+            if m and int(m.group(2)) == container:
+                found = True
+                out.append(f'      - "{host}:{container}"')
+                continue
+            if not re.match(r"^      - ", line):
+                in_ports = False
+        out.append(line)
+    if not found:
+        raise SystemExit(f"the sidecar {service} publishes no port {container}, which its route needs")
+    return "\n".join(out) + "\n"
+
+
+def route_ports(t: "templates.Template", taken: set[int]) -> "templates.Template":
+    """The template with a free host port for every extra route: its sidecar still publishes its container port, and the
+    mapping <host>:<container> names the port the proxy reaches on the server (taken grows)."""
+    sidecars = dict(t.sidecars)
+    for r in t.routes:
+        if r.service not in sidecars:
+            raise SystemExit(f"template {t.id}: the route for {r.service} needs it as a sidecar")
+        host = next(n for n in range(r.port if r.port >= 1024 else 8000, 65535) if n not in taken)
+        taken.add(host)
+        sidecars[r.service] = _published(sidecars[r.service], r.service, r.port, host)
+    return dataclasses.replace(t, sidecars=sidecars)
 
 
 def _split_top_level(text: str) -> tuple[str, str]:
@@ -367,16 +403,38 @@ def inventory_block(app: "App") -> str:
     return block + ("  secrets: infisical\n" if app.secrets else "")
 
 
+def _proxy_service(app: "App", service_id: str, domain: str, port: int | None, websockets: bool,
+                   health_path: str, statuses: list[int]) -> dict:
+    return {"id": service_id, "stack": app.id, "lifecycle": "present",
+            "proxy": {"domains": [domain],
+                      "upstream": {"scheme": "http", "server": app.server, "port": port},
+                      "websockets": websockets, "force_https": app.force_https},
+            "certificate": {"issuer_ref": "homelab-private-ca", "validity_days": 90, "renew_before_days": 30},
+            "healthcheck": {"path": health_path, "accepted_statuses": statuses}}
+
+
 def manifest(app: "App") -> str:
-    doc = {"apiVersion": "homelab.ingress/v1", "namespace": "infrastructure", "services": [{
-        "id": app.id, "stack": app.id, "lifecycle": "present",
-        "proxy": {"domains": [app.domain],
-                  "upstream": {"scheme": "http", "server": app.server, "port": app.upstream_port},
-                  "websockets": app.websockets, "force_https": app.force_https},
-        "certificate": {"issuer_ref": "homelab-private-ca", "validity_days": 90, "renew_before_days": 30},
-        "healthcheck": {"path": app.health_path, "accepted_statuses": app.statuses},
-    }]}
+    """The stack's routing: the app's own host, and a service of its own for every further host a template brings."""
+    services = [_proxy_service(app, app.id, app.domain, app.upstream_port, app.websockets, app.health_path, app.statuses)]
+    services += [_proxy_service(app, f"{app.id}-{r['service']}", r["domain"], r["port"], r["websockets"], r["health_path"],
+                                r["statuses"]) for r in app.routes]
+    doc = {"apiVersion": "homelab.ingress/v1", "namespace": "infrastructure", "services": services}
     return WIZARD_NOTE + "\n" + yaml.safe_dump(doc, sort_keys=False, default_flow_style=None)
+
+
+def routes_from_manifest(app_id: str, services: list[dict]) -> list[dict]:
+    """The further hosts a written ingress.yaml declares (everything after the app's own service)."""
+    out = []
+    for svc in services[1:]:
+        svc_id = str(svc.get("id") or "")
+        if not svc_id.startswith(f"{app_id}-"):
+            continue
+        proxy = svc.get("proxy") or {}
+        out.append({"service": svc_id[len(app_id) + 1:], "domain": (proxy.get("domains") or [""])[0],
+                    "port": (proxy.get("upstream") or {}).get("port"), "websockets": bool(proxy.get("websockets")),
+                    "health_path": (svc.get("healthcheck") or {}).get("path", "/"),
+                    "statuses": (svc.get("healthcheck") or {}).get("accepted_statuses", list(DEFAULT_STATUSES))})
+    return out
 
 
 def known_domains(root: pathlib.Path | None = None) -> dict[str, str]:
@@ -428,6 +486,7 @@ class App:
     template: str = ""
     first_run: str = ""               # what to do once it runs (from a template)
     host_paths: list[str] = dataclasses.field(default_factory=list)   # folders the template wants chosen on the server
+    routes: list[dict] = dataclasses.field(default_factory=list)      # further hosts of the ingress.yaml (service, domain, port, ...)
 
     @property
     def dir(self) -> pathlib.Path:
@@ -544,8 +603,9 @@ def _ask_compose(app_id: str, server: str, p: dict, blocks: list[addons.Addon]) 
     fill = placeholders(app_id, *app_url(app_id, server, p, int(hport) if hport else None))
     opts = dataclasses.replace(opts, env={k: fill(v) for k, v in opts.env.items()})
     chosen = chosen_templates(p)
+    main = route_ports(chosen[0], taken) if chosen else None   # a further host of the template gets a free port of its own
     text = skeleton(app_id, image, int(cport) if cport else None, int(hport) if hport else None, secret_vars, mount or None,
-                    blocks, block_ports, server_address(server), opts, chosen[0] if chosen else None, fill)
+                    blocks, block_ports, server_address(server), opts, main, fill)
     for t in chosen[1:]:
         text = with_extra_services(text, extra_template(app_id, server, t, taken))
     return text
@@ -592,12 +652,32 @@ def _ask_routing(app: App, ports: list[tuple[str, int, int]], p: dict) -> bool:
     app.health_path = p.get("health_path") or ui.ask("Path for the reachability check", "/", example="/ or /health",
                                                      check=lambda a: None if a.startswith("/") else "start with /")
     if p.get("statuses"):
-        app.statuses = p["statuses"]
+        app.statuses = p["statuses"] if isinstance(p["statuses"], list) else [int(x) for x in str(p["statuses"]).split(",")]
     else:
         st = ui.ask("HTTP status codes that count as up without login", ",".join(map(str, DEFAULT_STATUSES)),
                     example="200,302", check=lambda a: None if all(x.strip().isdigit() for x in a.split(",")) else "numbers, comma-separated")
         app.statuses = [int(x) for x in st.split(",")]
     return True
+
+
+def template_routes(t: "templates.Template", app: "App", ports: list[tuple[str, int, int]]) -> list[dict]:
+    """The template's further hosts: <host>.<domain of the installation> to the port its sidecar publishes on the server."""
+    suffix = settings.domain(ops.ROOT)
+    taken = known_domains()
+    out = []
+    for r in t.routes:
+        domain = f"{r.host}.{suffix}"
+        if domain == app.domain or domain in taken:
+            raise SystemExit(f"--template {t.id}: {domain} is already used in {taken.get(domain, 'this app')}")
+        if not settings.matches_policy(domain, ops.ROOT):
+            raise SystemExit(f"--template {t.id}: {domain} is outside the domains the certificate authority allows")
+        port = next((h for s, h, c in ports if s == r.service and c == r.port), None)
+        if port is None:
+            ui.warn(f"--template {t.id}: {r.service} does not publish {r.port}, so {domain} is not routed")
+            continue
+        out.append({"service": r.service, "domain": domain, "port": port, "websockets": r.websockets,
+                    "health_path": r.health_path, "statuses": list(r.statuses or app.statuses)})
+    return out
 
 
 def resolve_secret(var: str, spec: str) -> str | None:
@@ -678,10 +758,12 @@ def gather(p: dict | None = None) -> App | None:
     ingress_path = app.dir / "ingress.yaml"
     ports = [p_ for p_ in compose_ports(app.compose) if p_[0] not in tool_services(app.compose)]   # the app's, not a tool's
     if ingress_path.is_file():
-        svc = (yaml.safe_load(ingress_path.read_text())["services"] or [{}])[0]
+        services = yaml.safe_load(ingress_path.read_text())["services"] or [{}]
+        svc = services[0]
         app.domain, app.upstream_port = svc["proxy"]["domains"][0], svc["proxy"]["upstream"]["port"]
         app.health_path = (svc.get("healthcheck") or {}).get("path", "/")
         app.statuses = (svc.get("healthcheck") or {}).get("accepted_statuses", DEFAULT_STATUSES)
+        app.routes = routes_from_manifest(app_id, services)
         ui.ok(f"routing from {ingress_path.relative_to(ROOT)}: https://{app.domain} -> {server}:{app.upstream_port}")
     elif not ports:
         ui.warn("the compose file publishes no port: no routing (add `ports:` and start again if you want it)")
@@ -689,6 +771,8 @@ def gather(p: dict | None = None) -> App | None:
             f"\nStep 3: make it reachable via HTTPS, e.g. https://{app_id}.{settings.domain(ops.ROOT)}?", True):
         if not _ask_routing(app, ports, p):
             return None
+        if chosen and app.domain:
+            app.routes = template_routes(chosen[0], app, ports)
 
     required, optional = compose_vars(app.compose)
     preset = p.get("secrets") or {}
@@ -714,6 +798,8 @@ def gather(p: dict | None = None) -> App | None:
     if app.files:
         print(f"  files from the template {app.template}: {', '.join(app.files)}")
     print(f"  routing: {f'https://{app.domain} -> {app.server}:{app.upstream_port}' if app.domain else 'none'}")
+    for r in app.routes:
+        print(f"  also: {r['service']} at https://{r['domain']} -> {app.server}:{r['port']}")
     print(f"  secrets: {', '.join(k + ('' if v else ' (keep existing / later)') for k, v in app.secrets.items()) or 'none'}")
     for target in app.host_paths:
         ui.warn(f"the template's folder for {target} is a stand-in: change the volume to a folder that exists on {app.server}")
@@ -932,6 +1018,7 @@ def pr_body(app: App) -> str:
     lines = [f"New app `{app.id}` on `{app.server}`, created with `./homelab.py new-app --pr`.", "",
              f"- files: `stacks/{app.id}/`, entry in `inventory/stacks.yaml`",
              f"- routing: {f'https://{app.domain} -> {app.server}:{app.upstream_port}' if app.domain else 'none'}",
+             *[f"- also routed: `{r['service']}` at https://{r['domain']} -> {app.server}:{r['port']}" for r in app.routes],
              f"- secrets in Infisical (`{project_slug(app.server)}`, folder `/{app.id}`): {', '.join(sorted(app.secrets)) or 'none'}", "",
              "The Komodo stack and the secrets already exist; the merge makes `update-all` deploy the app.",
              *([f"First run: {first_run(app)}"] if app.first_run else []),

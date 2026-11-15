@@ -326,7 +326,10 @@ def test_the_agents_form_keeps_every_credential_out_of_the_generated_compose(age
 def test_the_agents_form_values_pass_the_factory_configuration(agent):
     """The form's defaults are what the opt-in factory validates (bootstrap/hgboot/factory_config.py), not just what
     the template renders: allowlists, identity, models, gateway and limits go through the real class."""
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "bootstrap"))
+    bootstrap = pathlib.Path(__file__).resolve().parents[3] / "bootstrap"
+    if not (bootstrap / "hgboot" / "factory_config.py").is_file():
+        pytest.skip("the bootstrap is outside seed/ (scripts/check-seed.sh copies seed/ alone)")
+    sys.path.insert(0, str(bootstrap))
     from hgboot.factory_config import FactoryConfig  # noqa: E402
 
     env = yaml.safe_load(_agents(agent).compose)["services"]["agents"]["environment"]

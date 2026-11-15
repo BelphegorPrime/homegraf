@@ -99,10 +99,17 @@ export function buildView(id: ViewId, g: Graph, opts: ViewOptions = defaultOptio
     case "request": {
       const types: NodeType[] = ["domain", "infra", "container", "stack", "service"];
       if (!opts.publicOnly) return subgraph(g, types, ["terminated-by", "proxies"]);
+      const publicDomains = new Set(g.nodes.filter((n) => n.type === "domain" && isPublic(n)).map((n) => n.label));
       const sub = subgraph(g, types, ["terminated-by", "proxies"], (n) => n.type !== "domain" || isPublic(n));
       // A `proxies` edge names every domain the proxy routes to its target; a route that serves only unexposed names is not public.
-      const publicDomains = new Set(g.nodes.filter((n) => n.type === "domain" && isPublic(n)).map((n) => n.label));
-      const edges = sub.edges.filter((e) => e.type !== "proxies" || !e.domains || e.domains.some((d) => publicDomains.has(d)));
+      // Without that metadata, only the target's own exposure (the builder writes it on the answering stack or service) can show the route is public.
+      const byId = new Map(g.nodes.map((n) => [n.id, n]));
+      const servesPublic = (e: GraphEdge): boolean => {
+        if (e.domains) return e.domains.some((d) => publicDomains.has(d));
+        const target = byId.get(e.target);
+        return !!target && exposures(target).some((x) => publicDomains.has(x.domain));
+      };
+      const edges = sub.edges.filter((e) => e.type !== "proxies" || servesPublic(e));
       const used = new Set(edges.flatMap((e) => [e.source, e.target]));
       return { nodes: sub.nodes.filter((n) => used.has(n.id)), edges };
     }

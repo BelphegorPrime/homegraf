@@ -83,6 +83,40 @@ describe("views", () => {
     expect(v.edges.map((e) => e.id).sort()).toEqual(["p1", "t1"]);
   });
 
+  it("request with publicOnly keeps nothing when no domain is public", () => {
+    const privateOnly: Graph = {
+      generated: "now",
+      warnings: [],
+      nodes: [
+        { id: "domain:private.example.org", type: "domain", label: "private.example.org" },
+        { id: "infra:npm", type: "infra", label: "NPM" },
+        { id: "stack:private", type: "stack", label: "private" },
+      ],
+      edges: [
+        { id: "t", source: "domain:private.example.org", target: "infra:npm", type: "terminated-by" },
+        { id: "p", source: "infra:npm", target: "stack:private", type: "proxies" },
+      ],
+    };
+    expect(buildView("request", privateOnly, { ...defaultOptions, publicOnly: true })).toEqual({ nodes: [], edges: [] });
+  });
+
+  it("request with publicOnly trusts routes without domain metadata only when the target is public", () => {
+    const withoutRouteMetadata: Graph = {
+      ...g,
+      edges: [
+        ...g.edges.filter((e) => e.id !== "p1" && e.id !== "p2"),
+        { id: "p1", source: "infra:npm", target: "stack:app", type: "proxies" },
+        { id: "p2", source: "infra:npm", target: "stack:db", type: "proxies" },
+      ],
+    };
+    const v = buildView("request", withoutRouteMetadata, { ...defaultOptions, publicOnly: true });
+    expect(v.edges.map((e) => e.id).sort()).toEqual(["p1", "t1"]);
+    expect(v.nodes.map((n) => n.id).sort()).toEqual(["domain:app.lab.example", "infra:npm", "stack:app"]);
+    const all = buildView("request", withoutRouteMetadata);
+    expect(all.edges.map((e) => e.id).sort()).toEqual(["p1", "p2", "t1", "t2"]);
+    expect(all.nodes.map((n) => n.id)).toContain("stack:db");
+  });
+
   it("catalog hides stacks without URL unless asked, grouped by category", () => {
     expect(catalogTiles(g, "category", false).map((t) => [t.node.id, t.group])).toEqual([["stack:app", "Media"]]);
     expect(catalogTiles(g, "machine", true)).toHaveLength(2);

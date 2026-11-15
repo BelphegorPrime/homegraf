@@ -73,13 +73,15 @@ class FakeMirror:
             for mirror in self.mirrors:
                 mirror["last_update"] = UPDATED
             return 200, {}
-        if parts.path.startswith(base + "/") and req.method == "PATCH":
+        if parts.path.startswith(base + "/") and req.method == "DELETE":
             name = parts.path[len(base) + 1:]
-            mirror = next((m for m in self.mirrors if m.get("remote_name") == name), None)
-            if mirror is None:
+            before = len(self.mirrors)
+            self.mirrors = [m for m in self.mirrors if m.get("remote_name") != name]
+            if len(self.mirrors) == before:
                 return 404, {"message": "no mirror"}
-            mirror.update(req.json)
-            return 200, mirror
+            return 204, None
+        if parts.path.startswith(base + "/") and req.method == "PATCH":
+            return 405, {"message": "method not allowed"}
         return 404, {"message": f"unexpected {req.method} {parts.path}"}
 
 
@@ -165,16 +167,20 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(second.branches, ("main",))
         self.assertEqual(second.main_sha, "1" * 40)
 
-    def test_drift_is_repaired_in_place_and_the_next_run_is_converged(self):
+    def test_drift_is_repaired_by_delete_and_create_and_the_next_run_is_converged(self):
         fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40})
         mirror = self.mirror(fake)
         fake.mirrors = [{**self.correct_mirror(), "sync_on_commit": False, "interval": "1h0m0s"}]
         first = mirror.sync()
-        patches = self.srv.calls("PATCH", f"/api/v1/repos/{FORGEJO_REPO}/push_mirrors/")
-        self.assertEqual(len(patches), 1)
-        self.assertEqual((patches[0].json["interval"], patches[0].json["sync_on_commit"]), ("8h0m0s", True))
-        self.assertEqual((first.created, first.repaired, first.synced), (False, True, False))
-        self.assertEqual(fake.syncs, 0)
+        writes = self.writes()
+        self.assertEqual([r.method for r in writes], ["DELETE", "POST", "POST"])
+        self.assertEqual(urlsplit(writes[0].path).path, f"/api/v1/repos/{FORGEJO_REPO}/push_mirrors/github")
+        self.assertEqual(urlsplit(writes[1].path).path, f"/api/v1/repos/{FORGEJO_REPO}/push_mirrors")
+        body = writes[1].json
+        self.assertEqual((body["sync_on_commit"], body["interval"]), (True, "8h0m0s"))
+        self.assertEqual(body["remote_password"], GITHUB_TOKEN)
+        self.assertEqual((first.created, first.repaired, first.synced), (False, True, True))
+        self.assertEqual(fake.syncs, 1)
         started = len(self.writes())
         second = mirror.sync()
         self.assertEqual((second.created, second.repaired, second.synced), (False, False, False))

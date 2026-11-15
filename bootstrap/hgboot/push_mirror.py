@@ -8,6 +8,9 @@ would remove it) or when a shared branch has a different commit (syncing would
 rewrite history). A missing token, divergence and an API error are failures, not
 reasons to guess.
 
+A drifted mirror is repaired by deleting it and creating it again, because
+Forgejo's API has no way to update a push mirror in place.
+
 The GitHub token is sent only to the GitHub API and, as the remote password, to
 the Forgejo push mirror credential field. It never appears in a remote address,
 a log line or an error: everything echoed back by a service is cleaned first.
@@ -78,7 +81,7 @@ class PushMirror:
             mirror = self._create()
             created = True
         elif self._drifted(mirror):
-            mirror = self._patch(mirror)
+            mirror = self._replace(mirror)
             repaired = True
         if created or not mirror.get("last_update") or set(target) != set(source):
             self._sync_now(mirror)
@@ -103,7 +106,7 @@ class PushMirror:
             raise StepError(f"Forgejo returned no push mirror list for {self.forgejo_repo}")
         return mirrors
 
-    def _create(self) -> dict:
+    def _create(self, *, repaired: bool = False) -> dict:
         r = self.http("POST", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors", headers=self._forgejo_headers(), body={
             "remote_address": self.remote_address, "remote_username": REMOTE_USER,
             "remote_password": self.github_token, "sync_on_commit": True, "interval": INTERVAL})
@@ -114,23 +117,17 @@ class PushMirror:
             mirror = next((m for m in self._mirrors() if self._same_remote(m.get("remote_address"))), {})
         if "last_update" not in mirror:
             mirror = self._current() or mirror
-        log(STEP, f"{self.github_repo}: push mirror created")
+        log(STEP, f"{self.github_repo}: push mirror {'repaired' if repaired else 'created'}")
         return mirror
 
-    def _patch(self, mirror: dict) -> dict:
+    def _replace(self, mirror: dict) -> dict:
         name = mirror.get("remote_name") or mirror.get("name") or "github"
-        r = self.http("PATCH", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors/{quote(str(name), safe='')}",
-                      headers=self._forgejo_headers(), body={
-                          "sync_on_commit": True, "interval": INTERVAL,
-                          "remote_username": REMOTE_USER, "remote_password": self.github_token})
+        r = self.http("DELETE", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors/{quote(str(name), safe='')}",
+                      headers=self._forgejo_headers())
         if not r.ok:
-            raise StepError(f"Forgejo refused to update the push mirror to {self.github_repo}: "
+            raise StepError(f"Forgejo refused to remove the drifted push mirror to {self.github_repo}: "
                             f"{r.status} {self._clean(r.text)}")
-        updated = r.json() if r.body else None
-        if not isinstance(updated, dict) or not updated:
-            updated = self._current() or mirror
-        log(STEP, f"{self.github_repo}: push mirror repaired")
-        return updated
+        return self._create(repaired=True)
 
     def _current(self) -> dict | None:
         return next((m for m in self._mirrors() if self._same_remote(m.get("remote_address"))), None)

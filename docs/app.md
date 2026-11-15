@@ -18,6 +18,12 @@ One container: Hono serves the API and the built React app, and runs `infra/grap
 
 Dependencies between stacks are inferred from environment values that name another stack's domain or `<server>:<port>`; they are drawn dashed. Add anything else as a `links:` entry in `inventory/network.yaml`.
 
+## Public exposure
+
+A service counts as public when the graph builder finds a reason for it: its ingress manifest has a `proxy.public` block, which also names the paths, the methods and the client networks of `allow_cidrs`, or its domain matches no `allowed_domains` pattern of the certificate issuers in `inventory/ingress.yaml`, so a publicly trusted certificate can be issued for that name (then the whole host is reachable and the methods are unknown).
+
+The Catalog marks such a tile with a `public` badge: plain outline when only the listed paths are exposed, in the warning colour when the whole host is (hover shows the domains). Its **Public only** checkbox narrows the tiles to those services; the same checkbox in the **Request path** view drops every domain, route and target that is not public. The detail panel lists, per exposed domain, the paths (or `whole host`), the methods and the source allowlist (`any address` when the proxy lets in everything).
+
 ## Run
 
 The image is `ghcr.io/belphegorprime/homegraf`; how to start it alone, and which environment turns on what, is in the [README](../README.md#run-the-image). The all-in-one stack in [stack.md](stack.md) runs it together with Forgejo, Komodo, Infisical and the proxy.

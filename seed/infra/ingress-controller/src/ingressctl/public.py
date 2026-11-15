@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from .errors import ManifestError
 
 ACME_CHALLENGE = "/.well-known/acme-challenge/"
-_COMMENT = "# managed by ingressctl: public paths only"
+MANAGED_MARKER = "# managed by ingressctl"
+_COMMENT = f"{MANAGED_MARKER}: public paths only"
 _FIELDS = frozenset({"paths", "methods", "allow_cidrs"})
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 _DEFAULT_METHODS = ("GET", "HEAD")
@@ -55,6 +56,23 @@ def render_public_config(spec: PublicSpec) -> str:
         lines.extend(f"allow {cidr};" for cidr in sorted(spec.allow_cidrs))
         lines.append("deny all;")
     return "\n".join(lines)
+
+
+def is_managed_config(text: str | None) -> bool:
+    """Leer oder eine von ingressctl geschriebene advanced_config."""
+    return not (text or "").strip() or text.lstrip().startswith(MANAGED_MARKER)
+
+
+def remove_managed_config(current: str | None, written: str | None) -> str:
+    """Entfernt genau den zuletzt geschriebenen Block; von Hand Ergänztes bleibt stehen."""
+    current = current or ""
+    if not written:
+        return current
+    if current.strip() == written.strip():
+        return ""
+    if current.startswith(written):
+        return current[len(written):].lstrip("\r\n")
+    return current
 
 
 def _error(field: str, message: str) -> ManifestError:

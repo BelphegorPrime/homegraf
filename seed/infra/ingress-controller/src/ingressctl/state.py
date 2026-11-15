@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS services (
   cert_not_after TEXT,
   cert_issuer TEXT,
   policy_hash TEXT,
+  public_config TEXT,
   target_commit TEXT,
   deployed_commit TEXT,
   reconciled_commit TEXT,
@@ -66,6 +67,9 @@ class State:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        # Bestehende Datenbanken aus der Zeit vor proxy.public nachziehen.
+        if "public_config" not in {r["name"] for r in self.db.execute("PRAGMA table_info(services)")}:
+            self.db.execute("ALTER TABLE services ADD COLUMN public_config TEXT")
 
     # --- services -------------------------------------------------------------------------------
     def get(self, resource_id: str) -> dict | None:

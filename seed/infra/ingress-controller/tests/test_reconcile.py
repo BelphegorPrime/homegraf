@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from ingressctl.errors import AdapterError, CertificateError, ConflictError, IngressError, PendingIssuance
+from ingressctl.public import render_public_config
 from ingressctl.reconcile import adopt, apply_service, plan_service, recover
 
 
@@ -13,6 +14,24 @@ def apply(env, stack="omniroute", **kw):
     (spec,) = env.specs(stack)
     kw.setdefault("commit", env.commit_sha)
     return ctx, spec, apply_service(ctx, spec, **kw)
+
+
+def set_public(env, value: str | None):
+    """Setzt (oder entfernt) den einzeiligen proxy.public-Block im Omniroute-Manifest."""
+    path = env.root / "stacks/ai/omniroute/ingress.yaml"
+    lines = [line for line in path.read_text().splitlines() if "public:" not in line]
+    if value is not None:
+        i = next(i for i, line in enumerate(lines) if "force_https:" in line)
+        lines.insert(i + 1, f"      public: {value}")
+    path.write_text("\n".join(lines) + "\n")
+    return env.commit()
+
+
+def plan(env, stack="omniroute"):
+    ctx = env.ctx()
+    (spec,) = env.specs(stack)
+    return ctx, spec, plan_service(ctx, spec, ctx.npm["main"].list_proxy_hosts(),
+                                   {c["id"]: c for c in ctx.npm["main"].list_certificates()})
 
 
 def test_new_service_gets_one_host_and_valid_cert(env):
@@ -355,3 +374,98 @@ def test_forget_requires_gone_host_and_no_manifest(env, monkeypatch):
     del env.npm.certs[row["npm_cert_id"]]
     assert cli.cmd_forget(type("A", (), {"root": str(env.root), "resource": rid})()) == 0
     assert ctx.state.get(rid) is None
+
+
+# --- proxy.public: advanced_config ------------------------------------------------------------
+
+def test_public_block_writes_managed_advanced_config(env):
+    set_public(env, '{paths: [/hook/abc, "/files/*"], methods: [post]}')
+    ctx, spec, res = apply(env)
+    assert res == "applied"
+    host = next(iter(env.npm.hosts.values()))
+    assert host["advanced_config"] == render_public_config(spec.public)
+    assert ctx.state.get("ai-sandbox/omniroute")["public_config"] == host["advanced_config"]
+
+
+def test_public_second_apply_is_noop(env):
+    set_public(env, "{paths: [/hook/abc]}")
+    apply(env)
+    before = env.npm.mutations
+    _, _, res = apply(env)
+    assert res == "noop" and env.npm.mutations == before
+
+
+def test_changed_public_paths_update_advanced_config_without_new_cert(env):
+    set_public(env, "{paths: [/hook/abc]}")
+    ctx, _, _ = apply(env)
+    row = ctx.state.get("ai-sandbox/omniroute")
+    set_public(env, '{paths: [/hook/other, "/files/*"], methods: [post]}')
+    ctx, spec, res = apply(env)
+    host = env.npm.hosts[row["npm_host_id"]]
+    assert res == "applied" and env.inf.issued == 1
+    assert host["advanced_config"] == render_public_config(spec.public)
+    assert host["certificate_id"] == row["npm_cert_id"]
+
+
+def test_hand_edit_of_managed_advanced_config_is_drift_and_restored(env):
+    set_public(env, "{paths: [/hook/abc]}")
+    ctx, _, _ = apply(env)
+    hid = ctx.state.get("ai-sandbox/omniroute")["npm_host_id"]
+    good = env.npm.hosts[hid]["advanced_config"]
+    env.npm.hosts[hid]["advanced_config"] = good.replace("/hook/abc", "/hook/evil")
+    _, _, p = plan(env)
+    assert any("advanced_config" in d for d in p.drift)
+    apply(env)
+    assert env.npm.hosts[hid]["advanced_config"] == good
+
+
+def test_hand_made_advanced_config_is_conflict_naming_host(env):
+    ctx, _, _ = apply(env)  # noch ohne public:
+    hid = ctx.state.get("ai-sandbox/omniroute")["npm_host_id"]
+    env.npm.hosts[hid]["advanced_config"] = "# manual\nadd_header X-Test 1;"
+    set_public(env, "{paths: [/hook/abc]}")
+    before = env.npm.mutations
+    with pytest.raises(ConflictError, match=rf"NPM-Host {hid}.*advanced_config"):
+        apply(env)
+    assert env.npm.mutations == before
+    assert env.npm.hosts[hid]["advanced_config"].startswith("# manual")
+
+
+def test_removing_public_block_clears_only_managed_config(env):
+    set_public(env, "{paths: [/hook/abc]}")
+    ctx, _, _ = apply(env)
+    hid = ctx.state.get("ai-sandbox/omniroute")["npm_host_id"]
+    assert env.npm.hosts[hid]["advanced_config"]
+    set_public(env, None)
+    ctx, spec, res = apply(env)
+    assert res == "applied" and spec.public is None
+    assert env.npm.hosts[hid]["advanced_config"] == ""
+    assert ctx.state.get("ai-sandbox/omniroute")["public_config"] is None
+
+
+def test_removing_public_block_keeps_hand_added_lines(env):
+    set_public(env, "{paths: [/hook/abc]}")
+    ctx, _, _ = apply(env)
+    hid = ctx.state.get("ai-sandbox/omniroute")["npm_host_id"]
+    env.npm.hosts[hid]["advanced_config"] += "\nadd_header X-Manual 1;"
+    set_public(env, None)
+    apply(env)
+    assert env.npm.hosts[hid]["advanced_config"] == "add_header X-Manual 1;"
+
+
+def test_manifest_without_public_leaves_advanced_config_untouched(env):
+    apply(env)
+    host = next(iter(env.npm.hosts.values()))
+    assert host["advanced_config"] == ""
+    before = env.npm.mutations
+    _, _, res = apply(env)
+    assert res == "noop" and env.npm.mutations == before
+
+
+def test_plan_shows_advanced_config_diff(env):
+    set_public(env, "{paths: [/hook/abc]}")
+    apply(env)
+    set_public(env, "{paths: [/hook/other]}")
+    _, _, p = plan(env)
+    text = p.render()
+    assert "advanced_config" in text and "/hook/abc" in text and "/hook/other" in text

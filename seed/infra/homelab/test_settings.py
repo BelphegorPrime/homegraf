@@ -36,6 +36,15 @@ def test_a_name_must_match_the_policy_when_there_is_one_else_the_domain(tmp_path
     assert not settings.matches_policy("app.other.example", tmp_path)
 
 
+def test_a_public_issuer_does_not_contribute_its_domains(tmp_path):
+    write(tmp_path, "ingress.yaml", "issuers:\n  letsencrypt:\n    type: letsencrypt\n    allowed_domains: ['*.pub.example']\n"
+          "  homelab-private-ca:\n    allowed_domains: ['*.lab.example']\n")
+    assert settings.policy_domains(tmp_path) == ["*.lab.example"]
+    assert settings.domain(tmp_path) == "lab.example"
+    assert settings.matches_policy("x.lab.example", tmp_path)
+    assert not settings.matches_policy("x.pub.example", tmp_path)
+
+
 def test_the_repository_is_the_setting_or_read_from_origin(tmp_path):
     write(tmp_path, "homegraf.yaml", "repository: me/infra\n")
     assert settings.repository(tmp_path) == "me/infra"

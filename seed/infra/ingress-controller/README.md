@@ -41,11 +41,35 @@ The stack's entrypoint sources `infra/secrets/npm.env` and `infra/secrets/ingres
    2. Have Infisical sign the CSR.
    3. Verify key, SANs, serverAuth, and the chain against `ca_bundle`.
    4. Upload it as a **new** NPM custom certificate named `ingressctl:<resource>:<op>`.
-5. **Proxy host.** Create it, or PUT only the managed fields: domains, upstream, websockets, `ssl_forced`, certificate, enabled. The PUT reloads nginx; `meta.nginx_online=false` counts as an error.
+5. **Proxy host.** Create it, or PUT only the managed fields: domains, upstream, websockets, `ssl_forced`, certificate, enabled, and `advanced_config` when `proxy.public` is declared. The PUT reloads nginx; `meta.nginx_online=false` counts as an error.
 6. **HTTPS check.** For each domain, connect to NPM:443 with SNI and `ca_bundle`; NPM must present the expected certificate. NPM acknowledges the PUT before nginx has finished reloading, so the check retries (6 × 2 s). If it still fails, the host is switched back to the previous certificate.
 7. **Record and clean up.** Write the state. Delete the old NPM certificate only when nothing references it. Nothing is revoked in Infisical.
 
 Every external step is journaled. A re-run after a timeout or crash first looks for its own objects (NPM certificate name marker, Infisical metadata `ingressctl-op`) instead of creating duplicates.
+
+## `proxy.public` (path allowlist)
+
+The optional `proxy.public` block becomes the host's NPM advanced config:
+
+| Field | Meaning |
+| --- | --- |
+| `paths` | Required, non-empty. Every entry is an exact path unless it ends in `/*`, which makes it a prefix match: `/hook/abc` does not match `/hook/abcd`, `/files/*` matches `/files/x/y`. `/` and a bare `*` are rejected. The ACME challenge path `/.well-known/acme-challenge/` is exempt from the path and method rules, but not from `allow_cidrs`. |
+| `methods` | HTTP methods allowed under those paths (default `GET`, `HEAD`). |
+| `allow_cidrs` | Optional IPv4/IPv6 networks; when set, every other source is denied. |
+
+`allow_cidrs` applies to the whole location, so with it set a source outside the listed networks also gets 403 on `/.well-known/acme-challenge/...` and HTTP-01 validation from outside fails for such a host. Let's Encrypt support is tracked in #21.
+
+```yaml
+proxy:
+  domains: [app.lab.example]
+  upstream: {scheme: http, server: worker, port: 8080}
+  public:
+    paths: [/hook/abc, "/files/*"]
+    methods: [POST]
+    allow_cidrs: [10.0.0.0/8]
+```
+
+The rendered block starts with `# managed by ingressctl`. `plan` shows the advanced-config diff; `apply` replaces only that block. A host without `public:` keeps its advanced config untouched. A hand-made advanced config on a host that should receive `public:` stops the run with a conflict that names the host, because adoption is explicit. Removing `public:` removes only what ingressctl wrote and leaves lines added by hand in place. The threat model of these fields is covered by the next ticket.
 
 ## Tests
 

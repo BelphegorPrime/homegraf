@@ -1,9 +1,9 @@
 import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Graph, StatusSnapshot } from "../shared/types";
-import { neighbours } from "./views";
+import { exposures, isFullHost, neighbours } from "./views";
 
-const HIDDEN = new Set(["id", "type", "label", "urls"]);
+const HIDDEN = new Set(["id", "type", "label", "urls", "exposure"]);
 
 export function Detail({
   graph,
@@ -22,6 +22,7 @@ export function Detail({
   if (!node) return null;
   const { incoming, outgoing } = neighbours(graph, id);
   const st = status.nodes[id];
+  const publicEntries = exposures(node);
   const label = (nid: string) => graph.nodes.find((n) => n.id === nid)?.label ?? nid;
   const groupOf = (edges: typeof incoming, end: "source" | "target") => {
     const by = new Map<string, string[]>();
@@ -61,6 +62,21 @@ export function Detail({
           </div>
         )}
       </dl>
+      {publicEntries.length > 0 && (
+        <section>
+          <h3>Public exposure</h3>
+          <dl>
+            {publicEntries.map((e) => (
+              <div key={e.domain}>
+                <dt>{e.domain}</dt>
+                <dd>{isFullHost(e) ? "whole host" : (e.paths ?? []).join(", ")}</dd>
+                <dd className="muted">methods: {(e.methods ?? []).join(", ") || "any"}</dd>
+                <dd className="muted">from: {(e.allowCidrs ?? []).join(", ") || "any address"}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
       {(
         [
           ["Outgoing", outgoing, "target"],

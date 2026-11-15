@@ -106,12 +106,9 @@ def _exposure(domain: str, proxy: dict, patterns: list[str]) -> dict | None:
         if not patterns or any(fnmatch.fnmatchcase(domain, p) for p in patterns):
             return None
         return {"domain": domain, "reason": "public-name"}
-    entry = {"domain": domain, "reason": "proxy-public"}
     paths = raw.get("paths")
-    if isinstance(paths, (list, tuple)):
-        kept = sorted({p for p in paths if isinstance(p, str)})
-        if kept:
-            entry["paths"] = kept
+    entry = {"domain": domain, "reason": "proxy-public",
+             "paths": sorted({p for p in paths if isinstance(p, str)}) if isinstance(paths, (list, tuple)) else []}
     methods = raw.get("methods")
     kept_methods = sorted({m.upper() for m in methods if isinstance(m, str)}) if isinstance(methods, (list, tuple)) else []
     entry["methods"] = kept_methods or ["GET", "HEAD"]

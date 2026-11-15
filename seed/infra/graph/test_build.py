@@ -258,5 +258,22 @@ def test_a_malformed_public_block_does_not_break_the_build(tmp_path):
     write_files(tmp_path, files)
     g = build.build_graph(tmp_path)
     assert nodes(g)["domain:app.lab.example"]["exposure"] == {
-        "domain": "app.lab.example", "reason": "proxy-public", "methods": ["GET", "HEAD"]}
+        "domain": "app.lab.example", "reason": "proxy-public", "paths": [], "methods": ["GET", "HEAD"]}
     assert [w for w in g["warnings"] if "dangling" in w] == []
+
+
+@pytest.mark.parametrize("public", ["{}", "{paths: []}"])
+def test_a_public_block_lists_paths_even_when_there_are_none(tmp_path, public):
+    files = dict(FILES)
+    files["stacks/app/ingress.yaml"] = textwrap.dedent(f"""
+        services:
+          - id: app
+            stack: app
+            proxy:
+              domains: [app.lab.example]
+              public: {public}
+              upstream: {{scheme: http, server: nas, port: 8080}}
+    """)
+    write_files(tmp_path, files)
+    exposure = nodes(build.build_graph(tmp_path))["domain:app.lab.example"]["exposure"]
+    assert exposure == {"domain": "app.lab.example", "reason": "proxy-public", "paths": [], "methods": ["GET", "HEAD"]}

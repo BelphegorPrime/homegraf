@@ -28,7 +28,7 @@ class FakeMirror:
 
     def __init__(self, forgejo_branches, github_branches=None, mirrors=None, sync_error=None,
                  sync_branches=True, sync_main_sha=None, github_status=200, history=None,
-                 default_branch="main", sync_last_update=UPDATED):
+                 default_branch="main", sync_last_update=UPDATED, mirror_status=200):
         self.forgejo_branches = dict(forgejo_branches)
         self.github_branches = dict(github_branches or {})
         self.mirrors = [dict(m) for m in (mirrors or [])]
@@ -37,6 +37,7 @@ class FakeMirror:
         self.history = {sha: list(parents) for sha, parents in (history or {}).items()}
         self.default_branch = default_branch
         self.sync_last_update = sync_last_update
+        self.mirror_status = mirror_status
         self.syncs = 0
 
     def _reachable(self, sha):
@@ -98,6 +99,8 @@ class FakeMirror:
             return 200, [{"name": n, "commit": {"sha": s}}
                          for n, s in page(list(self.github_branches.items()), query, "per_page")]
         base = f"/api/v1/repos/{FORGEJO_REPO}/push_mirrors"
+        if parts.path in (base, base + "-sync") and self.mirror_status != 200:
+            return self.mirror_status, {"message": "user should be an owner or a collaborator with admin write of a repository"}
         if parts.path == base and req.method == "GET":
             if req.headers.get("authorization") != f"token {FORGEJO_TOKEN}":
                 return 401, {"message": "no Forgejo token"}
@@ -319,6 +322,18 @@ class MirrorTest(unittest.TestCase):
         self.assertNotIn("x:", message)
         self.assertIn("***@", message)
         self.assertEqual(fake.syncs, 1)
+
+    def test_a_token_without_mirror_permission_is_an_explicit_failure(self):
+        fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40}, mirror_status=403)
+        with self.assertRaises(StepError) as caught:
+            self.mirror(fake).sync()
+        message = str(caught.exception)
+        self.assertIn("403", message)
+        self.assertIn("owner or a collaborator", message)
+        self.assertNotIn(FORGEJO_TOKEN, message)
+        self.assertEqual(fake.syncs, 0)
+        forgejo = [r for r in self.srv.requests if urlsplit(r.path).path.startswith("/api/v1/")]
+        self.assertEqual({r.headers.get("authorization") for r in forgejo}, {f"token {FORGEJO_TOKEN}"})
 
     def test_a_sync_that_leaves_a_different_main_sha_is_a_failure(self):
         fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40}, sync_main_sha="9" * 40)

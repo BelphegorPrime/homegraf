@@ -29,6 +29,11 @@ jobs:
           git init -q . && git config --global --add safe.directory "$PWD"
           git -c http.extraheader="Authorization: token $TOKEN" fetch -q --no-tags "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
           git checkout -q "${{ github.sha }}"
+      - name: forgehands launcher (no Docker, no network)
+        working-directory: .
+        run: |
+          node --check scripts/forgehands-entrypoint.mjs
+          node --test scripts/forgehands-entrypoint.test.mjs
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
@@ -62,7 +67,12 @@ jobs:
   seed:
     runs-on: docker
     timeout-minutes: 15
+    # The seed check installs its dependencies from PyPI; transient index errors and slow reads
+    # failed this job while the app jobs passed. More retries and a longer read timeout keep the
+    # check about the seed, not about the network.
     env:
+      PIP_RETRIES: "10"
+      PIP_TIMEOUT: "120"
       # Kept in a runner volume so the dependency downloads survive between runs (pip reads PIP_CACHE_DIR).
       PIP_CACHE_DIR: /root/.cache/pip
     strategy:

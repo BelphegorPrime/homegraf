@@ -41,7 +41,7 @@ def policy_domains(root: pathlib.Path | None = None) -> list[str]:
     """The name patterns the private CA may issue for (inventory/ingress.yaml), e.g. ['*.lab.example'].
     Issuers of another type (e.g. `type: letsencrypt`) are public: the tools write private-CA manifests only."""
     issuers = _yaml(pathlib.Path(root or ROOT), "ingress.yaml").get("issuers") or {}
-    return [d for i in issuers.values() if ((i or {}).get("type") or "infisical") == "infisical"
+    return [d for i in issuers.values() if (i or {}).get("type", "infisical") == "infisical"
             for d in (i or {}).get("allowed_domains") or []]
 
 

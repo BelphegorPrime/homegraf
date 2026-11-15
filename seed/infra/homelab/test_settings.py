@@ -45,6 +45,21 @@ def test_a_public_issuer_does_not_contribute_its_domains(tmp_path):
     assert not settings.matches_policy("x.pub.example", tmp_path)
 
 
+def test_an_explicit_private_ca_type_contributes_its_domains(tmp_path):
+    write(tmp_path, "ingress.yaml", "issuers:\n  ca:\n    type: infisical\n    allowed_domains: ['*.lab.example']\n")
+    assert settings.policy_domains(tmp_path) == ["*.lab.example"]
+
+
+@pytest.mark.parametrize("value", ["''", "null", "false"])
+def test_an_explicitly_empty_type_does_not_default_to_the_private_ca(tmp_path, value):
+    write(tmp_path, "ingress.yaml", f"issuers:\n  public:\n    type: {value}\n    allowed_domains: ['*.pub.example']\n"
+          "  homelab-private-ca:\n    allowed_domains: ['*.lab.example']\n")
+    assert settings.policy_domains(tmp_path) == ["*.lab.example"]
+    assert settings.domain(tmp_path) == "lab.example"
+    assert settings.matches_policy("x.lab.example", tmp_path)
+    assert not settings.matches_policy("x.pub.example", tmp_path)
+
+
 def test_the_repository_is_the_setting_or_read_from_origin(tmp_path):
     write(tmp_path, "homegraf.yaml", "repository: me/infra\n")
     assert settings.repository(tmp_path) == "me/infra"

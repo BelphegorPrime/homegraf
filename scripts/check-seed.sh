@@ -35,10 +35,12 @@ cp -a "$here/seed" "$repo"
 cd "$repo"
 
 # The tools need PyYAML (the homegraf image has python3-yaml); ingressctl's dependencies bring it, with pytest for the tests.
-# pip against PyPI is flaky from a loaded runner, so retry; pytest-xdist runs the tests in parallel (installed here, not in the seed).
+# PyPI answers transient index errors when the runner is loaded ("could not find a version ... from versions: none"), so retry;
+# the CI job sets PIP_RETRIES/PIP_TIMEOUT, the defaults apply to a local run and never lower what the job sets.
+# pytest-xdist runs the tests in parallel; it is installed here, in the temporary venv, not in the seed.
 step "python $(python3 --version | cut -d' ' -f2) and the dependencies"
 python3 -m venv "$work/venv"
-"$work/venv/bin/pip" install -q --retries 5 --timeout 30 -e 'infra/ingress-controller[test]' pytest-xdist
+"$work/venv/bin/pip" install -q --retries "${PIP_RETRIES:-5}" --timeout "${PIP_TIMEOUT:-30}" -e 'infra/ingress-controller[test]' pytest-xdist
 py=$work/venv/bin/python
 
 step "placeholders"

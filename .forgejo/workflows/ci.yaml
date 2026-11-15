@@ -63,6 +63,12 @@ jobs:
   seed:
     runs-on: docker
     timeout-minutes: 15
+    # The seed check installs its dependencies from PyPI; transient index errors and slow reads
+    # failed this job while the app jobs passed. More retries and a longer read timeout keep the
+    # check about the seed, not about the network.
+    env:
+      PIP_RETRIES: "10"
+      PIP_TIMEOUT: "120"
     strategy:
       fail-fast: false
       matrix:

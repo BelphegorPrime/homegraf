@@ -14,7 +14,10 @@ Field contract (environment -> attribute, reused names first)::
     FORGEHANDS_GATEWAY_URL                     gateway_url                required
     FORGEHANDS_GATEWAY_API_KEY                 gateway_api_key            required
     FORGEHANDS_ALLOWED_REPOS                   allowed_repos              required, comma separated
-    FORGEHANDS_ALLOWED_SENDERS                 allowed_senders            required, comma separated
+    FORGEHANDS_ALLOWED_SENDERS                 allowed_senders            required, comma separated;
+                                                                          contains both logins below
+    FORGEHANDS_AGENT_LOGIN                     agent_login                homegraf-agent
+    FORGEHANDS_HUMAN_LOGIN                     human_login                required, not the agent
     FORGEHANDS_FORGEJO_AGENT_TOKEN             forgejo_agent_token        FORGEJO_TOKEN falls back
     FORGEHANDS_FORGEJO_WEBHOOK_SECRET          forgejo_webhook_secret     required
     FORGEHANDS_MIRROR_URL                      mirror_url                 optional
@@ -47,6 +50,7 @@ from .config import ConfigError
 
 OPT_IN = "FORGEHANDS_BOOTSTRAP"
 DEFAULT_RUNTIME_DIR = "/factory-runtime"
+DEFAULT_AGENT_LOGIN = "homegraf-agent"
 DEFAULT_MERGE_DENY = (
     ".forgejo/**",
     ".github/**",
@@ -90,6 +94,8 @@ class FactoryConfig:
     gateway_api_key: str = field(default="", repr=False)
     allowed_repos: tuple[str, ...] = ()
     allowed_senders: tuple[str, ...] = ()
+    agent_login: str = ""
+    human_login: str = ""
     forgejo_agent_token: str = field(default="", repr=False)
     forgejo_webhook_secret: str = field(default="", repr=False)
     mirror_url: str = ""
@@ -137,6 +143,15 @@ class FactoryConfig:
         if not agent_token:
             raise FactoryConfigError("FORGEHANDS_FORGEJO_AGENT_TOKEN (or FORGEJO_TOKEN) is not set "
                                      f"(the factory is opted in with {OPT_IN}=1)")
+        allowed_senders = _senders(env, "FORGEHANDS_ALLOWED_SENDERS")
+        agent_login = _login(env, "FORGEHANDS_AGENT_LOGIN", default=DEFAULT_AGENT_LOGIN)
+        human_login = _login(env, "FORGEHANDS_HUMAN_LOGIN")
+        if agent_login.casefold() == human_login.casefold():
+            raise FactoryConfigError("FORGEHANDS_HUMAN_LOGIN must not be the login of FORGEHANDS_AGENT_LOGIN")
+        if agent_login not in allowed_senders:
+            raise FactoryConfigError("FORGEHANDS_ALLOWED_SENDERS must contain the login of FORGEHANDS_AGENT_LOGIN")
+        if human_login not in allowed_senders:
+            raise FactoryConfigError("FORGEHANDS_ALLOWED_SENDERS must contain the login of FORGEHANDS_HUMAN_LOGIN")
         return cls(
             enabled=True,
             repository=repository,
@@ -147,7 +162,9 @@ class FactoryConfig:
             gateway_url=gateway_url,
             gateway_api_key=_secret(env, "FORGEHANDS_GATEWAY_API_KEY"),
             allowed_repos=_repositories(env, "FORGEHANDS_ALLOWED_REPOS"),
-            allowed_senders=_senders(env, "FORGEHANDS_ALLOWED_SENDERS"),
+            allowed_senders=allowed_senders,
+            agent_login=agent_login,
+            human_login=human_login,
             forgejo_agent_token=agent_token,
             forgejo_webhook_secret=_secret(env, "FORGEHANDS_FORGEJO_WEBHOOK_SECRET"),
             mirror_url=mirror_url,
@@ -264,6 +281,15 @@ def _senders(env, name: str) -> tuple[str, ...]:
             raise FactoryConfigError(f"{field_name} must be a comma-separated list of Forgejo user names")
         return value
     return _list(env, name, sender, "user names")
+
+
+def _login(env, name: str, *, default: str = "") -> str:
+    value = _present(env, name) or default
+    if not value:
+        raise FactoryConfigError(f"{name} is not set (the factory is opted in with {OPT_IN}=1)")
+    if not _SENDER.fullmatch(value):
+        raise FactoryConfigError(f"{name} must be a Forgejo user name")
+    return value
 
 
 def _glob(value, repository: str) -> str:

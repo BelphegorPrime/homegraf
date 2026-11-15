@@ -3,7 +3,8 @@ import json
 import re
 import unittest
 
-from hgboot.factory_config import DEFAULT_MERGE_DENY, DEFAULT_RUNTIME_DIR, FactoryConfig, FactoryConfigError
+from hgboot.factory_config import (DEFAULT_AGENT_LOGIN, DEFAULT_MERGE_DENY, DEFAULT_RUNTIME_DIR, FactoryConfig,
+                                   FactoryConfigError)
 
 REPOSITORY = "owner/infrastructure"
 SECRETS = {
@@ -19,12 +20,14 @@ ENV = {
     "FORGEHANDS_CHEAP_MODEL": "openai/gpt-5-mini",
     "FORGEHANDS_GATEWAY_URL": "https://llm.example/v1/",
     "FORGEHANDS_ALLOWED_REPOS": "owner/infrastructure, owner/other",
-    "FORGEHANDS_ALLOWED_SENDERS": "marcel,owner",
+    "FORGEHANDS_ALLOWED_SENDERS": "marcel,owner,homegraf-agent",
+    "FORGEHANDS_HUMAN_LOGIN": "marcel",
     **SECRETS,
 }
 REQUIRED = ("FORGEHANDS_OPENHANDS_API_URL", "OPENHANDS_LOCAL_BACKEND_API_KEY", "FORGEHANDS_STRONG_MODEL",
             "FORGEHANDS_CHEAP_MODEL", "FORGEHANDS_GATEWAY_URL", "FORGEHANDS_GATEWAY_API_KEY",
-            "FORGEHANDS_ALLOWED_REPOS", "FORGEHANDS_ALLOWED_SENDERS", "FORGEHANDS_FORGEJO_WEBHOOK_SECRET")
+            "FORGEHANDS_ALLOWED_REPOS", "FORGEHANDS_ALLOWED_SENDERS", "FORGEHANDS_HUMAN_LOGIN",
+            "FORGEHANDS_FORGEJO_WEBHOOK_SECRET")
 
 
 class OptInTests(unittest.TestCase):
@@ -34,6 +37,7 @@ class OptInTests(unittest.TestCase):
         cfg = FactoryConfig.from_env(legacy, "not/a/repo/name")
         self.assertFalse(cfg.enabled)
         self.assertEqual((cfg.allowed_repos, cfg.allowed_senders, cfg.merge_policy), ((), (), {}))
+        self.assertEqual((cfg.agent_login, cfg.human_login), ("", ""))
         self.assertIsNone(cfg.denied_paths(REPOSITORY))
         for name in SECRETS:
             self.assertEqual(getattr(cfg, _attribute(name)), "")
@@ -61,7 +65,8 @@ class FieldContractTests(unittest.TestCase):
         self.assertEqual(cfg.gateway_url, "https://llm.example/v1")
         self.assertEqual((cfg.strong_model, cfg.cheap_model), ("openai/gpt-5", "openai/gpt-5-mini"))
         self.assertEqual(cfg.allowed_repos, ("owner/infrastructure", "owner/other"))
-        self.assertEqual(cfg.allowed_senders, ("marcel", "owner"))
+        self.assertEqual(cfg.allowed_senders, ("marcel", "owner", "homegraf-agent"))
+        self.assertEqual((cfg.agent_login, cfg.human_login), (DEFAULT_AGENT_LOGIN, "marcel"))
         self.assertEqual(cfg.forgejo_agent_token, SECRETS["FORGEHANDS_FORGEJO_AGENT_TOKEN"])
         self.assertEqual(cfg.forgejo_webhook_secret, SECRETS["FORGEHANDS_FORGEJO_WEBHOOK_SECRET"])
         self.assertEqual((cfg.mirror_url, cfg.mirror_token), ("", ""))
@@ -105,6 +110,36 @@ class FieldContractTests(unittest.TestCase):
                 self.assertNotIn(secret, str(e))
         else:
             self.fail("invalid limit was accepted")
+
+
+class IdentityTests(unittest.TestCase):
+    def test_the_agent_login_has_a_default_and_the_human_login_is_required(self):
+        cfg = FactoryConfig.from_env({k: v for k, v in ENV.items() if k != "FORGEHANDS_AGENT_LOGIN"}, REPOSITORY)
+        self.assertEqual(cfg.agent_login, DEFAULT_AGENT_LOGIN)
+        with self.assertRaisesRegex(FactoryConfigError, "FORGEHANDS_HUMAN_LOGIN"):
+            FactoryConfig.from_env({k: v for k, v in ENV.items() if k != "FORGEHANDS_HUMAN_LOGIN"}, REPOSITORY)
+
+    def test_the_human_and_the_agent_must_not_be_the_same_login(self):
+        with self.assertRaisesRegex(FactoryConfigError, "FORGEHANDS_HUMAN_LOGIN"):
+            FactoryConfig.from_env({**ENV, "FORGEHANDS_HUMAN_LOGIN": DEFAULT_AGENT_LOGIN}, REPOSITORY)
+
+    def test_allowed_senders_must_contain_the_agent_and_the_human(self):
+        for senders, missing in (("marcel,owner", "FORGEHANDS_AGENT_LOGIN"),
+                                 ("owner,homegraf-agent", "FORGEHANDS_HUMAN_LOGIN")):
+            with self.subTest(senders=senders), self.assertRaisesRegex(FactoryConfigError, missing):
+                FactoryConfig.from_env({**ENV, "FORGEHANDS_ALLOWED_SENDERS": senders}, REPOSITORY)
+
+    def test_a_sender_list_with_both_logins_is_accepted(self):
+        cfg = FactoryConfig.from_env({**ENV, "FORGEHANDS_AGENT_LOGIN": "worker", "FORGEHANDS_HUMAN_LOGIN": "owner",
+                                      "FORGEHANDS_ALLOWED_SENDERS": "owner,worker"}, REPOSITORY)
+        self.assertEqual((cfg.agent_login, cfg.human_login, cfg.allowed_senders),
+                         ("worker", "owner", ("owner", "worker")))
+
+    def test_login_names_must_be_forgejo_user_names(self):
+        for name in ("FORGEHANDS_AGENT_LOGIN", "FORGEHANDS_HUMAN_LOGIN"):
+            for value in ("two words", "team/name", "-bad", "x" * 40):
+                with self.subTest(name=name, value=value), self.assertRaisesRegex(FactoryConfigError, name):
+                    FactoryConfig.from_env({**ENV, name: value}, REPOSITORY)
 
 
 class ValidationTests(unittest.TestCase):

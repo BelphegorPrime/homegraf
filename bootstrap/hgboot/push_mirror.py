@@ -20,7 +20,9 @@ Forgejo's API has no way to update a push mirror in place.
 The GitHub token is sent only to the GitHub API and, as the remote password, to
 the Forgejo push mirror credential field. It never appears in a remote address,
 a log line or an error: everything echoed back by a service is cleaned first,
-and an authenticated request never follows a redirect to another origin.
+and an authenticated request never follows a redirect to another origin. The
+caller supplies the operator's token; Forgejo itself enforces who may manage a
+mirror, so the helper does not claim to check the caller's rights.
 """
 from __future__ import annotations
 
@@ -35,6 +37,8 @@ from .steps import StepError, log
 
 STEP = "push-mirror"
 INTERVAL = "8h0m0s"
+# The loopback tests send "git"; no live mirror was contacted, so the GitHub
+# account name the operator's instance expects is not verified here.
 REMOTE_USER = "git"
 PER_PAGE = 100
 MAX_PAGES = 50

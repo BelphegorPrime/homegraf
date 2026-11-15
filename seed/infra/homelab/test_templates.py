@@ -279,8 +279,13 @@ def test_a_template_with_routes_routes_its_sidecar_and_keeps_its_secrets(agent):
     assert app.routes == [{"service": "openhands", "domain": "openhands.lab.example", "port": 8000,
                            "websockets": True, "health_path": "/health", "statuses": [200]}]
     assert set(app.secrets) == {"FORGEJO_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_URL",
-                                "LOCAL_BACKEND_API_KEY", "OH_SECRET_KEY"}
+                                "FORGEJO_TOKEN", "LOCAL_BACKEND_API_KEY", "OH_SECRET_KEY"}
     assert "ALLOWED_REPOS: owner/repository" in app.compose           # an input of the form, not a secret
+    assert "OPENHANDS_API_URL: http://openhands:8000" in app.compose  # direct mode: Canvas by its service name
+    assert "AGENT_SECRETS: FORGEJO_TOKEN,FORGEJO_URL" in app.compose
+    routes = yaml.safe_load(yaml.safe_load(app.compose)["services"]["agents"]["environment"]["LABEL_ROUTES"])
+    assert routes["ai:escalate"] == {"profile": "worker-strong", "tier": "worker-strong", "max_iterations": 120}
+    assert set(routes) == {"ai:plan", "ai:ready", "ai:escalate", "ai:review"}
     assert "/srv/docker/agents/openhands:/root/.openhands" in app.compose
     assert "__" not in app.compose
 

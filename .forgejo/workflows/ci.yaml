@@ -1,0 +1,84 @@
+# CI on Forgejo (the primary repository). Forgejo uses this folder instead of .github/workflows, so the GitHub
+# workflows stay as they are for the mirror: they build and publish the images on GitHub. This file only tests.
+# Jobs run in containers on the runner labelled `docker`; actions/checkout is replaced by a plain git fetch.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  app:
+    runs-on: docker
+    timeout-minutes: 15
+    container:
+      image: node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: git
+        working-directory: .
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+      - name: checkout
+        working-directory: .
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q . && git config --global --add safe.directory "$PWD"
+          git -c http.extraheader="Authorization: token $TOKEN" fetch -q --no-tags "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
+          git checkout -q "${{ github.sha }}"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+
+  bootstrap:
+    runs-on: docker
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        image:
+          - python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
+          - python:3.14-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: git
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git
+      - name: checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q . && git config --global --add safe.directory "$PWD"
+          git -c http.extraheader="Authorization: token $TOKEN" fetch -q --no-tags "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
+          git checkout -q "${{ github.sha }}"
+      - name: tests (standard library only)
+        working-directory: bootstrap
+        run: python -W error::ResourceWarning -m unittest discover -s tests -t . -v
+
+  seed:
+    runs-on: docker
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
+          - python:3.14-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: git
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git
+      - name: checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q . && git config --global --add safe.directory "$PWD"
+          git -c http.extraheader="Authorization: token $TOKEN" fetch -q --no-tags "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
+          git checkout -q "${{ github.sha }}"
+      - run: scripts/check-seed.sh

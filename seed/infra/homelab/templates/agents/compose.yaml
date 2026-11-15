@@ -40,11 +40,23 @@ services:
       # Label -> profile id, tier, max_iterations (optional max_budget, max_concurrent). Empty keeps direct mode off.
       LABEL_ROUTES: ""
       ALLOWED_REPOS: owner/repository
-      ALLOWED_SENDERS: owner
+      # The agent user, and the human ForgeHands mentions when a pull request needs one; both must be senders,
+      # or ForgeHands ignores the events the agents themselves cause. Neither token is a field here: the agent's
+      # Forgejo token is the ${FORGEJO_TOKEN} secret above, the human keeps his own outside the stack.
+      ALLOWED_SENDERS: operator,openhands
+      FORGEHANDS_AGENT_LOGIN: openhands
+      HUMAN_LOGIN: operator
       MAX_CONCURRENT_PER_TIER: "2"
       MAX_CONCURRENT: "4"
       MAX_RUNS_PER_HOUR: "30"
       MAX_RUN_MINUTES: "120"
+      MAX_ROUNDS: "3"
+      # The strong and cheap LLM profiles the factory creates in Canvas (bootstrap/hgboot/factory_config.py);
+      # its key comes from Infisical like every other secret.
+      FORGEHANDS_STRONG_MODEL: vendor/strong-model
+      FORGEHANDS_CHEAP_MODEL: vendor/cheap-model
+      FORGEHANDS_GATEWAY_URL: https://llm.example/v1
+      FORGEHANDS_GATEWAY_API_KEY: ${FORGEHANDS_GATEWAY_API_KEY}
       WORKSPACE_DIR: /app/data/workspace
       JOBS_FILE: /app/data/jobs.json
       # Webhook mode only: the secrets Forgejo and Canvas sign with, and the URL Canvas hands out.

@@ -10,6 +10,14 @@ Vertrag (siehe docs/discovery.md, Quelle: backend/ des Tags v2.16.0):
   POST /api/nginx/certificates/{id}/upload (multipart certificate, certificate_key, intermediate_certificate).
   Upload lädt nginx NICHT neu; erst ein PUT auf einen aktiven Host tut das.
 - GET auf Zertifikate liefert meta.certificate_key im Klartext -> wird hier sofort verworfen.
+- Let's Encrypt: POST /api/nginx/certificates {provider:"letsencrypt", domain_names,
+  meta:{dns_challenge, dns_provider, dns_provider_credentials, propagation_seconds, key_type}} ist synchron
+  (Server-Timeout 15 min, certbot deaktiviert genutzte Hosts kurzzeitig). NPM überschreibt nice_name mit
+  domain_names.join(", "); die LE-Konto-Mail ist die des API-Users.
+- POST /api/nginx/certificates/{id}/renew läuft mit --force-renewal und nur für letsencrypt.
+- POST /api/nginx/certificates/test-http {domains} -> {domain: "ok"|"<Grund>"} prüft HTTP-01, ohne etwas zu ändern.
+- GET auf ein LE-Zertifikat liefert expires_on und meta.letsencrypt_certificate (cn, issuer, dates),
+  aber kein PEM in meta.certificate.
 """
 from __future__ import annotations
 
@@ -34,12 +42,14 @@ def sanitize_certificate(raw: dict) -> dict:
             info = certs.info_from_pem(meta["certificate"])
         except Exception:  # defektes PEM im NPM -> wie fehlendes Zertifikat behandeln
             info = None
+    le = meta.get("letsencrypt_certificate") or {}
     return {
         "id": raw.get("id"),
         "provider": raw.get("provider"),
         "nice_name": raw.get("nice_name"),
         "domain_names": raw.get("domain_names") or [],
         "expires_on": raw.get("expires_on"),
+        "le_issuer": le.get("issuer") if isinstance(le, dict) else None,
         "info": info,
         "fingerprint": info.fingerprint if info else None,
     }
@@ -124,6 +134,30 @@ class NpmClient:
     def create_custom_certificate(self, nice_name: str) -> dict:
         raw = self._req("POST", "/nginx/certificates", json={"provider": "other", "nice_name": nice_name}).json()
         return sanitize_certificate(raw)
+
+    def create_letsencrypt_certificate(self, domains: list[str], *, dns_challenge: bool,
+                                       dns_provider: str | None = None, dns_credentials: str | None = None,
+                                       propagation_seconds: int | None = None) -> dict:
+        meta: dict = {"dns_challenge": dns_challenge, "key_type": "ecdsa"}
+        if dns_provider is not None:
+            meta["dns_provider"] = dns_provider
+        if dns_credentials is not None:
+            meta["dns_provider_credentials"] = dns_credentials
+        if propagation_seconds is not None:
+            meta["propagation_seconds"] = propagation_seconds
+        raw = self._req("POST", "/nginx/certificates",
+                        json={"provider": "letsencrypt", "domain_names": sorted(domains), "meta": meta},
+                        timeout=(5, 900)).json()  # certbot kann Minuten brauchen
+        return sanitize_certificate(raw)
+
+    def renew_certificate(self, cert_id: int) -> dict:
+        raw = self._req("POST", f"/nginx/certificates/{cert_id}/renew", timeout=(5, 900)).json()
+        return sanitize_certificate(raw)
+
+    def test_http_challenge(self, domains: list[str]) -> dict[str, str]:
+        resp = request(self.session, SYSTEM, "POST", self.base + "/nginx/certificates/test-http",
+                       mutating=False, json={"domains": list(domains)})
+        return resp.json()
 
     def upload_certificate(self, cert_id: int, cert_pem: str, key_pem: bytes, chain_pem: str | None) -> None:
         files = {"certificate": ("cert.pem", cert_pem.encode()), "certificate_key": ("key.pem", key_pem)}

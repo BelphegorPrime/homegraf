@@ -6,7 +6,7 @@ would be a review by their author. And no record says who did what. With a user 
 to it.
 
 The shape is the one of the reference installation, done by hand there: the user is created through the admin API (no forced
-password change, no notification mail, a noreply address, not an administrator, not restricted); its mail notification
+password change, no notification mail, a noreply address, public, not an administrator, not restricted); its mail notification
 preference is turned off, because Forgejo mails the participants of a pull request and the noreply address cannot deliver (every
 such mail bounces to the operator); its token carries only write:repository, write:issue and read:user, and the admin endpoints
 answer 403 for it; the user is a collaborator with write on every repository the agents may work on; and ALLOWED_SENDERS names the
@@ -32,6 +32,7 @@ TOKEN = "FORGEJO_TOKEN"          # the stack secret ForgeHands holds and hands t
 TOKEN_PREFIX = "agent-"          # every token this step makes is named so: older ones are found and deleted by it
 TOKEN_SCOPES = ("write:repository", "write:issue", "read:user")
 PERMISSION = "write"
+VISIBILITY = "public"            # as on the reference installation: the human must be able to mention the user and see its activity
 ACCOUNT = "/user/settings/account"
 FORM = "application/x-www-form-urlencoded"
 PREFERENCE = "disabled"          # its noreply address cannot deliver, so every notification mail would bounce to the operator
@@ -67,7 +68,7 @@ def ensure_agent_user(cfg, store, *, http=request, human=None, rotate=False, log
         password = secrets.token_urlsafe(32)
         r = http("POST", f"{api}/admin/users", basic=admin, body={
             "username": login, "email": f"{login}@noreply.{cfg.domain}", "password": password, "must_change_password": False,
-            "send_notify": False, "visibility": "private", "admin": False, "restricted": False})
+            "send_notify": False, "visibility": VISIBILITY, "admin": False, "restricted": False})
         if not r.ok:
             raise StepError(f"Forgejo refused to create the user {login}: {r.status}")
         log(STEP, f"user {login}: created (no forced password change, no mail, not an administrator, not restricted)")

@@ -161,6 +161,7 @@ class AgentUserTest(unittest.TestCase):
         body = self.calls("POST", "/api/v1/admin/users")[0].json
         self.assertEqual((body["must_change_password"], body["send_notify"], body["admin"], body["restricted"]), (False, False, False, False))
         self.assertEqual(body["email"], f"{LOGIN}@noreply.home.lab")
+        self.assertEqual(body["visibility"], "public")          # as on the reference installation: the human can mention it and see it
 
     def test_the_mail_notifications_are_turned_off_on_creation(self):
         self.run_step()

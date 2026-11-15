@@ -1,6 +1,7 @@
 // Behavior of scripts/forgehands-entrypoint.mjs against the real script: the original command is a
 // harmless Node child that records its argv and environment, and the runtime file lives in a
-// temporary directory.  Nothing here needs Docker, the network or ForgeHands itself.
+// temporary directory.  Nothing here needs Docker or ForgeHands itself; the only socket is the
+// loopback fixture for Forgejo's GET /api/v1/user.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';

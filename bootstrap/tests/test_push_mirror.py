@@ -190,6 +190,20 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(second.branches, ("main",))
         self.assertEqual(second.main_sha, "1" * 40)
 
+    def test_a_mirror_never_synced_with_the_epoch_is_synced(self):
+        fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40})
+        mirror = self.mirror(fake)
+        fake.mirrors = [{**self.correct_mirror(), "last_update": "0001-01-01T00:00:00Z"}]
+        result = mirror.sync()
+        self.assertTrue(result.synced)
+        self.assertEqual(fake.syncs, 1)
+        self.assertEqual([urlsplit(r.path).path for r in self.writes()],
+                         [f"/api/v1/repos/{FORGEJO_REPO}/push_mirrors-sync"])
+        started = fake.syncs
+        second = mirror.sync()
+        self.assertFalse(second.synced)
+        self.assertEqual(fake.syncs, started)
+
     def test_drift_is_repaired_by_delete_and_create_and_the_next_run_is_converged(self):
         fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40})
         mirror = self.mirror(fake)

@@ -32,6 +32,7 @@ from .steps import StepError, log
 
 STEP = "push-mirror"
 INTERVAL = "8h0m0s"
+ZERO_TIME = "0001-01-01"
 REMOTE_USER = "git"
 PER_PAGE = 100
 MAX_PAGES = 50
@@ -88,7 +89,7 @@ class PushMirror:
         elif self._drifted(mirror):
             mirror = self._replace(mirror)
             repaired = True
-        if created or not mirror.get("last_update") or set(target) != set(source) or lagging:
+        if created or self._never_synced(mirror) or set(target) != set(source) or lagging:
             self._sync_now(mirror)
             synced = True
             source, target = self._read()
@@ -139,6 +140,10 @@ class PushMirror:
 
     def _drifted(self, mirror: dict) -> bool:
         return mirror.get("sync_on_commit") is not True or mirror.get("interval") != INTERVAL
+
+    @staticmethod
+    def _never_synced(mirror: dict) -> bool:
+        return not mirror.get("last_update") or str(mirror["last_update"]).startswith(ZERO_TIME)
 
     def _sync_now(self, mirror: dict) -> None:
         before = mirror.get("last_update")

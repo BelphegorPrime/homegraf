@@ -3,8 +3,8 @@ x-template:
   label: AI agents
   category: ai
   description: >-
-    ForgeHands receives a Forgejo webhook and forwards it to OpenHands Agent Canvas, which works on the issue and opens a draft pull
-    request. Both run in this one stack, so ForgeHands reaches Canvas over the compose network.
+    ForgeHands starts an OpenHands Agent Canvas conversation for a Forgejo issue label (planner, worker, worker-strong, reviewer) and the
+    agent opens a draft pull request. Both run in this one stack, so ForgeHands reaches Canvas over the compose network.
   health_path: /healthz
   statuses: [200]
   routes:
@@ -16,11 +16,12 @@ x-template:
       statuses: [200]
   first_run: >-
     Open the OpenHands host of this app (the second address in the summary), create the administrator and add a model provider key
-    there; it stays in the volume, not in the repository. Then register the webhook in Canvas (Automate -> Events: name forgehands,
-    event key expression type, signature header X-Signature-256, scheme hmac_sha256_hex, secret FORGEHANDS_OPENHANDS_WEBHOOK_SECRET)
-    and set the URL it returns with ./homelab.py secrets set __APP__ OPENHANDS_WEBHOOK_URL. Last, add the Forgejo webhook of every
-    repository that may use it: __URL__/webhooks/forgejo, secret FORGEHANDS_FORGEJO_WEBHOOK_SECRET, events: issues. Set ALLOWED_REPOS
-    to the owner/repository pairs the agent may work on (comma separated).
+    there; it stays in the volume, not in the repository. Create the agent profiles planner, worker, worker-strong and reviewer.
+    ForgeHands starts in webhook mode: register the OpenHands automation webhook as docs/stack.md says. Direct mode is opt-in: set
+    OPENHANDS_API_URL to http://openhands:8000 and LABEL_ROUTES to the label -> profile routes, with the profile ids from
+    GET /api/agent-profiles (a name is rejected). In both modes the Forgejo webhook (events: issues, secret FORGEJO_WEBHOOK_SECRET) is
+    required. Put a Forgejo token with write:repository and read:user into FORGEJO_TOKEN and set ALLOWED_REPOS to the owner/repository
+    pairs the agents may work on (comma separated).
 services:
   app:
     image: ghcr.io/belphegorprime/forgehands:v0.2.5
@@ -29,10 +30,27 @@ services:
     volumes:
       - /srv/docker/app/data:/app/data
     environment:
+      # Webhook mode by default. Direct mode: this service's URL plus LABEL_ROUTES with the profile ids from GET /api/agent-profiles.
+      OPENHANDS_API_URL: ""
+      OPENHANDS_API_KEY: ${LOCAL_BACKEND_API_KEY}
+      # Direct mode only: the variables handed to every conversation, and Forgejo as the agent reaches it.
+      AGENT_SECRETS: FORGEJO_TOKEN,FORGEJO_URL
+      FORGEJO_URL: http://forgejo:3000
+      FORGEJO_TOKEN: ${FORGEJO_TOKEN}
+      # Label -> profile id, tier, max_iterations (optional max_budget, max_concurrent). Empty keeps direct mode off.
+      LABEL_ROUTES: ""
+      ALLOWED_REPOS: owner/repository
+      ALLOWED_SENDERS: owner
+      MAX_CONCURRENT_PER_TIER: "2"
+      MAX_CONCURRENT: "4"
+      MAX_RUNS_PER_HOUR: "30"
+      MAX_RUN_MINUTES: "120"
+      WORKSPACE_DIR: /app/data/workspace
+      JOBS_FILE: /app/data/jobs.json
+      # Webhook mode only: the secrets Forgejo and Canvas sign with, and the URL Canvas hands out.
       FORGEJO_WEBHOOK_SECRET: ${FORGEJO_WEBHOOK_SECRET}
       OPENHANDS_WEBHOOK_SECRET: ${OPENHANDS_WEBHOOK_SECRET}
       OPENHANDS_WEBHOOK_URL: ${OPENHANDS_WEBHOOK_URL}
-      ALLOWED_REPOS: owner/repository
     init: true
     read_only: true
     tmpfs:

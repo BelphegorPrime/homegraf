@@ -279,8 +279,13 @@ def test_a_template_with_routes_routes_its_sidecar_and_keeps_its_secrets(agent):
     assert app.routes == [{"service": "openhands", "domain": "openhands.lab.example", "port": 8000,
                            "websockets": True, "health_path": "/health", "statuses": [200]}]
     assert set(app.secrets) == {"FORGEJO_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_URL",
-                                "LOCAL_BACKEND_API_KEY", "OH_SECRET_KEY"}
+                                "FORGEJO_TOKEN", "LOCAL_BACKEND_API_KEY", "OH_SECRET_KEY"}
     assert "ALLOWED_REPOS: owner/repository" in app.compose           # an input of the form, not a secret
+    env = yaml.safe_load(app.compose)["services"]["agents"]["environment"]
+    assert env["OPENHANDS_API_URL"] == "" and env["LABEL_ROUTES"] == ""  # webhook mode: a fresh app has no profile ids
+    assert "AGENT_SECRETS: FORGEJO_TOKEN,FORGEJO_URL" in app.compose
+    assert "FORGEJO_WEBHOOK_SECRET" in app.first_run                  # needed in direct mode too
+    assert "GET /api/agent-profiles" in app.first_run and "profile ids" in app.first_run
     assert "/srv/docker/agents/openhands:/root/.openhands" in app.compose
     assert "__" not in app.compose
 

@@ -149,6 +149,7 @@ for o in $optional; do
   case ",$profiles," in *,"$o",*) ;; *) profiles="${profiles:+$profiles,}$o" ;; esac
 done
 allowed_repos=${FORGEHANDS_ALLOWED_REPOS:-$forgejo_user/infrastructure}
+allowed_senders=${FORGEHANDS_ALLOWED_SENDERS:-$forgejo_user}
 case ",$profiles," in
   *,agents,*)
     IFS=',' read -r -a allowed_repo_list <<< "$allowed_repos"
@@ -189,10 +190,26 @@ mkdir -p data/periphery data/backups
   echo "FORGEHANDS_FORGEJO_WEBHOOK_SECRET=$(hex 32)"
   echo "FORGEHANDS_OPENHANDS_WEBHOOK_SECRET=$(hex 32)"
   echo "FORGEHANDS_ALLOWED_REPOS=$allowed_repos"
+  case ",$profiles," in
+    *,agents,*)
+      # ForgeHands starts in webhook mode (docs/stack.md). Direct mode is opt-in: the routes name the agent profile ids, which a fresh
+      # stack does not have yet, so the defaults stay commented until Canvas has the four profiles (GET /api/agent-profiles).
+      echo "# Direct mode: uncomment with the profile ids from GET /api/agent-profiles (a name is rejected with HTTP 422)."
+      echo "# FORGEHANDS_OPENHANDS_API_URL=http://openhands:8000"
+      echo "# FORGEHANDS_LABEL_ROUTES='{\"ai:plan\":{\"profile\":\"<planner-id>\",\"tier\":\"planner\",\"max_iterations\":80},\"ai:ready\":{\"profile\":\"<worker-id>\",\"tier\":\"worker\",\"max_iterations\":120},\"ai:escalate\":{\"profile\":\"<worker-strong-id>\",\"tier\":\"worker-strong\",\"max_iterations\":120},\"ai:review\":{\"profile\":\"<reviewer-id>\",\"tier\":\"reviewer\",\"max_iterations\":60}}'"
+      echo "# FORGEHANDS_FORGEJO_URL=http://forgejo:3000"
+      echo "# FORGEHANDS_AGENT_SECRETS=FORGEJO_TOKEN,FORGEJO_URL"
+      echo "# FORGEHANDS_ALLOWED_SENDERS=$allowed_senders"
+      echo "# FORGEHANDS_MAX_CONCURRENT_PER_TIER=${FORGEHANDS_MAX_CONCURRENT_PER_TIER:-2}"
+      echo "# FORGEHANDS_MAX_CONCURRENT=${FORGEHANDS_MAX_CONCURRENT:-4}"
+      echo "# FORGEHANDS_MAX_RUNS_PER_HOUR=${FORGEHANDS_MAX_RUNS_PER_HOUR:-30}"
+      echo "# FORGEHANDS_MAX_RUN_MINUTES=${FORGEHANDS_MAX_RUN_MINUTES:-120}"
+      ;;
+  esac
   echo
   for knob in TZ BIND_ADDRESS PROJECT_PREFIX HOMEGRAF_IMAGE BOOTSTRAP_IMAGE OPENHANDS_IMAGE FORGEHANDS_IMAGE PORT_HTTP PORT_HTTPS PORT_NPM_ADMIN PORT_FORGEJO PORT_FORGEJO_SSH \
               PORT_KOMODO PORT_INFISICAL PORT_HOMEGRAF PORT_KUMA PORT_OPENHANDS PORT_FORGEHANDS PORT_DNS PORT_DNS_SETUP PORT_DNS_ADMIN DNS_FORWARDERS REPO_DIR \
-              FORGEHANDS_OPENHANDS_WEBHOOK_URL \
+              FORGEHANDS_OPENHANDS_WEBHOOK_URL FORGEJO_TOKEN \
               UNIFI_URL UNIFI_USER UNIFI_PASSWORD UNIFI_FINGERPRINT; do
     [ -z "${!knob:-}" ] || echo "$knob=${!knob}"
   done
@@ -224,10 +241,10 @@ case "$dns_mode" in
 esac
 case ",$profiles," in
   *,agents,*)
-    echo "Agents: ForgeHands needs the URL of a custom webhook registered in OpenHands. Start only that one first:"
-    echo "     docker compose up -d openhands    (then Canvas at http://$host_ip:${PORT_OPENHANDS:-8000}: Automate -> Events, source forgehands,"
-    echo "     event key type, header X-Signature-256, secret FORGEHANDS_OPENHANDS_WEBHOOK_SECRET). Put the URL it hands out in .env as"
-    echo "     FORGEHANDS_OPENHANDS_WEBHOOK_URL, then docker compose up -d. docs/stack.md has the Forgejo side too."
+    echo "Agents: ForgeHands starts in webhook mode. Add the model provider key and the agent profiles in Canvas"
+    echo "     (http://$host_ip:${PORT_OPENHANDS:-8000}), register the OpenHands automation webhook and add the Forgejo webhook (events: issues)"
+    echo "     as docs/stack.md says; both modes need the Forgejo webhook. Direct mode is opt-in once the profiles exist: set"
+    echo "     FORGEHANDS_OPENHANDS_API_URL and FORGEHANDS_LABEL_ROUTES with the profile ids, then docker compose up -d forgehands."
     ;;
 esac
 echo "Next: docker compose up -d --wait     then see docs/stack.md"

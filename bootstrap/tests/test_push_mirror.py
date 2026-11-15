@@ -27,12 +27,13 @@ class FakeMirror:
     """A real loopback service for the Forgejo mirror API and the GitHub branch API it drives."""
 
     def __init__(self, forgejo_branches, github_branches=None, mirrors=None, sync_error=None,
-                 sync_branches=True, sync_main_sha=None, github_status=200):
+                 sync_branches=True, sync_main_sha=None, github_status=200, compare_status="ahead"):
         self.forgejo_branches = dict(forgejo_branches)
         self.github_branches = dict(github_branches or {})
         self.mirrors = [dict(m) for m in (mirrors or [])]
         self.sync_error, self.sync_branches, self.sync_main_sha = sync_error, sync_branches, sync_main_sha
         self.github_status = github_status
+        self.compare_status = compare_status
         self.syncs = 0
 
     def __call__(self, req):
@@ -43,6 +44,12 @@ class FakeMirror:
                 return 401, {"message": "no Forgejo token"}
             return 200, [{"name": n, "commit": {"id": s}}
                          for n, s in page(list(self.forgejo_branches.items()), query, "limit")]
+        if parts.path.startswith(f"/repos/{GITHUB_REPO}/compare/") and req.method == "GET":
+            if req.headers.get("authorization") != f"Bearer {GITHUB_TOKEN}":
+                return 401, {"message": "Bad credentials test-github-token https://user:test-github-token@github.com/x"}
+            if self.compare_status is None:
+                return 404, {"message": "Not Found"}
+            return 200, {"status": self.compare_status}
         if parts.path == f"/repos/{GITHUB_REPO}/branches":
             if req.headers.get("authorization") != f"Bearer {GITHUB_TOKEN}":
                 return 401, {"message": "Bad credentials test-github-token https://user:test-github-token@github.com/x"}
@@ -138,11 +145,27 @@ class MirrorTest(unittest.TestCase):
         self.assertTrue(result.synced)
         self.assertEqual(fake.github_branches, fake.forgejo_branches)
 
-    def test_a_shared_branch_with_a_different_commit_blocks_every_write(self):
-        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40})
+    def test_a_diverged_shared_branch_blocks_every_write(self):
+        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40}, compare_status="diverged")
         with self.assertRaisesRegex(StepError, "main"):
             self.mirror(fake).sync()
         self.assertEqual(self.writes(), [])
+        self.assertEqual(len(self.srv.calls("GET", f"/repos/{GITHUB_REPO}/compare/")), 1)
+
+    def test_github_being_ahead_of_a_shared_branch_blocks_every_write(self):
+        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40}, compare_status="behind")
+        with self.assertRaisesRegex(StepError, "main"):
+            self.mirror(fake).sync()
+        self.assertEqual(self.writes(), [])
+
+    def test_a_lagging_shared_branch_passes_the_guard_and_is_synced(self):
+        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40}, compare_status="ahead")
+        result = self.mirror(fake).sync()
+        compares = self.srv.calls("GET", f"/repos/{GITHUB_REPO}/compare/")
+        self.assertEqual(urlsplit(compares[0].path).path, f"/repos/{GITHUB_REPO}/compare/{'2' * 40}...{'1' * 40}")
+        self.assertEqual(fake.github_branches, fake.forgejo_branches)
+        self.assertEqual(fake.syncs, 1)
+        self.assertTrue(result.synced)
 
     def test_a_missing_token_is_an_explicit_failure_before_any_request(self):
         fake = FakeMirror({"main": "1" * 40})
@@ -218,6 +241,15 @@ class MirrorTest(unittest.TestCase):
             self.mirror(fake).sync()
         message = str(caught.exception)
         self.assertIn("500", message)
+        self.assertNotIn(GITHUB_TOKEN, message)
+        self.assertEqual(self.writes(), [])
+
+    def test_a_failed_comparison_is_explicit_and_redacted(self):
+        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40}, compare_status=None)
+        with self.assertRaises(StepError) as caught:
+            self.mirror(fake).sync()
+        message = str(caught.exception)
+        self.assertIn("404", message)
         self.assertNotIn(GITHUB_TOKEN, message)
         self.assertEqual(self.writes(), [])
 

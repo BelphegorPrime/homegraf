@@ -4,9 +4,14 @@ Forgejo owns the writable repository; GitHub is only a target. The helper never
 creates, replaces or migrates the source repository, never adds a pull mirror and
 never deletes a ref. Before the first write it compares every branch page on both
 sides and refuses when GitHub holds a branch the source does not (a push mirror
-would remove it) or when a shared branch has a different commit (syncing would
-rewrite history). A missing token, divergence and an API error are failures, not
-reasons to guess.
+would remove it) or when a shared branch has diverged from or is ahead of the
+source (syncing would rewrite history). A missing token, divergence and an API
+error are failures, not reasons to guess.
+
+A push mirror is asynchronous, so GitHub lagging behind on a shared branch is
+normal: GitHub's compare endpoint decides, and only a branch GitHub is ahead of
+or has diverged from refuses. A lagging branch is brought up to date by the sync
+that follows.
 
 A drifted mirror is repaired by deleting it and creating it again, because
 Forgejo's API has no way to update a push mirror in place.
@@ -71,7 +76,7 @@ class PushMirror:
 
     def sync(self) -> MirrorResult:
         """Guard, reconcile the mirror only on drift, sync a new or lagging mirror, then verify it."""
-        source, target = self._guard()
+        source, target, lagging = self._guard()
         mirrors = [m for m in self._mirrors() if self._same_remote(m.get("remote_address"))]
         if len(mirrors) > 1:
             raise StepError(f"several Forgejo push mirrors point at {self.github_repo}: refusing to choose one")
@@ -83,7 +88,7 @@ class PushMirror:
         elif self._drifted(mirror):
             mirror = self._replace(mirror)
             repaired = True
-        if created or not mirror.get("last_update") or set(target) != set(source):
+        if created or not mirror.get("last_update") or set(target) != set(source) or lagging:
             self._sync_now(mirror)
             synced = True
             source, target = self._read()
@@ -155,24 +160,46 @@ class PushMirror:
                         f"within {self.attempts} checks")
 
     # -- branches -----------------------------------------------------------------------------------------------------
+    def _github_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.github_token}", "X-GitHub-Api-Version": "2022-11-28"}
+
     def _read(self) -> tuple[dict[str, str], dict[str, str]]:
         source = self._branches(self.forgejo_api, self.forgejo_repo, "limit", self._forgejo_headers(), "Forgejo")
-        target = self._branches(self.github_api, self.github_repo, "per_page",
-                                {"Authorization": f"Bearer {self.github_token}", "X-GitHub-Api-Version": "2022-11-28"},
-                                "GitHub")
+        target = self._branches(self.github_api, self.github_repo, "per_page", self._github_headers(), "GitHub")
         return source, target
 
-    def _guard(self) -> tuple[dict[str, str], dict[str, str]]:
+    def _guard(self) -> tuple[dict[str, str], dict[str, str], frozenset[str]]:
         source, target = self._read()
         extra = sorted(set(target) - set(source))
         if extra:
             raise StepError(f"GitHub has branches that {self.forgejo_repo} does not: {', '.join(extra)}; "
                             "refusing to mirror (the sync would delete or overwrite them)")
-        diverged = sorted(name for name in source if name in target and source[name] != target[name])
+        lagging: set[str] = set()
+        diverged: list[str] = []
+        for name in sorted(source):
+            if name not in target or source[name] == target[name]:
+                continue
+            status = self._compare(target[name], source[name])
+            if status in ("identical", "ahead"):
+                lagging.add(name)
+            else:
+                diverged.append(name)
         if diverged:
-            raise StepError(f"GitHub and {self.forgejo_repo} have different commits on: {', '.join(diverged)}; "
+            raise StepError(f"GitHub is ahead of or has diverged from {self.forgejo_repo} on: {', '.join(diverged)}; "
                             "refusing to force-push history")
-        return source, target
+        return source, target, frozenset(lagging)
+
+    def _compare(self, base: str, head: str) -> str:
+        r = self.http("GET", f"{self.github_api}/repos/{self.github_repo}/compare/"
+                              f"{quote(base, safe='')}...{quote(head, safe='')}", headers=self._github_headers())
+        if not r.ok:
+            raise StepError(f"GitHub answered {r.status} when comparing commits of {self.github_repo}: "
+                            f"{self._clean(r.text)}")
+        data = r.json()
+        status = data.get("status") if isinstance(data, dict) else None
+        if status not in ("identical", "ahead", "behind", "diverged"):
+            raise StepError(f"GitHub returned no comparison status for {self.github_repo}")
+        return status
 
     def _branches(self, api: str, repo: str, page_param: str, headers: dict, service: str) -> dict[str, str]:
         branches: dict[str, str] = {}

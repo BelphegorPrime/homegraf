@@ -43,10 +43,13 @@ class ServiceSpec:
     health_path: str
     health_statuses: tuple[int, ...]
     public: PublicSpec | None = None
+    dns_challenge: bool = False
 
     def policy_hash(self) -> str:
         """Ändert sich nur bei Werten, die eine Neuausstellung erfordern (nicht beim Upstream)."""
         data = {"domains": list(self.domains), "issuer": self.issuer_ref, "validity_days": self.validity_days}
+        if self.dns_challenge:
+            data["dns_challenge"] = True
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
 
     def to_json(self) -> str:
@@ -56,6 +59,7 @@ class ServiceSpec:
     def from_json(cls, text: str) -> "ServiceSpec":
         d = json.loads(text)
         d.setdefault("public", None)
+        d.setdefault("dns_challenge", False)
         d["domains"] = tuple(d["domains"])
         d["health_statuses"] = tuple(d["health_statuses"])
         if d["public"] is not None:
@@ -146,16 +150,32 @@ def parse_manifest(root: pathlib.Path, path: pathlib.Path, inv: Inventory) -> li
         issuer = inv.issuers.get(cert["issuer_ref"])
         if issuer is None:
             raise ManifestError(f"{rel}: {rid}: issuer_ref '{cert['issuer_ref']}' ist nicht in inventory/ingress.yaml freigegeben")
+        is_le = issuer.type == "letsencrypt"
+        if "dns_challenge" in cert and not is_le:
+            raise ManifestError(f"{rel}: {rid}: certificate.dns_challenge ist nur bei einem "
+                                f"Let's-Encrypt-Issuer zulässig (Issuer '{issuer.name}')")
         outside = [d for d in domains if not issuer.permits(d)]
         if outside:
             raise ManifestError(f"{rel}: {rid}: {outside} liegen außerhalb von {list(issuer.allowed_domains)} "
                                 f"(Issuer '{issuer.name}')")
-        validity = cert.get("validity_days", 90)
+        if is_le:
+            if "validity_days" in cert:
+                raise ManifestError(f"{rel}: {rid}: validity_days ist bei Let's Encrypt nicht zulässig; "
+                                    "Let's Encrypt legt die Laufzeit fest (90 Tage)")
+            validity = issuer.max_validity_days
+        else:
+            validity = cert.get("validity_days", 90)
         renew_before = cert.get("renew_before_days", 30)
         if validity > issuer.max_validity_days:
             raise ManifestError(f"{rel}: {rid}: validity_days {validity} > CA-Policy {issuer.max_validity_days}")
         if renew_before >= validity:
             raise ManifestError(f"{rel}: {rid}: renew_before_days muss kleiner als validity_days sein")
+        dns_challenge = bool(cert.get("dns_challenge", issuer.dns_challenge)) if is_le else False
+        if dns_challenge and not issuer.dns_provider:
+            raise ManifestError(f"{rel}: {rid}: dns_challenge erfordert dns_provider beim Issuer '{issuer.name}'")
+        if is_le and public is not None and public.allow_cidrs and not dns_challenge:
+            raise ManifestError(f"{rel}: {rid}: proxy.public.allow_cidrs verträgt sich nicht mit HTTP-01 von "
+                                "Let's Encrypt (die Validierung würde mit 403 abgewiesen); dns_challenge: true setzen")
 
         server = up.get("server")
         if server is not None and server not in inv.servers:
@@ -169,7 +189,7 @@ def parse_manifest(root: pathlib.Path, path: pathlib.Path, inv: Inventory) -> li
             upstream_port=up["port"], websockets=proxy.get("websockets", False),
             force_https=proxy.get("force_https", True), issuer_ref=cert["issuer_ref"], validity_days=validity,
             renew_before_days=renew_before, health_path=hc["path"], health_statuses=tuple(sorted(hc["accepted_statuses"])),
-            public=public,
+            public=public, dns_challenge=dns_challenge,
         ))
     return specs
 

@@ -1,10 +1,43 @@
+import hashlib
+import json
 import textwrap
 
 import pytest
+import yaml
 
-from ingressctl.errors import ManifestError
+from ingressctl.errors import ConfigError, ManifestError
 from ingressctl.inventory import load_inventory
 from ingressctl.manifest import ServiceSpec, load_all, normalize_domain
+
+LE_MANIFEST = """
+apiVersion: homelab.ingress/v1
+namespace: ai-sandbox
+services:
+  - id: omniroute
+    stack: omniroute
+    lifecycle: present
+    proxy:
+      domains: [app.pub.example]
+      upstream: {scheme: http, server: worker, port: 20128}
+%s    certificate: {%s}
+    healthcheck: {path: /, accepted_statuses: [200]}
+"""
+
+
+def _le_manifest(env, cert="issuer_ref: letsencrypt", proxy_extra=""):
+    env.write("stacks/ai/omniroute/ingress.yaml", LE_MANIFEST % (proxy_extra, cert))
+
+
+def _set_le_issuer(env, **fields):
+    p = env.root / "inventory/ingress.yaml"
+    doc = yaml.safe_load(p.read_text())
+    doc["issuers"]["letsencrypt"].update(fields)
+    p.write_text(yaml.safe_dump(doc))
+
+
+def _policy_hash(domains, issuer, validity):
+    data = {"domains": domains, "issuer": issuer, "validity_days": validity}
+    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def test_domains_are_normalized(env):
@@ -183,3 +216,156 @@ def test_stack_without_inventory_entry_is_derived_from_its_folder(env):
     inv = load_inventory(repo)
     assert inv.stacks["newapp"]["server"] == "worker" and inv.stacks["newapp"]["path"] == "stacks/ai/newapp"
     assert "newapp" in {s.stack_id for s in load_all(repo, inv)}
+
+
+def test_letsencrypt_issuer_defaults_and_validity(env):
+    _set_le_issuer(env, max_validity_days=365, propagation_seconds=45)
+    issuer = load_inventory(env.root).issuers["letsencrypt"]
+    assert issuer.type == "letsencrypt"
+    assert issuer.max_validity_days == 90
+    assert issuer.email == "admin@lab.example"
+    assert issuer.dns_challenge is False and issuer.dns_provider is None
+    assert issuer.propagation_seconds == 45
+    assert issuer.missing() == []
+    assert issuer.permits("app.pub.example") and not issuer.permits("app.lab.example")
+
+
+def test_letsencrypt_missing_requires_email_and_allowed_domains(env):
+    _set_le_issuer(env, email=None, allowed_domains=[])
+    issuer = load_inventory(env.root).issuers["letsencrypt"]
+    assert issuer.missing() == ["email", "allowed_domains"]
+    assert load_inventory(env.root).issuers["homelab-private-ca"].missing() == []
+
+
+def test_letsencrypt_empty_allowed_domains_permits_nothing(env):
+    _set_le_issuer(env, allowed_domains=[])
+    issuer = load_inventory(env.root).issuers["letsencrypt"]
+    assert not issuer.permits("app.pub.example")
+    assert not issuer.permits("anything.example")
+    _le_manifest(env)
+    with pytest.raises(ManifestError, match="außerhalb"):
+        env.specs("omniroute")
+
+
+def test_letsencrypt_manifest_is_accepted(env):
+    _le_manifest(env)
+    (spec,) = env.specs("omniroute")
+    assert spec.issuer_ref == "letsencrypt"
+    assert spec.validity_days == 90
+    assert spec.renew_before_days == 30
+    assert spec.dns_challenge is False
+    assert spec.policy_hash() == _policy_hash(["app.pub.example"], "letsencrypt", 90)
+
+
+def test_letsencrypt_domain_outside_allowed_domains_rejected(env):
+    _le_manifest(env)
+    env.write("stacks/ai/omniroute/ingress.yaml",
+              (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace("app.pub.example", "app.lab.example"))
+    with pytest.raises(ManifestError, match="außerhalb"):
+        env.specs("omniroute")
+
+
+def test_letsencrypt_validity_days_rejected(env):
+    _le_manifest(env, cert="issuer_ref: letsencrypt, validity_days: 90")
+    with pytest.raises(ManifestError, match="Laufzeit fest \\(90 Tage\\)"):
+        env.specs("omniroute")
+
+
+def test_letsencrypt_renew_before_must_stay_below_90(env):
+    _le_manifest(env, cert="issuer_ref: letsencrypt, renew_before_days: 89")
+    (spec,) = env.specs("omniroute")
+    assert spec.renew_before_days == 89
+    _le_manifest(env, cert="issuer_ref: letsencrypt, renew_before_days: 90")
+    with pytest.raises(ManifestError, match="kleiner als"):
+        env.specs("omniroute")
+
+
+def test_dns_challenge_rejected_for_private_ca(env):
+    text = (env.root / "stacks/nas/seerr/ingress.yaml").read_text().replace(
+        "certificate: {issuer_ref: homelab-private-ca}",
+        "certificate: {issuer_ref: homelab-private-ca, dns_challenge: true}")
+    (env.root / "stacks/nas/seerr/ingress.yaml").write_text(text)
+    with pytest.raises(ManifestError, match="nur bei einem Let's-Encrypt-Issuer"):
+        env.specs("seerr")
+
+
+def test_dns_challenge_requires_dns_provider(env):
+    _le_manifest(env, cert="issuer_ref: letsencrypt, dns_challenge: true")
+    with pytest.raises(ManifestError, match="dns_provider"):
+        env.specs("omniroute")
+
+
+def test_dns_challenge_with_dns_provider_is_accepted(env):
+    _set_le_issuer(env, dns_provider="cloudflare")
+    _le_manifest(env, cert="issuer_ref: letsencrypt, dns_challenge: true")
+    (spec,) = env.specs("omniroute")
+    assert spec.dns_challenge is True
+    assert spec.policy_hash() != _policy_hash(["app.pub.example"], "letsencrypt", 90)
+
+
+def test_dns_challenge_defaults_from_issuer_and_manifest_wins(env):
+    _set_le_issuer(env, dns_challenge=True, dns_provider="cloudflare")
+    _le_manifest(env)
+    (default,) = env.specs("omniroute")
+    assert default.dns_challenge is True
+    _le_manifest(env, cert="issuer_ref: letsencrypt, dns_challenge: false")
+    (explicit,) = env.specs("omniroute")
+    assert explicit.dns_challenge is False
+    assert explicit.policy_hash() == _policy_hash(["app.pub.example"], "letsencrypt", 90)
+
+
+def test_letsencrypt_public_allow_cidrs_without_dns_challenge_rejected(env):
+    _le_manifest(env, proxy_extra="      public: {paths: [/hook], allow_cidrs: [10.0.0.0/8]}\n")
+    with pytest.raises(ManifestError, match="allow_cidrs"):
+        env.specs("omniroute")
+
+
+def test_letsencrypt_public_allow_cidrs_with_dns_challenge_accepted(env):
+    _set_le_issuer(env, dns_provider="cloudflare")
+    _le_manifest(env, cert="issuer_ref: letsencrypt, dns_challenge: true",
+                 proxy_extra="      public: {paths: [/hook], allow_cidrs: [10.0.0.0/8]}\n")
+    (spec,) = env.specs("omniroute")
+    assert spec.dns_challenge is True and spec.public.allow_cidrs == ("10.0.0.0/8",)
+
+
+def test_letsencrypt_public_allow_cidrs_rule_does_not_touch_private_ca(env):
+    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
+        "      force_https: true\n",
+        "      force_https: true\n      public: {paths: [/hook], allow_cidrs: [10.0.0.0/8]}\n")
+    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    (spec,) = env.specs("omniroute")
+    assert spec.public.allow_cidrs == ("10.0.0.0/8",) and spec.dns_challenge is False
+
+
+def test_unknown_issuer_type_is_config_error(env):
+    _set_le_issuer(env, type="acme")
+    with pytest.raises(ConfigError, match="infisical' oder 'letsencrypt"):
+        load_inventory(env.root)
+
+
+def test_negative_propagation_seconds_is_config_error(env):
+    _set_le_issuer(env, propagation_seconds=-1)
+    with pytest.raises(ConfigError, match="propagation_seconds"):
+        load_inventory(env.root)
+
+
+def test_dns_challenge_must_be_boolean(env):
+    _le_manifest(env, cert="issuer_ref: letsencrypt, dns_challenge: 'true'")
+    with pytest.raises(ManifestError, match="dns_challenge"):
+        env.specs("omniroute")
+
+
+def test_from_json_without_dns_challenge_defaults_false(env):
+    (spec,) = env.specs("omniroute")
+    d = json.loads(spec.to_json())
+    d.pop("dns_challenge")
+    assert ServiceSpec.from_json(json.dumps(d)) == spec
+    assert ServiceSpec.from_json(json.dumps(d)).dns_challenge is False
+
+
+def test_policy_hash_of_existing_omniroute_spec_is_unchanged(env):
+    """Hash aus main vor dieser Änderung: bestehende Specs dürfen keine Neuausstellung sehen."""
+    (spec,) = env.specs("omniroute")
+    assert spec.dns_challenge is False
+    assert spec.policy_hash() == "1409215e7ea35e14"
+    assert spec.policy_hash() == _policy_hash(["omni.lab.example"], "homelab-private-ca", 90)

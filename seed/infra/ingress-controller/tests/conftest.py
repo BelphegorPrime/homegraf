@@ -44,6 +44,13 @@ INVENTORY = {
             max_validity_days: 90
             ca_bundle: CA_BUNDLE
             allowed_domains: ["*.lab.example"]
+          letsencrypt:
+            type: letsencrypt
+            email: admin@lab.example
+            allowed_domains: ["*.pub.example"]
+            dns_challenge: false
+            dns_provider: null
+            propagation_seconds: null
         controller: {default_npm_instance: main, allowed_repos: [owner/infrastructure]}
     """,
 }

@@ -39,7 +39,11 @@
                 "oneOf": [{"required": ["server"]}, {"required": ["host"]}]
               },
               "websockets": {"type": "boolean", "default": false},
-              "force_https": {"type": "boolean", "default": true}
+              "force_https": {"type": "boolean", "default": true},
+              "public": {
+                "type": "object",
+                "description": "Path allowlist rendered into the host's advanced_config; validated by ingressctl.public.parse_public"
+              }
             }
           },
           "certificate": {

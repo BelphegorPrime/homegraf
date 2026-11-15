@@ -19,12 +19,15 @@ x-template:
     there; it stays in the volume, not in the repository. Create the agent profiles planner, worker, worker-strong and reviewer.
     ForgeHands starts in webhook mode: register the OpenHands automation webhook as docs/stack.md says. Direct mode is opt-in: set
     OPENHANDS_API_URL to http://openhands:8000 and LABEL_ROUTES to the label -> profile routes, with the profile ids from
-    GET /api/agent-profiles (a name is rejected). In both modes the Forgejo webhook (events: issues, secret FORGEJO_WEBHOOK_SECRET) is
+    GET /api/agent-profiles (a name is rejected). The routes cover the issue labels ai:plan, ai:ready, ai:escalate and
+    ai:review, and on the pull request of an agent issue "on": "pull_request" (ai:changes), "on": "ci_failure",
+    "on": "ci_success", "on": "epic_done" and "on": "conflict". Empty profile ids keep direct mode off.
+    In both modes the Forgejo webhook (events: issues, secret FORGEJO_WEBHOOK_SECRET) is
     required. Put a Forgejo token with write:repository and read:user into FORGEJO_TOKEN and set ALLOWED_REPOS to the owner/repository
     pairs the agents may work on (comma separated).
 services:
   app:
-    image: ghcr.io/belphegorprime/forgehands:v0.2.11
+    image: ghcr.io/belphegorprime/forgehands:v0.3.2
     ports:
       - "8080:8080"
     volumes:
@@ -37,7 +40,8 @@ services:
       AGENT_SECRETS: FORGEJO_TOKEN,FORGEJO_URL
       FORGEJO_URL: http://forgejo:3000
       FORGEJO_TOKEN: ${FORGEJO_TOKEN}
-      # Label -> profile id, tier, max_iterations (optional max_budget, max_concurrent). Empty keeps direct mode off.
+      # Label -> profile id, tier and limits; a role name is rejected as a profile id. Empty keeps direct mode off;
+      # first_run names every route kind direct mode covers.
       LABEL_ROUTES: ""
       ALLOWED_REPOS: owner/repository
       # The agent user, and the human ForgeHands mentions when a pull request needs one; both must be senders,
@@ -51,6 +55,20 @@ services:
       MAX_RUNS_PER_HOUR: "30"
       MAX_RUN_MINUTES: "120"
       MAX_ROUNDS: "3"
+      # The labels of a round and a review, the epic labels, and whether a moved default branch brings open pull
+      # requests up to date (a conflict then starts the "on": "conflict" round).
+      BLOCKED_LABEL: ai:blocked
+      APPROVED_LABEL: ai:approved
+      EPIC_LABEL: ai:plan,ai:close
+      UPDATE_BRANCHES: "1"
+      BRANCH_UPDATE_DELAY_SECONDS: "60"
+      BRANCH_UPDATE_MIN_INTERVAL_MINUTES: "30"
+      MIN_REVIEW_CHARS: "300"
+      # Per repository merge policy in ForgeHands' own environment, not a file of the repository (the pull request
+      # it restrains could change that file). A repository without an entry is never merged automatically. Replace
+      # the key with each repository in ALLOWED_REPOS; * matches within a folder, ** across folders.
+      MERGE_POLICY: '{"owner/repository": {"deny": [".forgejo/**", ".github/**", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", ".agents/**", ".claude/**", "compose.yaml", "**/compose.yaml", "setup.sh", "scripts/**", "infra/**", "stacks/**"]}}'
+      MERGE_METHOD: merge
       # The strong and cheap LLM profiles the factory creates in Canvas (bootstrap/hgboot/factory_config.py);
       # its key comes from Infisical like every other secret.
       FORGEHANDS_STRONG_MODEL: vendor/strong-model

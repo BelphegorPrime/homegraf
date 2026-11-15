@@ -29,6 +29,7 @@ LABELS = {
     "ai:review": {"color": "5319e7", "description": "Review the agent pull request"},
     "ai:changes": {"color": "d93f0b", "description": "Reviewer asks the worker for another round"},
     "ai:approved": {"color": "2ea44f", "description": "Reviewer approved the pull request"},
+    "ai:close": {"color": "6a737d", "description": "Review and close this ticket when its last dependency is closed, no planner run"},
 }
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")

@@ -1,4 +1,4 @@
-import type { EdgeType, Graph, GraphEdge, GraphNode, NodeType } from "../shared/types";
+import type { EdgeType, Exposure, Graph, GraphEdge, GraphNode, NodeType } from "../shared/types";
 
 export type ViewId =
   "catalog" | "hosting" | "network" | "request" | "dependencies" | "platform" | "status" | "certificates" | "new" | "remove" | "stacks" | "users";
@@ -42,9 +42,25 @@ export interface Sub {
 export interface ViewOptions {
   containers: boolean; // hosting and dependencies: include container nodes
   focus: string; // platform: infra node whose dependents are shown ("" = none)
+  /** request: only domains reachable from the internet. Optional so call sites that predate the filter keep compiling. */
+  publicOnly?: boolean;
+}
+export const defaultOptions: ViewOptions = { containers: false, focus: "infra:komodo", publicOnly: false };
+
+/** The builder writes one entry on a domain and an array on the stack or service that answers; both read the same here. */
+export function exposures(n: GraphNode): Exposure[] {
+  if (!n.exposure) return [];
+  return Array.isArray(n.exposure) ? n.exposure : [n.exposure];
 }
 
-export const defaultOptions: ViewOptions = { containers: false, focus: "infra:komodo" };
+export function isPublic(n: GraphNode): boolean {
+  return exposures(n).length > 0;
+}
+
+/** No paths means the whole host is reachable, not just a part of it. */
+export function isFullHost(e: Exposure): boolean {
+  return !e.paths || e.paths.length === 0;
+}
 
 function subgraph(
   g: Graph,
@@ -80,8 +96,16 @@ export function buildView(id: ViewId, g: Graph, opts: ViewOptions = defaultOptio
           );
     case "network":
       return subgraph(g, ["isp", "router", "switch", "device", "machine"], ["link"], (n) => !n.external);
-    case "request":
-      return subgraph(g, ["domain", "infra", "container", "stack", "service"], ["terminated-by", "proxies"]);
+    case "request": {
+      const types: NodeType[] = ["domain", "infra", "container", "stack", "service"];
+      if (!opts.publicOnly) return subgraph(g, types, ["terminated-by", "proxies"]);
+      const sub = subgraph(g, types, ["terminated-by", "proxies"], (n) => n.type !== "domain" || isPublic(n));
+      // A `proxies` edge names every domain the proxy routes to its target; a route that serves only unexposed names is not public.
+      const publicDomains = new Set(g.nodes.filter((n) => n.type === "domain" && isPublic(n)).map((n) => n.label));
+      const edges = sub.edges.filter((e) => e.type !== "proxies" || !e.domains || e.domains.some((d) => publicDomains.has(d)));
+      const used = new Set(edges.flatMap((e) => [e.source, e.target]));
+      return { nodes: sub.nodes.filter((n) => used.has(n.id)), edges };
+    }
     case "dependencies":
       return subgraph(g, opts.containers ? ["stack", "container"] : ["stack"], ["depends-on"]);
     case "platform": {
@@ -113,9 +137,10 @@ export interface Tile {
 }
 
 /** Catalog tiles: stacks and appliances that have a URL (or all of them), grouped by machine or category. */
-export function catalogTiles(g: Graph, groupBy: "machine" | "category", withoutUrl: boolean): Tile[] {
+export function catalogTiles(g: Graph, groupBy: "machine" | "category", withoutUrl: boolean, publicOnly = false): Tile[] {
   return g.nodes
     .filter((n) => (n.type === "stack" || n.type === "service") && (withoutUrl || (n.urls ?? []).length > 0))
+    .filter((n) => !publicOnly || isPublic(n))
     .map((node) => ({
       node,
       group: groupBy === "machine" ? (node.server ?? "unassigned") : (node.category ?? "Other"),

@@ -1,4 +1,14 @@
 export type NodeType = "isp" | "router" | "switch" | "device" | "machine" | "stack" | "container" | "service" | "domain" | "infra";
+/** How a host is reachable from the internet, as the graph builder reads it from the proxy and the issuers. */
+export interface Exposure {
+  domain: string;
+  reason: "proxy-public" | "public-name";
+  /** Paths the proxy exposes; absent means the whole host. */
+  paths?: string[];
+  methods?: string[];
+  /** Client networks the proxy lets in; a preset appears as "preset:<name>". */
+  allowCidrs?: string[];
+}
 
 export interface GraphNode {
   id: string;
@@ -23,6 +33,8 @@ export interface GraphNode {
   komodo?: boolean;
   external?: boolean;
   target?: string;
+  /** One entry on a domain node, all of its exposed hosts sorted by domain on the stack or service that answers. */
+  exposure?: Exposure | Exposure[];
   [extra: string]: unknown;
 }
 

@@ -1,12 +1,11 @@
 import contextlib
 import copy
 import io
-import os
 import tempfile
 import unittest
 import urllib.parse
 
-from hgboot.factory_repos import AGENT_EVENTS, LABELS, RepositoryReconciler, reconcile
+from hgboot.factory_repos import LABELS, RepositoryReconciler, reconcile
 from hgboot.state import State
 from hgboot.steps import StepError
 
@@ -17,6 +16,9 @@ SECRET = "hook-secret-value"
 ENDPOINT = "http://forgehands:8080/webhooks/forgejo"
 REPO = "owner/repo"
 KOMODO_HOOK = "http://komodo-core:9120/listener/github/procedure/update-all/main"
+# Forgejo stores `issues` as the whole issue group and returns the events sorted.
+EXPANDED_EVENTS = ("action_run_failure", "action_run_success", "issue_assign", "issue_comment", "issue_label",
+                   "issue_milestone", "issues", "pull_request_label")
 
 
 class FakeFactoryForgejo:
@@ -38,9 +40,20 @@ class FakeFactoryForgejo:
 
     def _view_hook(self, hook):
         view = copy.deepcopy(hook)
+        view["events"] = self.effective_events(view.get("events") or [])
         if "secret" in view.get("config", {}):
             view["config"]["secret"] = self.masked
         return view
+
+    @staticmethod
+    def effective_events(events):
+        expanded = set()
+        for event in events:
+            if event == "issues":
+                expanded.update(("issue_assign", "issue_comment", "issue_label", "issue_milestone", "issues"))
+            else:
+                expanded.add(event)
+        return sorted(expanded)
 
     def __call__(self, req):
         p, _, query = req.path.partition("?")
@@ -101,8 +114,8 @@ class FakeFactoryForgejo:
             label = {"id": self.next_id, "name": body["name"], "color": body["color"], "description": body.get("description") or ""}
             self.labels[repo].append(label)
             return 201, copy.deepcopy(label)
-        hook = {"id": self.next_id, "type": body["type"], "active": body["active"], "events": list(body["events"]),
-                "branch_filter": "", "config": dict(body["config"])}
+        hook = {"id": self.next_id, "type": body["type"], "active": body["active"],
+                "events": self.effective_events(body["events"]), "branch_filter": "", "config": dict(body["config"])}
         self.hooks[repo].append(hook)
         return 201, self._view_hook(hook)
 
@@ -139,20 +152,20 @@ class RepositoryReconcilerTests(unittest.TestCase):
         hooks = [h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT]
         self.assertEqual(len(hooks), 1)
         hook = hooks[0]
-        self.assertEqual((hook["type"], hook["active"], hook["events"]), ("forgejo", True, list(AGENT_EVENTS)))
+        self.assertEqual((hook["type"], hook["active"], hook["events"]), ("forgejo", True, list(EXPANDED_EVENTS)))
         self.assertEqual((hook["config"]["url"], hook["config"]["content_type"], hook["config"]["secret"]),
                          (ENDPOINT, "json", SECRET))
         self.assertTrue(any(h["config"]["url"] == KOMODO_HOOK for h in self.fake.hooks[REPO]))
         reads = [r.path for r in self.srv.requests if r.method == "GET"]
         self.assertFalse(any(p.startswith(("/api/v1/user/repos", "/api/v1/repos/search")) for p in reads))
 
-    def test_a_second_run_makes_no_write(self):
+    def test_a_second_run_with_a_correct_hook_creates_nothing_and_deletes_nothing(self):
         self.reconciler().run()
-        self.assertEqual(len(self.fake.labels[REPO]), 7)
+        self.assertEqual(len(self.fake.labels[REPO]), 8)
         self.srv.requests.clear()
         self.reconciler().run()
         self.assertEqual(self.writes(), [])
-        self.assertEqual(len(self.fake.labels[REPO]), 7)
+        self.assertEqual(len(self.fake.labels[REPO]), 8)
         self.assertEqual(len(self.fake.hooks[REPO]), 2)
 
     def test_local_drift_is_corrected_with_one_patch_and_drifted_events_recreate_the_hook(self):
@@ -168,7 +181,7 @@ class RepositoryReconcilerTests(unittest.TestCase):
         self.assertTrue(any(method == "DELETE" and "/hooks/" in path for method, path in self.writes()))
         self.assertEqual((label["color"], label["description"]), (LABELS["ai:ready"]["color"], LABELS["ai:ready"]["description"]))
         hooks = [h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT]
-        self.assertEqual([h["events"] for h in hooks], [list(AGENT_EVENTS)])
+        self.assertEqual([h["events"] for h in hooks], [list(EXPANDED_EVENTS)])
 
     def test_duplicate_owned_hooks_are_removed_and_only_one_is_recreated(self):
         self.reconciler().run()
@@ -188,7 +201,8 @@ class RepositoryReconcilerTests(unittest.TestCase):
         self.assertEqual([], [h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT])
         rotated.run()
         hooks = [h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT]
-        self.assertEqual([(h["config"]["secret"], h["events"]) for h in hooks], [("new-secret-value", list(AGENT_EVENTS))])
+        self.assertEqual([(h["config"]["secret"], h["events"]) for h in hooks],
+                         [("new-secret-value", list(EXPANDED_EVENTS))])
         self.srv.requests.clear()
         rotated.run()
         self.assertEqual(self.writes(), [])
@@ -209,6 +223,32 @@ class RepositoryReconcilerTests(unittest.TestCase):
             self.reconciler().run()
         self.assertEqual(self.writes(), [])
 
+    def test_a_migrated_primary_repository_with_an_original_url_is_accepted(self):
+        self.fake.repos[REPO] = {"mirror": False, "original_url": "https://github.com/owner/repo"}
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.reconciler().run()
+        self.assertEqual(len([h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT]), 1)
+        self.assertIn("ai:close", {label["name"] for label in self.fake.labels[REPO]})
+
+    def test_the_read_back_of_the_expanded_issue_events_keeps_the_hook(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.reconciler().run()
+        hook = next(h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT)
+        self.assertEqual(hook["events"], list(EXPANDED_EVENTS))
+        self.assertFalse(any(method == "DELETE" for method, _ in self.writes()))
+
+    def test_a_hook_with_a_missing_required_event_is_replaced(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.reconciler().run()
+        hook = next(h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT)
+        hook["events"].remove("action_run_success")
+        self.srv.requests.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.reconciler().run()
+        self.assertIn(("DELETE", f"/api/v1/repos/{REPO}/hooks/{hook['id']}"), self.writes())
+        hooks = [h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT]
+        self.assertEqual([h["events"] for h in hooks], [list(EXPANDED_EVENTS)])
+
     def test_pagination_finds_every_label_and_hook(self):
         for i in range(5):
             self.fake.labels[REPO].append({"id": 200 + i, "name": f"keep-{i}", "color": "cccccc", "description": ""})
@@ -228,19 +268,15 @@ class RepositoryReconcilerTests(unittest.TestCase):
                 self.reconciler(allowed_repos=bad if isinstance(bad, list) else [bad])
         self.assertEqual(self.srv.requests, [])
 
-    def test_the_token_may_come_from_the_state_and_the_shared_admin_identity_warns(self):
+    def test_the_token_may_come_from_the_state_without_an_administrator_warning(self):
         self.fake.login = "owner"
         self.state.set("forgejo", "token", TOKEN)
         stderr = io.StringIO()
-        quiet = os.environ.pop("HGBOOT_QUIET", None)
-        try:
-            with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
-                reconcile(self.cfg, self.state, [REPO], ENDPOINT, SECRET)
-        finally:
-            if quiet is not None:
-                os.environ["HGBOOT_QUIET"] = quiet
-        self.assertIn("administrator", stderr.getvalue())
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+            reconcile(self.cfg, self.state, [REPO], ENDPOINT, SECRET)
+        self.assertNotIn("administrator", stderr.getvalue())
         self.assertNotIn(TOKEN, stderr.getvalue())
+        self.assertEqual(len([h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT]), 1)
 
 
 if __name__ == "__main__":

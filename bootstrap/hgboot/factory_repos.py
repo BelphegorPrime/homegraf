@@ -12,7 +12,7 @@ import re
 from urllib.parse import urlsplit
 
 from .http import Unreachable, request
-from .steps import StepError, log, warn
+from .steps import StepError, log
 
 STEP = "factory-repos"
 STATE_SECTION = "factory_repos"
@@ -29,6 +29,7 @@ LABELS = {
     "ai:review": {"color": "5319e7", "description": "Review the agent pull request"},
     "ai:changes": {"color": "d93f0b", "description": "Reviewer asks the worker for another round"},
     "ai:approved": {"color": "2ea44f", "description": "Reviewer approved the pull request"},
+    "ai:close": {"color": "6a737d", "description": "Review and close this ticket when its last dependency is closed, no planner run"},
 }
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -155,25 +156,9 @@ class RepositoryReconciler:
             page += 1
         return items
 
-    def _warn_shared_identity(self) -> None:
-        """The token's owner is informational: no user is created, no scope or branch right is changed."""
-        try:
-            response = self.http("GET", self.api + "/user", headers=self._headers())
-        except Unreachable:
-            return
-        if not response.ok:
-            return
-        try:
-            login = (response.json() or {}).get("login")
-        except ValueError:
-            return
-        if login and login in {self.cfg.forgejo_user, self.cfg.admin_user}:
-            warn(self.step, f"the factory uses {login}, the Forgejo administrator account; agents act with its rights")
-
     def run(self) -> None:
         if not self.token:
             raise StepError("the factory has no Forgejo token: pass one explicitly or store it in the state")
-        self._warn_shared_identity()
         for repository in self.repositories:
             self.reconcile(repository)
 
@@ -188,7 +173,7 @@ class RepositoryReconciler:
         info = self._json(response, f"{repository}: reading the repository")
         if not isinstance(info, dict):
             raise StepError(f"{repository}: Forgejo did not answer with a repository object")
-        if info.get("mirror") or info.get("original_url"):
+        if info.get("mirror"):
             raise StepError(f"{repository}: a pull mirror is read-only; point the factory at a writable primary repository")
         return info
 
@@ -235,7 +220,7 @@ class RepositoryReconciler:
             return False
         if hook.get("active") is not True:
             return False
-        if set(hook.get("events") or []) != set(AGENT_EVENTS):
+        if not set(AGENT_EVENTS) <= set(hook.get("events") or []):
             return False
         if not _same_url(config.get("url"), self.endpoint):
             return False

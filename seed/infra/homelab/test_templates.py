@@ -279,7 +279,7 @@ def test_a_template_with_routes_routes_its_sidecar_and_keeps_its_secrets(agent):
     assert app.routes == [{"service": "openhands", "domain": "openhands.lab.example", "port": 8000,
                            "websockets": True, "health_path": "/health", "statuses": [200]}]
     assert set(app.secrets) == {"FORGEJO_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_URL",
-                                "FORGEJO_TOKEN", "LOCAL_BACKEND_API_KEY", "OH_SECRET_KEY"}
+                                "FORGEJO_TOKEN", "LOCAL_BACKEND_API_KEY", "OH_SECRET_KEY", "FORGEHANDS_GATEWAY_API_KEY"}
     assert "ALLOWED_REPOS: owner/repository" in app.compose           # an input of the form, not a secret
     env = yaml.safe_load(app.compose)["services"]["agents"]["environment"]
     assert env["OPENHANDS_API_URL"] == "" and env["LABEL_ROUTES"] == ""  # webhook mode: a fresh app has no profile ids
@@ -288,6 +288,71 @@ def test_a_template_with_routes_routes_its_sidecar_and_keeps_its_secrets(agent):
     assert "GET /api/agent-profiles" in app.first_run and "profile ids" in app.first_run
     assert "/srv/docker/agents/openhands:/root/.openhands" in app.compose
     assert "__" not in app.compose
+
+
+def test_the_agents_form_exposes_the_factory_settings_of_the_bootstrap(agent):
+    """The operator sets the factory in the form: FactoryConfig names (bootstrap/hgboot/factory_config.py) for what
+    the bootstrap reads, the names ForgeHands itself reads for the allowlists, limits and the human login."""
+    env = yaml.safe_load(_agents(agent).compose)["services"]["agents"]["environment"]
+    assert env["ALLOWED_REPOS"] == "owner/repository"
+    assert (env["FORGEHANDS_AGENT_LOGIN"], env["HUMAN_LOGIN"]) == ("openhands", "operator")
+    senders = [s.strip() for s in env["ALLOWED_SENDERS"].split(",")]
+    assert set(senders) == {env["FORGEHANDS_AGENT_LOGIN"], env["HUMAN_LOGIN"]}   # both, or ForgeHands ignores its agents
+    assert env["FORGEHANDS_STRONG_MODEL"] == "vendor/strong-model"
+    assert env["FORGEHANDS_CHEAP_MODEL"] == "vendor/cheap-model"
+    assert env["FORGEHANDS_GATEWAY_URL"] == "https://llm.example/v1"
+
+
+def test_the_agents_form_limits_are_numbers_forgehands_accepts(agent):
+    env = yaml.safe_load(_agents(agent).compose)["services"]["agents"]["environment"]
+    limits = {name: env[name] for name in ("MAX_CONCURRENT_PER_TIER", "MAX_CONCURRENT", "MAX_RUNS_PER_HOUR",
+                                           "MAX_RUN_MINUTES", "MAX_ROUNDS")}
+    assert {name: int(value) for name, value in limits.items()} == {
+        "MAX_CONCURRENT_PER_TIER": 2, "MAX_CONCURRENT": 4, "MAX_RUNS_PER_HOUR": 30, "MAX_RUN_MINUTES": 120, "MAX_ROUNDS": 3}
+    assert int(limits["MAX_CONCURRENT_PER_TIER"]) <= int(limits["MAX_CONCURRENT"])   # as FactoryConfig requires
+
+
+def test_the_agents_form_keeps_every_credential_out_of_the_generated_compose(agent):
+    app = _agents(agent)
+    env = yaml.safe_load(app.compose)["services"]["agents"]["environment"]
+    assert env["FORGEHANDS_GATEWAY_API_KEY"] == "${FORGEHANDS_GATEWAY_API_KEY}"
+    assert env["FORGEJO_TOKEN"] == "${FORGEJO_TOKEN}"                 # the agent's token, from the secret store
+    assert env["FORGEJO_WEBHOOK_SECRET"] == "${FORGEJO_WEBHOOK_SECRET}"
+    for name in ("FORGEHANDS_GATEWAY_API_KEY", "FORGEJO_TOKEN", "FORGEJO_WEBHOOK_SECRET"):
+        assert app.secrets[name] and app.secrets[name] not in app.compose   # a value never lands in the compose file
+    assert not [value for value in env.values() if isinstance(value, str) and value in app.secrets.values()]
+
+
+def test_the_agents_form_values_pass_the_factory_configuration(agent):
+    """The form's defaults are what the opt-in factory validates (bootstrap/hgboot/factory_config.py), not just what
+    the template renders: allowlists, identity, models, gateway and limits go through the real class."""
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "bootstrap"))
+    from hgboot.factory_config import FactoryConfig  # noqa: E402
+
+    env = yaml.safe_load(_agents(agent).compose)["services"]["agents"]["environment"]
+    factory = FactoryConfig.from_env({
+        "FORGEHANDS_BOOTSTRAP": "1",
+        "FORGEHANDS_OPENHANDS_API_URL": "http://openhands:8000",
+        "OPENHANDS_LOCAL_BACKEND_API_KEY": "backend-key",
+        "FORGEHANDS_FORGEJO_AGENT_TOKEN": "agent-token",
+        "FORGEHANDS_FORGEJO_WEBHOOK_SECRET": "webhook-secret",
+        "FORGEHANDS_GATEWAY_API_KEY": "gateway-key",
+        "FORGEHANDS_STRONG_MODEL": env["FORGEHANDS_STRONG_MODEL"],
+        "FORGEHANDS_CHEAP_MODEL": env["FORGEHANDS_CHEAP_MODEL"],
+        "FORGEHANDS_GATEWAY_URL": env["FORGEHANDS_GATEWAY_URL"],
+        "FORGEHANDS_ALLOWED_REPOS": env["ALLOWED_REPOS"],
+        "FORGEHANDS_ALLOWED_SENDERS": env["ALLOWED_SENDERS"],
+        "FORGEHANDS_AGENT_LOGIN": env["FORGEHANDS_AGENT_LOGIN"],
+        "FORGEHANDS_HUMAN_LOGIN": env["HUMAN_LOGIN"],
+        "FORGEHANDS_MAX_CONCURRENT_PER_TIER": env["MAX_CONCURRENT_PER_TIER"],
+        "FORGEHANDS_MAX_CONCURRENT": env["MAX_CONCURRENT"],
+        "FORGEHANDS_MAX_RUNS_PER_HOUR": env["MAX_RUNS_PER_HOUR"],
+        "FORGEHANDS_MAX_RUN_MINUTES": env["MAX_RUN_MINUTES"],
+    }, "owner/repository")
+    assert factory.enabled and factory.allowed_repos == ("owner/repository",)
+    assert (factory.agent_login, factory.human_login) == (env["FORGEHANDS_AGENT_LOGIN"], env["HUMAN_LOGIN"])
+    assert factory.max_concurrent == int(env["MAX_CONCURRENT"]) and factory.max_concurrent_per_tier == 2
+    assert factory.max_runs_per_hour == 30 and factory.max_run_minutes == 120
 
 
 def test_the_ingress_of_a_template_with_routes_declares_both_hosts(agent):

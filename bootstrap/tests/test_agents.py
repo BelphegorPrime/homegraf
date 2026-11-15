@@ -27,14 +27,16 @@ EXPECTED_ROUTES = {
                    "on": "ci_success"},
     "epic:done": {"profile": PROFILE_IDS["reviewer"], "tier": "reviewer", "max_iterations": 60,
                   "on": "epic_done"},
+    "pr:conflict": {"profile": PROFILE_IDS["worker"], "tier": "worker", "max_iterations": 120,
+                    "on": "conflict"},
 }
 
 
 class LabelRoutesTests(unittest.TestCase):
-    def test_all_eight_direct_mode_routes_use_the_profile_ids_and_limits(self):
+    def test_all_nine_direct_mode_routes_use_the_profile_ids_and_limits(self):
         routes = json.loads(label_routes(PROFILE_IDS))
         self.assertEqual(set(routes), {"ai:plan", "ai:ready", "ai:escalate", "ai:review", "ai:changes",
-                                       "ci:failure", "ci:success", "epic:done"})
+                                       "ci:failure", "ci:success", "epic:done", "pr:conflict"})
         self.assertEqual(routes, EXPECTED_ROUTES)
         self.assertEqual(set(route["profile"] for route in routes.values()), set(PROFILE_IDS.values()))
 
@@ -44,11 +46,13 @@ class LabelRoutesTests(unittest.TestCase):
     def test_only_the_follow_up_and_synthetic_routes_name_an_event(self):
         routes = json.loads(label_routes(PROFILE_IDS))
         self.assertEqual({label for label, route in routes.items() if "on" in route},
-                         {"ai:changes", "ci:failure", "ci:success", "epic:done"})
+                         {"ai:changes", "ci:failure", "ci:success", "epic:done", "pr:conflict"})
         self.assertEqual(routes["ai:changes"]["on"], "pull_request")
         self.assertEqual(routes["ci:failure"]["on"], "ci_failure")
         self.assertEqual(routes["ci:success"]["on"], "ci_success")
         self.assertEqual(routes["epic:done"]["on"], "epic_done")
+        self.assertEqual(routes["pr:conflict"]["on"], "conflict")
+        self.assertEqual(routes["pr:conflict"]["profile"], PROFILE_IDS["worker"])
 
     def test_a_profile_without_an_id_is_an_error_not_a_name(self):
         ids = dict(PROFILE_IDS)
@@ -74,7 +78,8 @@ class LabelRoutesTests(unittest.TestCase):
         self.assertEqual(tiers["ci:failure"], "worker")
         self.assertEqual(tiers["ci:success"], "reviewer")
         self.assertEqual(tiers["epic:done"], "reviewer")
-        self.assertEqual(len(tiers), 8)
+        self.assertEqual(tiers["pr:conflict"], "worker")
+        self.assertEqual(len(tiers), 9)
         self.assertEqual(set(tiers.values()), {"planner", "worker", "worker-strong", "reviewer"})
 
 

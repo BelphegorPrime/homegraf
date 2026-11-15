@@ -19,7 +19,7 @@ STATE_SECTION = "factory_repos"
 PAGE_SIZE = 50
 HOOK_TYPE = "forgejo"
 CONTENT_TYPE = "json"
-AGENT_EVENTS = ("issues", "pull_request_label", "action_run_failure", "action_run_success")
+AGENT_EVENTS = ("issues", "pull_request_label", "action_run_failure", "action_run_success", "push")
 
 # Stable names, colors and descriptions. `ai:blocked` is left to ForgeHands.
 LABELS = {

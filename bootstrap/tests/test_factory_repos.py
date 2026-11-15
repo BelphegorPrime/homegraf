@@ -16,9 +16,9 @@ SECRET = "hook-secret-value"
 ENDPOINT = "http://forgehands:8080/webhooks/forgejo"
 REPO = "owner/repo"
 KOMODO_HOOK = "http://komodo-core:9120/listener/github/procedure/update-all/main"
-# Forgejo stores `issues` as the whole issue group and returns the events sorted.
+# Forgejo stores `issues` as the whole issue group and returns the events sorted; `push` stays `push`.
 EXPANDED_EVENTS = ("action_run_failure", "action_run_success", "issue_assign", "issue_comment", "issue_label",
-                   "issue_milestone", "issues", "pull_request_label")
+                   "issue_milestone", "issues", "pull_request_label", "push")
 
 
 class FakeFactoryForgejo:
@@ -153,6 +153,8 @@ class RepositoryReconcilerTests(unittest.TestCase):
         self.assertEqual(len(hooks), 1)
         hook = hooks[0]
         self.assertEqual((hook["type"], hook["active"], hook["events"]), ("forgejo", True, list(EXPANDED_EVENTS)))
+        self.assertIn("push", hook["events"])
+        self.assertNotIn("push_branch", hook["events"])
         self.assertEqual((hook["config"]["url"], hook["config"]["content_type"], hook["config"]["secret"]),
                          (ENDPOINT, "json", SECRET))
         self.assertTrue(any(h["config"]["url"] == KOMODO_HOOK for h in self.fake.hooks[REPO]))
@@ -248,6 +250,20 @@ class RepositoryReconcilerTests(unittest.TestCase):
         self.assertIn(("DELETE", f"/api/v1/repos/{REPO}/hooks/{hook['id']}"), self.writes())
         hooks = [h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT]
         self.assertEqual([h["events"] for h in hooks], [list(EXPANDED_EVENTS)])
+
+    def test_a_hook_without_push_is_replaced_and_push_is_not_expanded(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.reconciler().run()
+        hook = next(h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT)
+        hook["events"].remove("push")
+        self.srv.requests.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.reconciler().run()
+        self.assertIn(("DELETE", f"/api/v1/repos/{REPO}/hooks/{hook['id']}"), self.writes())
+        hooks = [h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT]
+        self.assertEqual(len(hooks), 1)
+        self.assertEqual(hooks[0]["events"], list(EXPANDED_EVENTS))
+        self.assertEqual(hooks[0]["events"].count("push"), 1)
 
     def test_pagination_finds_every_label_and_hook(self):
         for i in range(5):

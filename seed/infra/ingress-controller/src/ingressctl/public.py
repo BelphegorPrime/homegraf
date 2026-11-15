@@ -8,6 +8,7 @@ from .errors import ManifestError
 
 ACME_CHALLENGE = "/.well-known/acme-challenge/"
 MANAGED_MARKER = "# managed by ingressctl"
+_ACME_METHOD = "-acme-"
 _COMMENT = f"{MANAGED_MARKER}: public paths only"
 _FIELDS = frozenset({"paths", "methods", "allow_cidrs"})
 _METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
@@ -44,13 +45,16 @@ def render_public_config(spec: PublicSpec) -> str:
     alternatives = [_path_regex(path) for path in sorted(spec.paths)]
     alternatives.append(_ACME_REGEX)
     uri_regex = "^(" + "|".join(alternatives) + ")$"
-    method_regex = "^(" + "|".join(sorted(spec.methods)) + ")$"
+    method_regex = "^(" + "|".join(sorted(spec.methods) + [_ACME_METHOD]) + ")$"
     acme_regex = "^" + _ACME_REGEX + "$"
+    # nginx lehnt ein `if` in einem `if` ab ("if directive is not allowed here"), daher
+    # setzt die Methode eine Variable, die der ACME-Pfad vorher umschreibt.
     lines = [
         _COMMENT,
         f'if ($uri !~ "{uri_regex}") {{ return 404; }}',
-        # Das ACME-Pfadpräfix bleibt von der Methodenprüfung ausgenommen.
-        f'if ($uri !~ "{acme_regex}") {{ if ($request_method !~ "{method_regex}") {{ return 405; }} }}',
+        "set $ingressctl_method $request_method;",
+        f'if ($uri ~ "{acme_regex}") {{ set $ingressctl_method "{_ACME_METHOD}"; }}',
+        f'if ($ingressctl_method !~ "{method_regex}") {{ return 405; }}',
     ]
     if spec.allow_cidrs:
         lines.extend(f"allow {cidr};" for cidr in sorted(spec.allow_cidrs))

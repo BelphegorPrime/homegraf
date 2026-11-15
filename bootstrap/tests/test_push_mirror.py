@@ -4,7 +4,7 @@ import io
 import os
 import unittest
 from unittest import mock
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from hgboot.push_mirror import STEP, PushMirror
 from hgboot.steps import StepError
@@ -27,14 +27,36 @@ class FakeMirror:
     """A real loopback service for the Forgejo mirror API and the GitHub branch API it drives."""
 
     def __init__(self, forgejo_branches, github_branches=None, mirrors=None, sync_error=None,
-                 sync_branches=True, sync_main_sha=None, github_status=200, compare_status="ahead"):
+                 sync_branches=True, sync_main_sha=None, github_status=200, history=None):
         self.forgejo_branches = dict(forgejo_branches)
         self.github_branches = dict(github_branches or {})
         self.mirrors = [dict(m) for m in (mirrors or [])]
         self.sync_error, self.sync_branches, self.sync_main_sha = sync_error, sync_branches, sync_main_sha
         self.github_status = github_status
-        self.compare_status = compare_status
+        self.history = {sha: list(parents) for sha, parents in (history or {}).items()}
         self.syncs = 0
+
+    def _reachable(self, sha):
+        seen, stack = set(), [sha]
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            stack.extend(self.history.get(current, ()))
+        return seen
+
+    def _compare(self, branches, base, head):
+        known = set().union(*(self._reachable(sha) for sha in branches.values())) if branches else set()
+        if base not in known or head not in known:
+            return None
+        if base == head:
+            return "identical"
+        if base in self._reachable(head):
+            return "ahead"
+        if head in self._reachable(base):
+            return "behind"
+        return "diverged"
 
     def __call__(self, req):
         parts = urlsplit(req.path)
@@ -44,12 +66,23 @@ class FakeMirror:
                 return 401, {"message": "no Forgejo token"}
             return 200, [{"name": n, "commit": {"id": s}}
                          for n, s in page(list(self.forgejo_branches.items()), query, "limit")]
+        if parts.path.startswith(f"/api/v1/repos/{FORGEJO_REPO}/compare/") and req.method == "GET":
+            if req.headers.get("authorization") != f"token {FORGEJO_TOKEN}":
+                return 401, {"message": "no Forgejo token"}
+            base, _, head = unquote(parts.path.rsplit("/", 1)[1]).partition("...")
+            status = self._compare(self.forgejo_branches, base, head)
+            if status is None:
+                return 404, {"message": "The target couldn't be found."}
+            commits = self._reachable(head) - self._reachable(base)
+            return 200, {"total_commits": len(commits), "commits": [], "files": []}
         if parts.path.startswith(f"/repos/{GITHUB_REPO}/compare/") and req.method == "GET":
             if req.headers.get("authorization") != f"Bearer {GITHUB_TOKEN}":
                 return 401, {"message": "Bad credentials test-github-token https://user:test-github-token@github.com/x"}
-            if self.compare_status is None:
+            base, _, head = unquote(parts.path.rsplit("/", 1)[1]).partition("...")
+            status = self._compare(self.github_branches, base, head)
+            if status is None:
                 return 404, {"message": "Not Found"}
-            return 200, {"status": self.compare_status}
+            return 200, {"status": status}
         if parts.path == f"/repos/{GITHUB_REPO}/branches":
             if req.headers.get("authorization") != f"Bearer {GITHUB_TOKEN}":
                 return 401, {"message": "Bad credentials test-github-token https://user:test-github-token@github.com/x"}
@@ -146,23 +179,33 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(fake.github_branches, fake.forgejo_branches)
 
     def test_a_diverged_shared_branch_blocks_every_write(self):
-        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40}, compare_status="diverged")
+        common, forgejo, github = "3" * 40, "1" * 40, "2" * 40
+        fake = FakeMirror({"main": forgejo, "archive": github}, {"main": github, "archive": github},
+                          history={forgejo: [common], github: [common]})
         with self.assertRaisesRegex(StepError, "main"):
             self.mirror(fake).sync()
         self.assertEqual(self.writes(), [])
         self.assertEqual(len(self.srv.calls("GET", f"/repos/{GITHUB_REPO}/compare/")), 1)
+        self.assertEqual(len(self.srv.calls("GET", f"/api/v1/repos/{FORGEJO_REPO}/compare/")), 2)
 
     def test_github_being_ahead_of_a_shared_branch_blocks_every_write(self):
-        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40}, compare_status="behind")
+        forgejo, github = "1" * 40, "2" * 40
+        fake = FakeMirror({"main": forgejo}, {"main": github}, history={github: [forgejo]})
         with self.assertRaisesRegex(StepError, "main"):
             self.mirror(fake).sync()
         self.assertEqual(self.writes(), [])
+        self.assertEqual(self.srv.calls("GET", f"/api/v1/repos/{FORGEJO_REPO}/compare/"), [])
 
-    def test_a_lagging_shared_branch_passes_the_guard_and_is_synced(self):
-        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40}, compare_status="ahead")
+    def test_a_lagging_shared_branch_passes_when_github_does_not_know_the_commit(self):
+        github, forgejo = "2" * 40, "1" * 40
+        fake = FakeMirror({"main": forgejo}, {"main": github}, history={forgejo: [github]})
         result = self.mirror(fake).sync()
         compares = self.srv.calls("GET", f"/repos/{GITHUB_REPO}/compare/")
-        self.assertEqual(urlsplit(compares[0].path).path, f"/repos/{GITHUB_REPO}/compare/{'2' * 40}...{'1' * 40}")
+        self.assertEqual(urlsplit(compares[0].path).path, f"/repos/{GITHUB_REPO}/compare/{github}...{forgejo}")
+        forgejo_compares = self.srv.calls("GET", f"/api/v1/repos/{FORGEJO_REPO}/compare/")
+        self.assertEqual([urlsplit(r.path).path for r in forgejo_compares],
+                         [f"/api/v1/repos/{FORGEJO_REPO}/compare/{github}...{forgejo}",
+                          f"/api/v1/repos/{FORGEJO_REPO}/compare/{forgejo}...{github}"])
         self.assertEqual(fake.github_branches, fake.forgejo_branches)
         self.assertEqual(fake.syncs, 1)
         self.assertTrue(result.synced)
@@ -258,12 +301,13 @@ class MirrorTest(unittest.TestCase):
         self.assertNotIn(GITHUB_TOKEN, message)
         self.assertEqual(self.writes(), [])
 
-    def test_a_failed_comparison_is_explicit_and_redacted(self):
-        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40}, compare_status=None)
+    def test_a_commit_forgejo_does_not_know_is_an_explicit_and_redacted_failure(self):
+        fake = FakeMirror({"main": "1" * 40}, {"main": "2" * 40})
         with self.assertRaises(StepError) as caught:
             self.mirror(fake).sync()
         message = str(caught.exception)
-        self.assertIn("404", message)
+        self.assertIn("Forgejo does not know", message)
+        self.assertIn("main", message)
         self.assertNotIn(GITHUB_TOKEN, message)
         self.assertEqual(self.writes(), [])
 

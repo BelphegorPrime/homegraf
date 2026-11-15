@@ -9,9 +9,10 @@ source (syncing would rewrite history). A missing token, divergence and an API
 error are failures, not reasons to guess.
 
 A push mirror is asynchronous, so GitHub lagging behind on a shared branch is
-normal: GitHub's compare endpoint decides, and only a branch GitHub is ahead of
-or has diverged from refuses. A lagging branch is brought up to date by the sync
-that follows.
+normal: GitHub's compare endpoint decides, and when GitHub does not know the
+newer commit yet Forgejo's compare confirms the older commit is an ancestor.
+Only a branch GitHub is ahead of or has diverged from refuses. A lagging branch
+is brought up to date by the sync that follows.
 
 A drifted mirror is repaired by deleting it and creating it again, because
 Forgejo's API has no way to update a push mirror in place.
@@ -185,7 +186,12 @@ class PushMirror:
             if name not in target or source[name] == target[name]:
                 continue
             status = self._compare(target[name], source[name])
-            if status in ("identical", "ahead"):
+            if status is None:
+                if self._forgejo_lagging(target[name], source[name], name):
+                    lagging.add(name)
+                else:
+                    diverged.append(name)
+            elif status in ("identical", "ahead"):
                 lagging.add(name)
             else:
                 diverged.append(name)
@@ -194,9 +200,12 @@ class PushMirror:
                             "refusing to force-push history")
         return source, target, frozenset(lagging)
 
-    def _compare(self, base: str, head: str) -> str:
+    def _compare(self, base: str, head: str) -> str | None:
+        """GitHub's relation of head to base, or None when GitHub does not know the newer commit yet."""
         r = self.http("GET", f"{self.github_api}/repos/{self.github_repo}/compare/"
                               f"{quote(base, safe='')}...{quote(head, safe='')}", headers=self._github_headers())
+        if r.status == 404:
+            return None
         if not r.ok:
             raise StepError(f"GitHub answered {r.status} when comparing commits of {self.github_repo}: "
                             f"{self._clean(r.text)}")
@@ -205,6 +214,31 @@ class PushMirror:
         if status not in ("identical", "ahead", "behind", "diverged"):
             raise StepError(f"GitHub returned no comparison status for {self.github_repo}")
         return status
+
+    def _forgejo_compare(self, base: str, head: str) -> int | None:
+        """Commits Forgejo has in head but not base, or None when it does not know a commit."""
+        r = self.http("GET", f"{self.forgejo_api}/repos/{self.forgejo_repo}/compare/"
+                              f"{quote(base, safe='')}...{quote(head, safe='')}", headers=self._forgejo_headers())
+        if r.status == 404:
+            return None
+        if not r.ok:
+            raise StepError(f"Forgejo answered {r.status} when comparing commits of {self.forgejo_repo}: "
+                            f"{self._clean(r.text)}")
+        data = r.json()
+        total = data.get("total_commits") if isinstance(data, dict) else None
+        if not isinstance(total, int) or total < 0:
+            raise StepError(f"Forgejo returned no comparison for {self.forgejo_repo}")
+        return total
+
+    def _forgejo_lagging(self, base: str, head: str, branch: str) -> bool:
+        """True when GitHub's commit is an ancestor of the newer Forgejo commit on this branch."""
+        forward = self._forgejo_compare(base, head)
+        if forward is None:
+            raise StepError(f"Forgejo does not know the GitHub commit of {branch}: refusing to mirror it")
+        reverse = self._forgejo_compare(head, base)
+        if reverse is None:
+            raise StepError(f"Forgejo does not know a commit of {branch}: refusing to mirror it")
+        return forward > 0 and reverse == 0
 
     def _branches(self, api: str, repo: str, page_param: str, headers: dict, service: str) -> dict[str, str]:
         branches: dict[str, str] = {}

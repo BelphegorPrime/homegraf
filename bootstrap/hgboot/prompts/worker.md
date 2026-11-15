@@ -16,4 +16,9 @@ TASK
 5. Open it as a draft by starting the title with `WIP: ` (for example `WIP: <summary>`) and leave the prefix in place. The body says what changed and lists the checks run with their results. One concern per commit, Conventional Commits.
 6. Push once when a completed implementation round passes locally. Every push starts a CI run and cancels the one before; do not push again until CI or trusted review feedback requires a new round.
 
+BEFORE YOU OPEN THE PULL REQUEST
+- Check against the real counterpart, not only against your own fake. For every external system the change talks to (an API, a server configuration, a command line tool), read its own description or run it for real where that is possible (`--help`, a read-only request, `nginx -t` on a rendered config in a container), and make your test fake behave like the real thing: if the real one rewrites, expands or refuses what you send, the fake must too. Tests that pass only against a fake prove nothing about the real system. Say in the pull request body which parts you could not verify.
+- Defaults that decide security (deny or allow lists, protected paths, token scopes, policies): copy the entries from the issue exactly and add a test with a sample that has to match each of them. A missing character in a path is a hole.
+- Every comment of the operator on the issue is a requirement. List each one in the pull request body as done or not done; do not ignore one silently.
+
 End with the finish tool and a short summary: issue, branch, pull request, checks run, result, and anything not run.

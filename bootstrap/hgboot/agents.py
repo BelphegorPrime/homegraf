@@ -4,8 +4,8 @@ OpenHands takes the agent profile as an id, not a name (`POST /api/conversations
 the ids that `GET /api/agent-profiles` lists. The agents step does not create the profiles yet (#25), so nothing calls it: setup.sh and the
 wizard template leave `LABEL_ROUTES` empty and direct mode off until the ids exist.
 
-Four routes start on a label. `ai:changes` starts on a pull request label, and the keys `ci:failure`, `ci:success` and `epic:done` are
-synthetic: they start on the CI and epic events, so they need no repository label.
+Four routes start on a label. `ai:changes` starts on a pull request label, and the keys `ci:failure`, `ci:success`, `epic:done` and
+`pr:conflict` are synthetic: they start on the CI, epic and branch-conflict events, so they need no repository label.
 """
 from __future__ import annotations
 import json
@@ -20,6 +20,7 @@ LABELS = (
     ("ci:failure", "worker", "worker", 120, "ci_failure"),
     ("ci:success", "reviewer", "reviewer", 60, "ci_success"),
     ("epic:done", "reviewer", "reviewer", 60, "epic_done"),
+    ("pr:conflict", "worker", "worker", 120, "conflict"),
 )
 
 

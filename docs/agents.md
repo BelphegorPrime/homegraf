@@ -88,9 +88,27 @@ paths.
 The merge uses `MERGE_METHOD` (default `merge`), is bound to the head commit that was checked, deletes the branch and closes the issue. It
 needs `FORGEJO_URL` and `FORGEJO_TOKEN`; in direct mode those come from `AGENT_SECRETS`.
 
+### Keeping pull requests current
+
+After a push to the default branch has been quiet for `BRANCH_UPDATE_DELAY_SECONDS` (default 60), ForgeHands brings open agent pull requests
+whose branch fell behind the default branch up to date through Forgejo (`POST /pulls/<n>/update?style=rebase`, no agent involved); CI and the
+review then run on the new commit. This is `UPDATE_BRANCHES` (default on). The webhook must send `push`; ForgeHands only looks at pushes to
+the default branch, so its own updates and the agents' pushes cause nothing.
+
+A pull request is left alone when it has an approval or an OK review for its current commit (a rebase would throw that away), when it carries
+`ai:blocked`, or while an agent runs on its issue; approved and reviewed pull requests merge as they are. If the update answers 409, the
+branch conflicts: the `pr:conflict` route (`"on": "conflict"`) starts a conflict round of a worker, once per tip of the default branch and
+counted against `MAX_ROUNDS`. The worker rebases onto the default branch, resolves every conflict so that the purpose of the pull request
+stays and what the default branch brought in is kept, runs the checks, pushes once with `--force-with-lease` and comments what it resolved.
+This is the only round in which a rebase and a force push are allowed.
+
+Forgejo reports `mergeable: false` for any pull request whose title starts with `WIP:`, even without a conflict, so ForgeHands does not read
+that field; it uses the update call as the test. Without the `pr:conflict` route, or with the rounds used up, the pull request gets
+`ai:blocked` and a comment.
+
 ### Webhooks and events
 
-The repository needs a Forgejo webhook with the events `issues`, `pull_request_label`, `action_run_failure` and `action_run_success`.
+The repository needs a Forgejo webhook with the events `issues`, `pull_request_label`, `action_run_failure`, `action_run_success` and `push`.
 Forgejo accepts the two `action_run_*` events only when the hook is created: a PATCH does not add them, so delete the hook and create it
 again. Forgejo sends one event per finished workflow, which is why the review waits for the combined status.
 

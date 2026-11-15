@@ -35,9 +35,10 @@ cp -a "$here/seed" "$repo"
 cd "$repo"
 
 # The tools need PyYAML (the homegraf image has python3-yaml); ingressctl's dependencies bring it, with pytest for the tests.
+# pip against PyPI is flaky from a loaded runner, so retry; pytest-xdist runs the tests in parallel (installed here, not in the seed).
 step "python $(python3 --version | cut -d' ' -f2) and the dependencies"
 python3 -m venv "$work/venv"
-"$work/venv/bin/pip" install -q -e 'infra/ingress-controller[test]'
+"$work/venv/bin/pip" install -q --retries 5 --timeout 30 -e 'infra/ingress-controller[test]' pytest-xdist
 py=$work/venv/bin/python
 
 step "placeholders"
@@ -134,7 +135,7 @@ assert not [w for w in g['warnings'] if 'dangling' in w], g['warnings']
 print('graph:', len(g['nodes']), 'nodes, no hardware layer, platform and sample app present')"
 
 step "the tests of the tools"
-"$work/venv/bin/pytest" -q -p no:cacheprovider infra/graph infra/homelab infra/infisical infra/stackctl infra/ingress-controller/tests
+"$work/venv/bin/pytest" -q -n auto -p no:cacheprovider infra/graph infra/homelab infra/infisical infra/stackctl infra/ingress-controller/tests
 
 summary
 echo

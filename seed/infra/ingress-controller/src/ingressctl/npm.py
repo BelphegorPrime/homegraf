@@ -16,8 +16,9 @@ Vertrag (siehe docs/discovery.md, Quelle: backend/ des Tags v2.16.0):
   domain_names.join(", "); die LE-Konto-Mail ist die des API-Users.
 - POST /api/nginx/certificates/{id}/renew läuft mit --force-renewal und nur für letsencrypt.
 - POST /api/nginx/certificates/test-http {domains} -> {domain: "ok"|"<Grund>"} prüft HTTP-01, ohne etwas zu ändern.
-- GET auf ein LE-Zertifikat liefert expires_on und meta.letsencrypt_certificate (cn, issuer, dates),
-  aber kein PEM in meta.certificate.
+- LE-Metadaten: die Create-Antwort trägt meta.letsencrypt_certificate (cn, issuer, dates) aus dem certbot-Lauf;
+  gespeichert wird davon nur expires_on. GET und die Renew-Antwort liefern daher expires_on ohne
+  letsencrypt_certificate, und in keinem Fall ein PEM in meta.certificate.
 """
 from __future__ import annotations
 

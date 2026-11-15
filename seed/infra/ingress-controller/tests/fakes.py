@@ -106,14 +106,17 @@ class FakeNpm:
                 return next(iter({d.lower() for d in h["domain_names"]} & {d.lower() for d in domains}))
         return None
 
-    def _sign_le(self, cid: int) -> None:
+    def _sign_le(self, cid: int) -> dict:
+        """Signiert ein Leaf und speichert nur expires_on; das certbot-Ergebnis ist in NPM reine Antwortdaten."""
         cert = self.certs[cid]
         key = ec.generate_private_key(ec.SECP256R1())
         domains = cert["domain_names"]
         self.cert_files[cid] = self.le_ca.sign(key.public_key(), list(domains), 90)
-        cert["expires_on"] = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
-        cert["meta"]["letsencrypt_certificate"] = {"cn": domains[0] if domains else "",
-                                                   "issuer": self.le_ca.cn}
+        now = dt.datetime.now(dt.timezone.utc)
+        expires = now + dt.timedelta(days=90)
+        cert["expires_on"] = expires.strftime("%Y-%m-%d %H:%M:%S")
+        return {"cn": domains[0] if domains else "", "issuer": self.le_ca.cn,
+                "dates": {"from": int(now.timestamp()), "to": int(expires.timestamp())}}
 
     def _create_le(self, data: dict):
         meta = data.get("meta") or {}
@@ -135,10 +138,12 @@ class FakeNpm:
                            "nice_name": ", ".join(domains),  # NPM überschreibt jeden gesendeten Namen
                            "domain_names": domains, "expires_on": None,
                            "meta": {"dns_challenge": bool(meta.get("dns_challenge"))}}
-        self._sign_le(cid)
+        cert_info = self._sign_le(cid)
         self.le_issued.append(list(domains))
         self._reload()  # NPM lädt nginx nach der LE-Ausstellung neu
-        return 201, self.certs[cid]
+        row = self.certs[cid]
+        # NPM hängt das certbot-Ergebnis nur an die Create-Antwort (und den Audit-Log), nicht an die Zeile.
+        return 201, {**row, "meta": {**row["meta"], "letsencrypt_certificate": cert_info}}
 
     def handle(self, method, path, query, headers, body):
         if not self.reachable:

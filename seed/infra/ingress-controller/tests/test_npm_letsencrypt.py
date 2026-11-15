@@ -43,13 +43,12 @@ def test_create_le_http01_overwrites_nice_name_and_hides_key_material():
     assert fake.le_requests[-1]["meta"] == {"dns_challenge": False, "key_type": "ecdsa"}
     assert fake.le_issued == [["a.example.org", "b.example.org"]]
     assert out["id"] in fake.cert_files  # nach dem Reload kann nginx das Zertifikat präsentieren
-    assert fake.certs[out["id"]]["meta"] == {
-        "dns_challenge": False,
-        "letsencrypt_certificate": {"cn": "a.example.org", "issuer": "Fake LE R3"},
-    }
+    # Die Zeile speichert nur expires_on; das certbot-Ergebnis hängt NPM an die Create-Antwort.
+    assert fake.certs[out["id"]]["meta"] == {"dns_challenge": False}
+    assert "letsencrypt_certificate" not in fake.certs[out["id"]]["meta"]
     assert "certificate" not in fake.certs[out["id"]]["meta"]
     listed = npm.list_certificates()
-    assert [c["le_issuer"] for c in listed] == ["Fake LE R3"]
+    assert [c["le_issuer"] for c in listed] == [None]
     assert "PRIVATE KEY" not in repr(listed)
 
 
@@ -121,9 +120,24 @@ def test_renew_le_reissues_and_reloads():
     npm = client(fake)
     out = npm.create_letsencrypt_certificate(["a.example.org"], dns_challenge=False)
     first = fake.cert_files[out["id"]]
+    first_expiry = fake.certs[out["id"]]["expires_on"]
     renewed = npm.renew_certificate(out["id"])
     assert fake.cert_files[out["id"]] != first
-    assert renewed["expires_on"] and renewed["le_issuer"] == "Fake LE R3"
+    assert renewed["expires_on"] and fake.certs[out["id"]]["expires_on"] == renewed["expires_on"]
+    assert renewed["expires_on"] >= first_expiry
+    assert renewed["le_issuer"] is None  # Renew liefert nur expires_on, kein certbot-Ergebnis
+    assert "letsencrypt_certificate" not in fake.certs[out["id"]]["meta"]
+
+
+def test_get_sanitizes_le_without_stored_metadata():
+    fake = FakeNpm()
+    npm = client(fake)
+    out = npm.create_letsencrypt_certificate(["a.example.org"], dns_challenge=True,
+                                             dns_provider="cloudflare", dns_credentials="token=s3cret")
+    stored = npm.get_certificate(out["id"])
+    assert stored["provider"] == "letsencrypt" and stored["expires_on"]
+    assert stored["le_issuer"] is None
+    assert "s3cret" not in repr(stored) and "dns_provider_credentials" not in stored
 
 
 def test_renew_rejects_custom_certificate():

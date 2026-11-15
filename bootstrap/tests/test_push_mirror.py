@@ -27,13 +27,15 @@ class FakeMirror:
     """A real loopback service for the Forgejo mirror API and the GitHub branch API it drives."""
 
     def __init__(self, forgejo_branches, github_branches=None, mirrors=None, sync_error=None,
-                 sync_branches=True, sync_main_sha=None, github_status=200, history=None):
+                 sync_branches=True, sync_main_sha=None, github_status=200, history=None,
+                 default_branch="main"):
         self.forgejo_branches = dict(forgejo_branches)
         self.github_branches = dict(github_branches or {})
         self.mirrors = [dict(m) for m in (mirrors or [])]
         self.sync_error, self.sync_branches, self.sync_main_sha = sync_error, sync_branches, sync_main_sha
         self.github_status = github_status
         self.history = {sha: list(parents) for sha, parents in (history or {}).items()}
+        self.default_branch = default_branch
         self.syncs = 0
 
     def _reachable(self, sha):
@@ -61,6 +63,10 @@ class FakeMirror:
     def __call__(self, req):
         parts = urlsplit(req.path)
         query = parse_qs(parts.query)
+        if parts.path == f"/api/v1/repos/{FORGEJO_REPO}" and req.method == "GET":
+            if req.headers.get("authorization") != f"token {FORGEJO_TOKEN}":
+                return 401, {"message": "no Forgejo token"}
+            return 200, {"default_branch": self.default_branch}
         if parts.path == f"/api/v1/repos/{FORGEJO_REPO}/branches":
             if req.headers.get("authorization") != f"token {FORGEJO_TOKEN}":
                 return 401, {"message": "no Forgejo token"}
@@ -109,7 +115,7 @@ class FakeMirror:
             if self.sync_branches:
                 self.github_branches = dict(self.forgejo_branches)
             if self.sync_main_sha:
-                self.github_branches["main"] = self.sync_main_sha
+                self.github_branches[self.default_branch] = self.sync_main_sha
             for mirror in self.mirrors:
                 mirror["last_update"] = UPDATED
             return 200, {}
@@ -151,7 +157,7 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(fake.github_branches, fake.forgejo_branches)
         self.assertEqual((result.created, result.repaired, result.synced), (True, False, True))
         self.assertEqual(result.branches, ("main", "release"))
-        self.assertEqual(result.main_sha, "1" * 40)
+        self.assertEqual((result.default_branch, result.default_sha), ("main", "1" * 40))
         creates = [r for r in self.writes() if r.path.endswith("/push_mirrors")]
         self.assertEqual(len(creates), 1)
         body = creates[0].json
@@ -162,6 +168,26 @@ class MirrorTest(unittest.TestCase):
         self.assertNotIn(GITHUB_TOKEN, out.getvalue())
         self.assertIn("synced", out.getvalue())
         self.assertEqual(fake.syncs, 1)
+
+    def test_a_non_main_default_branch_is_read_from_forgejo_and_verified(self):
+        fake = FakeMirror({"trunk": "1" * 40}, {"trunk": "1" * 40}, default_branch="trunk")
+        mirror = self.mirror(fake)
+        fake.mirrors = [self.correct_mirror()]
+        result = mirror.sync()
+        metadata = [r for r in self.srv.requests
+                    if urlsplit(r.path).path == f"/api/v1/repos/{FORGEJO_REPO}"]
+        self.assertEqual(len(metadata), 1)
+        self.assertEqual(metadata[0].headers["authorization"], f"token {FORGEJO_TOKEN}")
+        self.assertEqual((result.default_branch, result.default_sha), ("trunk", "1" * 40))
+        self.assertEqual(fake.syncs, 0)
+
+    def test_a_sync_that_leaves_a_different_default_branch_sha_is_a_failure(self):
+        fake = FakeMirror({"trunk": "1" * 40}, {"trunk": "1" * 40}, default_branch="trunk",
+                          sync_main_sha="9" * 40)
+        mirror = self.mirror(fake)
+        fake.mirrors = [{**self.correct_mirror(), "last_update": None}]
+        with self.assertRaisesRegex(StepError, "trunk differs"):
+            mirror.sync()
 
     def test_every_github_branch_page_is_compared_and_an_extra_branch_blocks_all_writes(self):
         forgejo = {"main": "1" * 40, **{f"feature-{i:03d}": f"{i:040d}" for i in range(204)}}
@@ -231,7 +257,7 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(self.writes(), [])
         self.assertEqual(fake.syncs, 0)
         self.assertEqual(second.branches, ("main",))
-        self.assertEqual(second.main_sha, "1" * 40)
+        self.assertEqual((second.default_branch, second.default_sha), ("main", "1" * 40))
 
     def test_a_mirror_never_synced_with_the_epoch_is_synced(self):
         fake = FakeMirror({"main": "1" * 40}, {"main": "1" * 40})

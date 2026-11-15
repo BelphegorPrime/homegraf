@@ -51,7 +51,8 @@ class MirrorResult:
     repaired: bool
     synced: bool
     branches: tuple[str, ...]
-    main_sha: str
+    default_branch: str
+    default_sha: str
 
 
 class PushMirror:
@@ -80,6 +81,7 @@ class PushMirror:
     def sync(self) -> MirrorResult:
         """Guard, reconcile the mirror only on drift, sync a new or lagging mirror, then verify it."""
         source, target, lagging = self._guard()
+        branch = self._default_branch()
         mirrors = [m for m in self._mirrors() if self._same_remote(m.get("remote_address"))]
         if len(mirrors) > 1:
             raise StepError(f"several Forgejo push mirrors point at {self.github_repo}: refusing to choose one")
@@ -95,10 +97,10 @@ class PushMirror:
             self._sync_now(mirror)
             synced = True
             source, target = self._read()
-        self._verify(source, target)
+        self._verify(source, target, branch)
         log(STEP, f"{self.github_repo}: {'created' if created else 'repaired' if repaired else 'mirror already converged'}"
-                  f"{', synced' if synced else ''} ({len(source)} branches, main {source['main'][:8]})")
-        return MirrorResult(created, repaired, synced, tuple(sorted(source)), source["main"])
+                  f"{', synced' if synced else ''} ({len(source)} branches, {branch} {source[branch][:8]})")
+        return MirrorResult(created, repaired, synced, tuple(sorted(source)), branch, source[branch])
 
     # -- Forgejo side -------------------------------------------------------------------------------------------------
     def _call(self, method: str, url: str, **kwargs):
@@ -107,6 +109,17 @@ class PushMirror:
 
     def _forgejo_headers(self) -> dict:
         return {"Authorization": f"token {self.forgejo_token}"}
+
+    def _default_branch(self) -> str:
+        r = self._call("GET", f"{self.forgejo_api}/repos/{self.forgejo_repo}", headers=self._forgejo_headers())
+        if not r.ok:
+            raise StepError(f"Forgejo answered {r.status} when reading {self.forgejo_repo}: {self._clean(r.text)}")
+        data = r.json()
+        branch = data.get("default_branch") if isinstance(data, dict) else None
+        if not isinstance(branch, str) or not branch:
+            raise StepError(f"Forgejo returned no default branch for {self.forgejo_repo}: "
+                            "cannot verify the GitHub push mirror")
+        return branch
 
     def _mirrors(self) -> list[dict]:
         r = self._call("GET", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors", headers=self._forgejo_headers())
@@ -267,7 +280,8 @@ class PushMirror:
         raise StepError(f"{service} returned more than {MAX_PAGES * PER_PAGE} branches for {repo}: "
                         "refusing to compare a truncated list")
 
-    def _verify(self, source: dict[str, str], target: dict[str, str]) -> None:
+    def _verify(self, source: dict[str, str], target: dict[str, str], branch: str | None = None) -> None:
+        branch = branch or self._default_branch()
         missing = sorted(set(source) - set(target))
         extra = sorted(set(target) - set(source))
         if missing or extra:
@@ -277,11 +291,11 @@ class PushMirror:
             if extra:
                 details.append(f"unexpected {', '.join(extra)}")
             raise StepError(f"after the sync GitHub branches differ from {self.forgejo_repo}: {'; '.join(details)}")
-        if "main" not in source:
-            raise StepError(f"{self.forgejo_repo} has no main branch: cannot verify the GitHub push mirror")
-        if source["main"] != target["main"]:
-            raise StepError(f"after the sync main differs: {self.forgejo_repo} {source['main'][:8]}, "
-                            f"GitHub {target['main'][:8]}")
+        if branch not in source:
+            raise StepError(f"{self.forgejo_repo} has no {branch} branch: cannot verify the GitHub push mirror")
+        if source[branch] != target[branch]:
+            raise StepError(f"after the sync {branch} differs: {self.forgejo_repo} {source[branch][:8]}, "
+                            f"GitHub {target[branch][:8]}")
         diverged = sorted(name for name in source if source[name] != target[name])
         if diverged:
             raise StepError(f"after the sync GitHub commits differ from {self.forgejo_repo} on: {', '.join(diverged)}")

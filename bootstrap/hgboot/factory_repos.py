@@ -188,7 +188,7 @@ class RepositoryReconciler:
         info = self._json(response, f"{repository}: reading the repository")
         if not isinstance(info, dict):
             raise StepError(f"{repository}: Forgejo did not answer with a repository object")
-        if info.get("mirror") or info.get("original_url"):
+        if info.get("mirror"):
             raise StepError(f"{repository}: a pull mirror is read-only; point the factory at a writable primary repository")
         return info
 
@@ -235,7 +235,7 @@ class RepositoryReconciler:
             return False
         if hook.get("active") is not True:
             return False
-        if set(hook.get("events") or []) != set(AGENT_EVENTS):
+        if not set(AGENT_EVENTS) <= set(hook.get("events") or []):
             return False
         if not _same_url(config.get("url"), self.endpoint):
             return False

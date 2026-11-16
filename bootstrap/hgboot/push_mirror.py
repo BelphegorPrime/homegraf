@@ -178,6 +178,11 @@ class PushMirror:
         return when.timestamp() <= 0
 
     def _sync_now(self, mirror: dict) -> None:
+        """Trigger a sync and wait for it.
+
+        Forgejo's `POST /push_mirrors-sync` starts **every** push mirror of the repository, not only the
+        one to this GitHub repository; any other push mirror of the repository is synced as well.
+        """
         before = mirror.get("last_update")
         r = self._call("POST", f"{self.forgejo_api}/repos/{self.forgejo_repo}/push_mirrors-sync", headers=self._forgejo_headers())
         if not r.ok:

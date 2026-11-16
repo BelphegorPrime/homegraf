@@ -137,7 +137,9 @@ assert not [w for w in g['warnings'] if 'dangling' in w], g['warnings']
 print('graph:', len(g['nodes']), 'nodes, no hardware layer, platform and sample app present')"
 
 step "the tests of the tools"
-"$work/venv/bin/pytest" -q -n auto -p no:cacheprovider infra/graph infra/homelab infra/infisical infra/stackctl infra/ingress-controller/tests
+# -rs lists skips: the nginx check skips itself when neither nginx nor a Docker daemon is usable, and that skip hid
+# a failing config on the Forgejo runner (see .forgejo/workflows/ci.yaml).
+"$work/venv/bin/pytest" -q -rs -n auto -p no:cacheprovider infra/graph infra/homelab infra/infisical infra/stackctl infra/ingress-controller/tests
 
 summary
 echo

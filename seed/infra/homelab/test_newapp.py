@@ -90,6 +90,8 @@ def ingressctl_repo(tmp_path, monkeypatch):
         "npm_instances:\n  main: {server: proxy-1, api_url: 'http://npm.test/api', tls_address: 10.0.0.30, tls_port: 443}\n"
         "issuers:\n  homelab-private-ca: {type: infisical, api_url: 'http://infisical.test', project_id: p, profile_id: f, application_id: a,\n"
         "    max_validity_days: 90, ca_bundle: ca.pem, allowed_domains: ['*.lab.example']}\n"
+        "  letsencrypt: {type: letsencrypt, email: 'ops@lab.example', allowed_domains: ['*.lab.example'],\n"
+        "    dns_challenge: true, dns_provider: cloudflare, propagation_seconds: 60}\n"
         "controller: {default_npm_instance: main, allowed_repos: [owner/infrastructure]}\n")
     monkeypatch.setattr(newapp, "ROOT", tmp_path)
     monkeypatch.setattr(newapp.ops, "ROOT", tmp_path)
@@ -129,6 +131,9 @@ def test_public_paths_land_on_the_app_service_and_ingressctl_accepts_them(ingres
     newapp.write_files(app)
     doc = yaml.safe_load((ingressctl_repo / "stacks/demo/ingress.yaml").read_text())
     assert doc["services"][0]["proxy"]["public"] == public
+    assert doc["services"][0]["certificate"] == {"issuer_ref": "letsencrypt", "renew_before_days": 30,
+                                                 "dns_challenge": True}
+    assert doc["services"][1]["certificate"]["issuer_ref"] == "homelab-private-ca"
     assert "public" not in doc["services"][1]["proxy"]
     specs = parse_manifest(ingressctl_repo, ingressctl_repo / "stacks/demo/ingress.yaml", load_inventory(ingressctl_repo))
     assert [s.public for s in specs] == [specs[0].public, None]

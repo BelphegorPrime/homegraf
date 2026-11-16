@@ -495,9 +495,15 @@ def _proxy_service(app: "App", service_id: str, domain: str, port: int | None, w
              "websockets": websockets, "force_https": app.force_https}
     if public is not None:
         proxy["public"] = public
+    certificate = {"issuer_ref": "homelab-private-ca", "validity_days": 90, "renew_before_days": 30}
+    if public is not None:
+        # ingressctl accepts proxy.public only with a publicly trusted certificate; Let's Encrypt
+        # sets the lifetime itself, and allow_cidrs rules out its HTTP-01 challenge.
+        certificate = {"issuer_ref": "letsencrypt", "renew_before_days": 30}
+        if public.get("allow_cidrs"):
+            certificate["dns_challenge"] = True
     return {"id": service_id, "stack": app.id, "lifecycle": "present",
-            "proxy": proxy,
-            "certificate": {"issuer_ref": "homelab-private-ca", "validity_days": 90, "renew_before_days": 30},
+            "proxy": proxy, "certificate": certificate,
             "healthcheck": {"path": health_path, "accepted_statuses": statuses}}
 
 

@@ -1,0 +1,35 @@
+# CI on Forgejo. Jobs run in containers on the runner labelled `docker` and check the sources out with a
+# plain git fetch and the token Forgejo passes to the job, so no action from a marketplace is needed.
+# The image is a pinned digest: keep its tag and its digest together when you update it (Renovate does).
+name: ci
+on:
+  push:
+    branches: [{{default_branch}}]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: docker
+    timeout-minutes: 10
+    container:
+      image: python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
+    steps:
+      - name: git
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+      - name: checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q . && git config --global --add safe.directory "$PWD"
+          git -c http.extraheader="Authorization: token $TOKEN" fetch -q --no-tags "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
+          git checkout -q "${{ github.sha }}"
+      - name: install
+        run: |
+          python -m pip install -q --upgrade pip pytest
+          if [ -f requirements.txt ]; then python -m pip install -q -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then python -m pip install -q -e .; fi
+      - name: validate
+        # A new repository has no tests yet, and pytest exits 5 when it collects none.
+        run: |
+          {{validate_command}} || [ $? -eq 5 ]

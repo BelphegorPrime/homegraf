@@ -1,0 +1,27 @@
+# {{name}}
+
+{{description}}
+
+## Checks
+
+```sh
+{{validate_command}}
+```
+
+Run it before you open or update a pull request, and push only when it exits 0.
+
+## Conventions
+
+- **Commits:** [Conventional Commits](https://www.conventionalcommits.org) (`feat: ...`, `fix: ...`, `docs: ...`), one concern per commit.
+- **Language:** English in code, comments, docs and commit messages.
+- **Secrets:** never on a command line and never in a log; values travel in the environment or through stdin.
+- **Generic examples:** tests and docs use neutral names (`owner/repository`, `lab.example`), never a real host, address or token.
+- **Tests with the change:** a fix comes with a test that fails without it.
+- **Docs with the change:** the README says what the change does; documentation that no longer matches the code is a bug.
+
+## Branches and pull requests
+
+- `{{default_branch}}` is the default branch. Never push to it and never merge: a push to it deploys.
+- Name the branch `ai/issue-<n>`, with `<n>` the number of the issue.
+- One pull request per issue. Its title starts with `WIP: ` and it stays a draft until a human removes the prefix.
+- The body says what changed and why, and how you checked it; name the parts you could not verify.

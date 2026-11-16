@@ -5,6 +5,7 @@
   ./homelab.py new-app --app-id ID ... [--yes]   # agent mode: no prompts, dry run without --yes (--pr: pull request)
   ./homelab.py addons [--json]                   # building blocks for new-app --addon (postgres, redis, ...)
   ./homelab.py templates [--json]                # starting points for new-app --template (web servers, ready-made apps)
+  ./homelab.py repo-profiles [--json]            # the files a new repository starts with (python, node, generic)
   ./homelab.py remove-app --app-id ID [--yes]
   ./homelab.py hosts [--json]                    # hosts ingressctl manages, and whether each redirects HTTP to HTTPS
   ./homelab.py force-https DOMAIN on|off [--pr] [--yes]
@@ -37,6 +38,7 @@ import hostopts  # noqa: E402
 import komodo_api  # noqa: E402
 import newapp  # noqa: E402
 import removeapp  # noqa: E402
+import repoprofiles  # noqa: E402
 import secret  # noqa: E402
 import secrets_menu  # noqa: E402
 import stackops  # noqa: E402
@@ -158,6 +160,12 @@ def parse_args(argv=None) -> argparse.Namespace:
                        epilog="example: ./homelab.py templates --json")
     p.add_argument("--json", action="store_true", help="machine-readable: id, label, description, defaults and files")
 
+    p = sub.add_parser("repo-profiles", help="list the profiles a new repository starts with",
+                       description="A profile is a folder in infra/homelab/repo_profiles/: the files a new repository of "
+                                   "that kind starts with, and the command that validates it.",
+                       epilog="example: ./homelab.py repo-profiles --json")
+    p.add_argument("--json", action="store_true", help="machine-readable: name, description, validate_command, files")
+
     p = sub.add_parser("remove-app", help="remove an app (stack, files, routing, secrets)",
                        epilog="example: ./homelab.py remove-app --app-id whoami-test --yes")
     p.add_argument("--app-id", required=True)
@@ -255,6 +263,17 @@ def print_templates(as_json: bool) -> int:
     return 0
 
 
+def print_repo_profiles(as_json: bool) -> int:
+    found = repoprofiles.catalog()
+    if as_json:
+        import json
+        print(json.dumps([p.info() for p in found.values()], indent=2))
+    else:
+        for p in found.values():
+            print(f"{p.name:10} {p.description} (validates with: {p.validate_command}; {len(p.files)} files)")
+    return 0
+
+
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["secrets"]:  # passed through whole, including --help
@@ -269,6 +288,8 @@ def main(argv=None) -> int:
             return print_addons(args.json)
         if args.cmd == "templates":
             return print_templates(args.json)
+        if args.cmd == "repo-profiles":
+            return print_repo_profiles(args.json)
         if args.cmd == "stacks":
             import json
             rows = stackops.managed()

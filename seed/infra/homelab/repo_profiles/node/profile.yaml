@@ -1,0 +1,9 @@
+name: node
+description: "a Node.js project: npm ci, test and typecheck/lint when present, and a CI job on a pinned node image"
+validate_command: npm run test --if-present && npm run typecheck --if-present && npm run lint --if-present
+files:
+  - {source: agents.md.tmpl, target: AGENTS.md}
+  - {source: readme.md.tmpl, target: README.md}
+  - {source: contributing.md.tmpl, target: CONTRIBUTING.md}
+  - {source: gitignore.tmpl, target: .gitignore}
+  - {source: forgejo-ci.yaml.tmpl, target: .forgejo/workflows/ci.yaml}

@@ -1,0 +1,8 @@
+name: generic
+description: "a repository without code: AGENTS.md, README, CONTRIBUTING and a .gitignore, without CI"
+validate_command: git diff --check
+files:
+  - {source: agents.md.tmpl, target: AGENTS.md}
+  - {source: readme.md.tmpl, target: README.md}
+  - {source: contributing.md.tmpl, target: CONTRIBUTING.md}
+  - {source: gitignore.tmpl, target: .gitignore}

@@ -1,6 +1,8 @@
 # CI on Forgejo (the primary repository). Forgejo uses this folder instead of .github/workflows, so the GitHub
 # workflows stay as they are for the mirror: they build and publish the images on GitHub. This file only tests.
 # Jobs run in containers on the runner labelled `docker`; actions/checkout is replaced by a plain git fetch.
+# A failed app, bootstrap or seed job leaves the tail of its output as a comment on its pull request (issue #120):
+# Forgejo has no job log API, so the fix round of an agent would otherwise have to reproduce the failure to see it.
 name: ci
 on:
   push:
@@ -20,7 +22,7 @@ jobs:
     steps:
       - name: git
         working-directory: .
-        run: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates curl
       - name: checkout
         working-directory: .
         env:
@@ -34,12 +36,63 @@ jobs:
         run: |
           node --check scripts/forgehands-entrypoint.mjs
           node --test scripts/forgehands-entrypoint.test.mjs
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm test
-      - run: npm audit --omit=dev --audit-level=high
+      # `set -o pipefail` keeps the exit code of the command, `tee` keeps its output for the failure step below.
+      - name: install
+        run: |
+          set -o pipefail
+          npm ci 2>&1 | tee ci-output.log
+      - name: typecheck
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee ci-output.log
+      - name: lint
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee ci-output.log
+      - name: format
+        run: |
+          set -o pipefail
+          npm run format:check 2>&1 | tee ci-output.log
+      - name: test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee ci-output.log
+      - name: audit
+        run: |
+          set -o pipefail
+          npm audit --omit=dev --audit-level=high 2>&1 | tee ci-output.log
+      - name: comment the tail of the failed run
+        if: failure() && github.event_name == 'pull_request'
+        working-directory: .
+        env:
+          TOKEN: ${{ github.token }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          JOB: app
+          LOG: app/ci-output.log
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The last 80 lines, without ANSI colours and without anything that looks like a credential.
+          { if [ -s "$LOG" ]; then tail -n 80 "$LOG"; else echo "no output: $LOG is missing or empty"; fi; } |
+            sed -E -e 's/\x1b\[[0-9;]*[A-Za-z]//g' \
+              -e 's/(token|password|passwd|secret|bearer)([=: ]+)[^[:space:]`]+/\1\2<redacted>/Ig' \
+              -e 's/[A-Za-z0-9_+\/=-]{40,}/<redacted>/g' |
+            tr -d '\000-\010\013\014\016-\037\177' > ci-output.tail
+          {
+            printf 'CI job `%s` failed for commit `%s`.\n\n```\n' "$JOB" "$COMMIT"
+            cat ci-output.tail
+            printf '\n```\n'
+          } > ci-comment.md
+          # The API takes JSON: join the lines of the body, then escape what JSON needs.
+          body=$(sed -e ':a' -e 'N' -e '$!ba' -e 's/[\\"]/\\&/g' -e 's/\t/\\t/g' -e 's/\r//g' -e 's/\n/\\n/g' ci-comment.md)
+          printf '{"body":"%s"}' "$body" > ci-comment.json
+          code=$(curl -sS -o ci-response.json -w '%{http_code}' -X POST \
+            -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+            --data-binary @ci-comment.json "$SERVER/api/v1/repos/$REPO/issues/$PR/comments")
+          echo "comment: HTTP $code"
+          if [ "$code" != 201 ] && [ "$code" != 200 ]; then cat ci-response.json; exit 1; fi
 
   bootstrap:
     runs-on: docker
@@ -52,7 +105,7 @@ jobs:
       image: ${{ matrix.image }}
     steps:
       - name: git
-        run: apt-get update -q && apt-get install -y -q --no-install-recommends git
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git curl ca-certificates
       - name: checkout
         env:
           TOKEN: ${{ github.token }}
@@ -62,7 +115,40 @@ jobs:
           git checkout -q "${{ github.sha }}"
       - name: tests (standard library only)
         working-directory: bootstrap
-        run: python -W error::ResourceWarning -m unittest discover -s tests -t . -v
+        run: |
+          set -o pipefail
+          python -W error::ResourceWarning -m unittest discover -s tests -t . -v 2>&1 | tee ci-output.log
+      - name: comment the tail of the failed run
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          TOKEN: ${{ github.token }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          JOB: bootstrap
+          LOG: bootstrap/ci-output.log
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The last 80 lines, without ANSI colours and without anything that looks like a credential.
+          { if [ -s "$LOG" ]; then tail -n 80 "$LOG"; else echo "no output: $LOG is missing or empty"; fi; } |
+            sed -E -e 's/\x1b\[[0-9;]*[A-Za-z]//g' \
+              -e 's/(token|password|passwd|secret|bearer)([=: ]+)[^[:space:]`]+/\1\2<redacted>/Ig' \
+              -e 's/[A-Za-z0-9_+\/=-]{40,}/<redacted>/g' |
+            tr -d '\000-\010\013\014\016-\037\177' > ci-output.tail
+          {
+            printf 'CI job `%s` failed for commit `%s`.\n\n```\n' "$JOB" "$COMMIT"
+            cat ci-output.tail
+            printf '\n```\n'
+          } > ci-comment.md
+          # The API takes JSON: join the lines of the body, then escape what JSON needs.
+          body=$(sed -e ':a' -e 'N' -e '$!ba' -e 's/[\\"]/\\&/g' -e 's/\t/\\t/g' -e 's/\r//g' -e 's/\n/\\n/g' ci-comment.md)
+          printf '{"body":"%s"}' "$body" > ci-comment.json
+          code=$(curl -sS -o ci-response.json -w '%{http_code}' -X POST \
+            -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+            --data-binary @ci-comment.json "$SERVER/api/v1/repos/$REPO/issues/$PR/comments")
+          echo "comment: HTTP $code"
+          if [ "$code" != 201 ] && [ "$code" != 200 ]; then cat ci-response.json; exit 1; fi
 
   seed:
     runs-on: docker
@@ -82,7 +168,7 @@ jobs:
       image: ${{ matrix.image }}
     steps:
       - name: git
-        run: apt-get update -q && apt-get install -y -q --no-install-recommends git
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git curl ca-certificates
       - name: checkout
         env:
           TOKEN: ${{ github.token }}
@@ -90,4 +176,38 @@ jobs:
           git init -q . && git config --global --add safe.directory "$PWD"
           git -c http.extraheader="Authorization: token $TOKEN" fetch -q --no-tags "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
           git checkout -q "${{ github.sha }}"
-      - run: scripts/check-seed.sh
+      - name: seed
+        run: |
+          set -o pipefail
+          scripts/check-seed.sh 2>&1 | tee ci-output.log
+      - name: comment the tail of the failed run
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          TOKEN: ${{ github.token }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          JOB: seed
+          LOG: ci-output.log
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The last 80 lines, without ANSI colours and without anything that looks like a credential.
+          { if [ -s "$LOG" ]; then tail -n 80 "$LOG"; else echo "no output: $LOG is missing or empty"; fi; } |
+            sed -E -e 's/\x1b\[[0-9;]*[A-Za-z]//g' \
+              -e 's/(token|password|passwd|secret|bearer)([=: ]+)[^[:space:]`]+/\1\2<redacted>/Ig' \
+              -e 's/[A-Za-z0-9_+\/=-]{40,}/<redacted>/g' |
+            tr -d '\000-\010\013\014\016-\037\177' > ci-output.tail
+          {
+            printf 'CI job `%s` failed for commit `%s`.\n\n```\n' "$JOB" "$COMMIT"
+            cat ci-output.tail
+            printf '\n```\n'
+          } > ci-comment.md
+          # The API takes JSON: join the lines of the body, then escape what JSON needs.
+          body=$(sed -e ':a' -e 'N' -e '$!ba' -e 's/[\\"]/\\&/g' -e 's/\t/\\t/g' -e 's/\r//g' -e 's/\n/\\n/g' ci-comment.md)
+          printf '{"body":"%s"}' "$body" > ci-comment.json
+          code=$(curl -sS -o ci-response.json -w '%{http_code}' -X POST \
+            -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+            --data-binary @ci-comment.json "$SERVER/api/v1/repos/$REPO/issues/$PR/comments")
+          echo "comment: HTTP $code"
+          if [ "$code" != 201 ] && [ "$code" != 200 ]; then cat ci-response.json; exit 1; fi

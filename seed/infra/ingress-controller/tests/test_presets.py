@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from fakes import session_for
+from ingressctl import presets, public
 from ingressctl.errors import PresetError
 from ingressctl.presets import PRESETS, fetch_preset, resolve_presets
 from ingressctl.state import State
@@ -138,3 +139,7 @@ def test_reopened_state_has_presets_table(tmp_path):
     assert reopened.get_preset("github-hooks")["cidrs"] == ("140.82.112.0/20",)
     tables = {r["name"] for r in reopened.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "presets" in tables
+
+
+def test_known_presets_match():
+    assert public.KNOWN_PRESETS == set(presets.PRESETS)

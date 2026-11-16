@@ -4,6 +4,8 @@ import sqlite3
 
 import pytest
 
+from fakes import FakeGithubMeta, session_for
+from ingressctl.cli import _resolve_presets
 from ingressctl.errors import AdapterError, CertificateError, ConflictError, IngressError, PendingIssuance
 from ingressctl.public import render_public_config
 from ingressctl.reconcile import adopt, apply_service, plan_service, recover
@@ -40,6 +42,21 @@ def set_public(env, value: str | None):
 def plan(env, stack="omniroute"):
     ctx = env.ctx()
     (spec,) = env.specs(stack)
+    return ctx, spec, plan_service(ctx, spec, ctx.npm["main"].list_proxy_hosts(),
+                                   {c["id"]: c for c in ctx.npm["main"].list_certificates()})
+
+
+def apply_with_presets(env, meta, stack="omniroute", *, persist=True):
+    ctx = env.ctx()
+    (spec,) = env.specs(stack)
+    _resolve_presets(ctx, [spec], persist=persist, session=session_for(meta))
+    return ctx, spec, apply_service(ctx, spec, commit=env.commit_sha)
+
+
+def plan_with_presets(env, meta, *, persist, stack="omniroute"):
+    ctx = env.ctx()
+    (spec,) = env.specs(stack)
+    _resolve_presets(ctx, [spec], persist=persist, session=session_for(meta))
     return ctx, spec, plan_service(ctx, spec, ctx.npm["main"].list_proxy_hosts(),
                                    {c["id"]: c for c in ctx.npm["main"].list_certificates()})
 
@@ -479,3 +496,124 @@ def test_plan_shows_advanced_config_diff(env):
     _, _, p = plan(env)
     text = p.render()
     assert "advanced_config" in text and "/hook/abc" in text and "/hook/other" in text
+
+
+# --- proxy.public: aufgelöste IP-Presets -------------------------------------------------------
+
+def test_preset_resolves_into_host_and_state(env):
+    meta = FakeGithubMeta()
+    set_public(env, "{paths: [/hook], allow_cidrs: [{preset: github-hooks}]}")
+
+    ctx, spec, res = apply_with_presets(env, meta)
+
+    assert res == "applied"
+    advanced = next(iter(env.npm.hosts.values()))["advanced_config"]
+    for cidr in meta.hooks:
+        assert f"allow {cidr};" in advanced
+    assert advanced.rstrip().endswith("deny all;")
+    assert ctx.state.get_preset("github-hooks")["cidrs"] == tuple(sorted(meta.hooks))
+
+
+def test_second_apply_with_same_preset_list_is_noop(env):
+    meta = FakeGithubMeta()
+    set_public(env, "{paths: [/hook], allow_cidrs: [{preset: github-hooks}]}")
+    apply_with_presets(env, meta)
+    before = env.npm.mutations
+
+    _, _, res = apply_with_presets(env, meta)
+
+    assert res == "noop"
+    assert env.npm.mutations == before
+
+
+def test_changed_preset_list_plans_without_writing_then_applies_as_update(env):
+    meta = FakeGithubMeta()
+    set_public(env, "{paths: [/hook], allow_cidrs: [{preset: github-hooks}]}")
+    ctx, _, res = apply_with_presets(env, meta)
+    assert res == "applied"
+    hid = ctx.state.get("ai-sandbox/omniroute")["npm_host_id"]
+    old_config = env.npm.hosts[hid]["advanced_config"]
+    new_hooks = ["140.82.112.0/20", "192.30.252.0/22"]
+    meta.hooks = list(new_hooks)
+
+    plan_ctx, _, p = plan_with_presets(env, meta, persist=False)
+
+    assert "advanced_config" in p.host_changes
+    assert any("Preset-Netze aktualisiert" in note for note in p.notes)
+    assert not any("manuell" in d for d in p.drift)
+    assert plan_ctx.state.get_preset("github-hooks")["cidrs"] == tuple(sorted(FakeGithubMeta.DEFAULT_HOOKS))
+    assert env.npm.hosts[hid]["advanced_config"] == old_config
+
+    apply_ctx, spec, p2 = plan_with_presets(env, meta, persist=True)
+    assert not any("advanced_config" in d for d in p2.drift)
+    assert apply_service(apply_ctx, spec, commit=env.commit_sha) == "applied"
+    updated = env.npm.hosts[hid]["advanced_config"]
+    for cidr in new_hooks:
+        assert f"allow {cidr};" in updated
+    assert "2606:50c0::/32" not in updated
+    assert apply_ctx.state.get_preset("github-hooks")["cidrs"] == tuple(sorted(new_hooks))
+
+
+def test_failed_fetch_uses_stored_list_and_notes(env):
+    meta = FakeGithubMeta()
+    set_public(env, "{paths: [/hook], allow_cidrs: [{preset: github-hooks}]}")
+    apply_with_presets(env, meta)
+    before = env.npm.mutations
+    meta.fail = True
+
+    ctx, spec, p = plan_with_presets(env, meta, persist=True)
+
+    assert any("Abruf fehlgeschlagen" in note for note in p.notes)
+    assert not p.host_changes
+    assert apply_service(ctx, spec, commit=env.commit_sha) == "noop"
+    assert env.npm.mutations == before
+
+
+def test_failed_fetch_without_stored_list_fails_closed(env):
+    meta = FakeGithubMeta(fail=True)
+    set_public(env, "{paths: [/hook], allow_cidrs: [{preset: github-hooks}]}")
+
+    ctx, spec, p = plan_with_presets(env, meta, persist=True)
+
+    assert any("fail closed" in blocker for blocker in p.blockers)
+    with pytest.raises(ConflictError, match="fail closed"):
+        apply_service(ctx, spec, commit=env.commit_sha)
+    assert env.npm.hosts == {}
+    assert ctx.state.get_preset("github-hooks") is None
+
+
+def test_static_and_preset_networks_render_together(env):
+    meta = FakeGithubMeta()
+    set_public(env, "{paths: [/hook], allow_cidrs: [{preset: github-hooks}, 203.0.113.0/24]}")
+
+    apply_with_presets(env, meta)
+
+    advanced = next(iter(env.npm.hosts.values()))["advanced_config"]
+    for cidr in [*meta.hooks, "203.0.113.0/24"]:
+        assert f"allow {cidr};" in advanced
+    assert advanced.rstrip().endswith("deny all;")
+
+
+def test_manifest_without_presets_makes_no_preset_request(env):
+    meta = FakeGithubMeta()
+    ctx = env.ctx()
+
+    _resolve_presets(ctx, env.specs(), persist=True, session=session_for(meta))
+
+    assert meta.requests == []
+    assert ctx.preset_cidrs == {}
+
+
+def test_hand_edit_of_managed_advanced_config_with_presets_is_drift(env):
+    meta = FakeGithubMeta()
+    set_public(env, "{paths: [/hook], allow_cidrs: [{preset: github-hooks}]}")
+    ctx, _, _ = apply_with_presets(env, meta)
+    hid = ctx.state.get("ai-sandbox/omniroute")["npm_host_id"]
+    good = env.npm.hosts[hid]["advanced_config"]
+    env.npm.hosts[hid]["advanced_config"] = good.replace(meta.hooks[0], "198.51.100.0/24")
+
+    _, _, p = plan_with_presets(env, meta, persist=False)
+
+    assert any("advanced_config" in d for d in p.drift)
+    apply_with_presets(env, meta)
+    assert env.npm.hosts[hid]["advanced_config"] == good

@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 
+import requests
 import yaml
 
 from . import __version__, log
@@ -18,6 +19,7 @@ from .inventory import load_inventory
 from .lock import npm_lock
 from .manifest import ServiceSpec, load_all
 from .npm import NpmClient
+from .presets import resolve_presets
 from .reconcile import Context, _static_blockers, adopt, apply_service, plan_service, recover
 from .state import State
 
@@ -70,6 +72,19 @@ def build_context(root: pathlib.Path | None, inv, specs: list[ServiceSpec]) -> C
                    source_repo=repo)
 
 
+def _resolve_presets(ctx: Context, specs: list[ServiceSpec], *, persist: bool, session=None) -> None:
+    """Löst die Presets der ausgewählten Manifeste einmal pro Lauf auf (öffentlicher Endpunkt, Standard-TLS-Prüfung)."""
+    names = {name for s in specs if s.public is not None for name in s.public.allow_presets}
+    if not names:
+        return
+    if session is None:
+        session = requests.Session()
+    res = resolve_presets(ctx.state, names, session, persist=persist)
+    ctx.preset_cidrs = res.cidrs
+    ctx.preset_errors = res.errors
+    ctx.preset_notes = res.notes
+
+
 def _select(specs: list[ServiceSpec], stacks: list[str] | None) -> list[ServiceSpec]:
     if not stacks:
         return specs
@@ -102,6 +117,7 @@ def cmd_plan(args) -> int:
     inv = load_inventory(root)
     specs = _select(load_all(root, inv), args.stack)
     ctx = build_context(root, inv, specs)
+    _resolve_presets(ctx, specs, persist=False)
     blocked = False
     cache: dict[str, tuple] = {}
     for s in specs:
@@ -153,6 +169,7 @@ def cmd_apply(args) -> int:
         print(json.dumps({}))
         return 0
     ctx = build_context(root, inv, specs)
+    _resolve_presets(ctx, specs, persist=True)
     res = _run_apply(ctx, specs, commit=args.commit, deployed_commit=args.deployed_commit,
                      allow_rollback=args.allow_rollback, skip_upstream_check=args.skip_upstream_check)
     print(json.dumps(res, indent=2, ensure_ascii=False))
@@ -171,6 +188,7 @@ def cmd_renew(args) -> int:
     if not specs:
         return 0
     ctx = build_context(root, inv, specs)
+    _resolve_presets(ctx, specs, persist=True)
     by_commit = {r["resource_id"]: r.get("reconciled_commit") for r in state.all()}
     results = {}
     for s in specs:

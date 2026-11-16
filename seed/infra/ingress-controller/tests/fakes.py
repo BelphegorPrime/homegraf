@@ -336,6 +336,27 @@ class FakeInfisical:
                 r.update(status="issued", certificateId=r.pop("_cid"))
 
 
+class FakeGithubMeta:
+    """api.github.com/meta: settable `hooks` ranges; `fail` answers 503 like an outage."""
+
+    DEFAULT_HOOKS = ("140.82.112.0/20", "2606:50c0::/32", "2a0a:a440::/29")
+
+    def __init__(self, hooks=None, fail=False):
+        self.hooks = list(self.DEFAULT_HOOKS if hooks is None else hooks)
+        self.fail = fail
+        self.requests: list[dict] = []
+
+    def handle(self, method, path, query, headers, body):
+        self.requests.append({"method": method, "path": path, "headers": dict(headers)})
+        if path != "/meta":
+            return 404, {"message": "Not Found"}
+        if method != "GET":
+            return 405, {"message": "Method Not Allowed"}
+        if self.fail:
+            return 503, {"message": "Service Unavailable"}
+        return 200, {"hooks": list(self.hooks)}
+
+
 class FakeChecker:
     """Simulates the management server's network view of the upstream and NPM:443."""
 

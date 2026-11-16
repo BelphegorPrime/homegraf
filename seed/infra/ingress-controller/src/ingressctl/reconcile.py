@@ -48,6 +48,9 @@ class Context:
     # NPM answers PUT/POST before nginx has finished the reload -> retry the check
     verify_attempts: int = 6
     verify_delay: float = 2.0
+    preset_cidrs: dict = field(default_factory=dict)
+    preset_errors: dict = field(default_factory=dict)
+    preset_notes: list = field(default_factory=list)
 
     def trust_pem(self, issuer_ref: str) -> str:
         path = self.inv.issuers[issuer_ref].ca_bundle
@@ -96,7 +99,7 @@ class ServicePlan:
         return "\n".join(lines)
 
 
-def desired_host(spec: ServiceSpec, cert_id: int | None) -> dict:
+def desired_host(spec: ServiceSpec, cert_id: int | None, preset_cidrs: dict | None = None) -> dict:
     host = {
         "domain_names": list(spec.domains),
         "forward_scheme": spec.upstream_scheme,
@@ -108,7 +111,7 @@ def desired_host(spec: ServiceSpec, cert_id: int | None) -> dict:
         "enabled": True,
     }
     if spec.public is not None:
-        host["advanced_config"] = render_public_config(spec.public)
+        host["advanced_config"] = render_public_config(spec.public, preset_cidrs)
     return host
 
 
@@ -184,6 +187,16 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
         return p
     p.blockers += _static_blockers(ctx, spec)
 
+    unresolved = [name for name in (spec.public.allow_presets if spec.public else ())
+                  if name in ctx.preset_errors]
+    for name in unresolved:
+        p.blockers.append(f"preset '{name}' nicht abrufbar und kein letzter Stand vorhanden "
+                          f"({ctx.preset_errors[name]}); fail closed")
+    if spec.public is not None:
+        for note in ctx.preset_notes:
+            if any(note.startswith(f"preset {name}:") for name in spec.public.allow_presets):
+                p.notes.append(note)
+
     owned_id = st.get("npm_host_id") if st else None
     owned = next((h for h in live_hosts if h.get("id") == owned_id), None) if owned_id else None
     if owned_id and owned is None:
@@ -232,8 +245,8 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
             p.cert_reasons.append(f"expires on {info.not_after:%Y-%m-%d} (lead time "
                                   f"{certs.renewal_lead(info, spec.renew_before_days).days} days)")
 
-    if owned is not None:
-        want = desired_host(spec, cert_id if live_cert else owned.get("certificate_id"))
+    if owned is not None and not unresolved:
+        want = desired_host(spec, cert_id if live_cert else owned.get("certificate_id"), ctx.preset_cidrs)
         for k in MANAGED_HOST_FIELDS:
             if k == "certificate_id" and p.cert_reasons:
                 continue  # set with the new certificate anyway
@@ -242,7 +255,7 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
         current_advanced = owned.get("advanced_config") or ""
         last_written = st.get("public_config") if st else None
         if spec.public is not None:
-            wanted_advanced = render_public_config(spec.public)
+            wanted_advanced = want["advanced_config"]
             if current_advanced != wanted_advanced:
                 if not is_managed_config(current_advanced):
                     p.blockers.append(
@@ -255,7 +268,14 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
             if remaining != current_advanced:
                 p.host_changes["advanced_config"] = (current_advanced, remaining)
         if st and st.get("manifest") == spec.to_json() and p.host_changes:
-            p.drift += [f"changed manually in NPM: {k}" for k in p.host_changes]
+            # Only a live config that differs from the last written block is manual work;
+            # changed preset networks are a normal update.
+            manual_advanced = current_advanced != (last_written or "")
+            drifted = [k for k in p.host_changes if k != "advanced_config" or manual_advanced]
+            p.drift += [f"changed manually in NPM: {k}" for k in drifted]
+            if (set(p.host_changes) == {"advanced_config"} and not manual_advanced
+                    and spec.public is not None and spec.public.allow_presets):
+                p.notes.append("advanced_config: Preset-Netze aktualisiert")
     return p
 
 
@@ -449,7 +469,7 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
         raise ConflictError("; ".join(plan.blockers))
 
     st = state.get(spec.resource_id)
-    public_config = render_public_config(spec.public) if spec.public is not None else None
+    public_config = render_public_config(spec.public, ctx.preset_cidrs) if spec.public is not None else None
     base = dict(namespace=spec.namespace, service_id=spec.service_id, stack_id=spec.stack_id,
                 npm_instance=spec.npm_instance, domains=spec.domains, target_commit=commit,
                 source_repo=ctx.source_repo)
@@ -481,7 +501,7 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
         expected_fp = None
     else:
         expected_fp = new_cert["info"].fingerprint if new_cert else st.get("cert_fingerprint")
-    want = desired_host(spec, cert_id)
+    want = desired_host(spec, cert_id, ctx.preset_cidrs)
 
     host_existed = not plan.create_host
     if plan.create_host:

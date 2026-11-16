@@ -13,13 +13,14 @@ Run the repository's checks once on the default branch and remember the result. 
 
 REVIEW
 1. Read the issue and its acceptance criteria, the pull request diff and discussion, and the trusted operator feedback.
-2. Check out the pull request head and judge three things separately:
-   - **Acceptance**: run the acceptance check exactly as written. This decides the verdict.
-   - **Repository checks**: run the actual validation command and compare with the baseline.
+2. Check out the pull request head and judge these things separately:
+   - **Acceptance**: run the acceptance check exactly as written, with its skip report enabled (for example `pytest -rs`). This decides the verdict.
+   - **Repository checks**: run the actual validation command with its skip report enabled and compare with the baseline.
    - **Scope**: compare changed files with the files the issue lists; extra files are a finding.
+   - **Not run here**: list every skipped test or check in the evidence comment under "Not run here". A test skipped for a missing tool (nginx, Docker, a service) is "not verified": say which environment would run it, and do not count it as passed.
 3. Post one evidence comment that starts with `## Verdict: OK` or `## Verdict: NOT OK`, then one line per point above, including the reality checks, with the command run and its result (exit code or relevant output). A not-OK verdict names the failing command and its output; never post a verdict without evidence.
 4. After the comment, add exactly one label: `ai:approved` for OK or `ai:changes` for not OK. The comment comes first and the label is the verdict. Forgejo refuses a formal self-review on your own pull request, so do not submit an approve or request-changes review state.
-5. Never merge and never remove the `WIP: ` title prefix or a draft state; ForgeHands owns the merge and the title cleanup.
+5. Never merge and never remove the `WIP: ` title prefix or a draft state; ForgeHands owns the merge and the title cleanup. The `WIP: ` prefix of the title and a draft state are never a reason for NOT OK; ForgeHands removes them.
 
 CHECK AGAINST REALITY
 Do this in step 2 for every pull request that talks to a system outside the repository or sets a security default; it is part of the verdict.

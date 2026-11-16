@@ -1,4 +1,4 @@
-"""Tests für stack_secrets.py mit Fakes für Infisical v0.167.2 und Komodo 2.3.x (pytest infra/infisical)."""
+"""Tests for stack_secrets.py with fakes for Infisical v0.167.2 and Komodo 2.3.x (pytest infra/infisical)."""
 import pathlib
 import re
 import sys
@@ -78,7 +78,7 @@ class FakeInfisical:
                                                 for (proj, i), r in self.members.items() if proj == m.group(1)]}
             self.members[(m.group(1), m.group(2))] = body["role"] if method == "POST" else body["roles"][0]["role"]
             return {}
-        raise AssertionError(f"unerwarteter Aufruf {method} {path}")
+        raise AssertionError(f"unexpected call {method} {path}")
 
 
 class FakeKomodo:
@@ -125,8 +125,8 @@ def test_wrapper_uses_clone_of_server():
 
 
 def test_parse_env_file():
-    text = "# Kommentar\nA=1\nexport B='x y'\nC=\"z # kein Kommentar\"\nD=w # Kommentar\nE=\n  F = g\n"
-    assert ss.parse_env_file(text) == {"A": "1", "B": "x y", "C": "z # kein Kommentar", "D": "w", "F": "g"}
+    text = "# comment\nA=1\nexport B='x y'\nC=\"z # no comment\"\nD=w # comment\nE=\n  F = g\n"
+    assert ss.parse_env_file(text) == {"A": "1", "B": "x y", "C": "z # no comment", "D": "w", "F": "g"}
 
 
 def test_dry_run_writes_nothing():
@@ -137,10 +137,10 @@ def test_dry_run_writes_nothing():
 
 def test_apply_sets_up_everything_and_is_idempotent():
     inf, kom = FakeInfisical(), FakeKomodo()
-    run(inf, kom, imports={"searxng": {"SEARXNG_SECRET": "alt"}})
+    run(inf, kom, imports={"searxng": {"SEARXNG_SECRET": "old"}})
     iid, pid = inf.identities["stacks-worker-1"], "proj-stacks-worker-1"
     assert [p["slug"] for p in inf.projects] == ["stacks-worker-1"]
-    assert inf.folders == {"searxng"} and inf.secrets == {("/searxng", "SEARXNG_SECRET"): "alt"}
+    assert inf.folders == {"searxng"} and inf.secrets == {("/searxng", "SEARXNG_SECRET"): "old"}
     assert inf.ua[iid]["accessTokenTTL"] == ss.TOKEN_TTL and inf.members == {(pid, iid): "viewer"}
     v = kom.variables
     assert v["INFISICAL_PROJECT_ID_WORKER_1"]["value"] == pid and not v["INFISICAL_PROJECT_ID_WORKER_1"]["is_secret"]
@@ -152,8 +152,8 @@ def test_apply_sets_up_everything_and_is_idempotent():
 
     inf.writes.clear()
     kom.writes = []
-    run(inf, kom, imports={"searxng": {"SEARXNG_SECRET": "neu"}})
-    assert inf.secrets[("/searxng", "SEARXNG_SECRET")] == "alt"  # nie überschreiben
+    run(inf, kom, imports={"searxng": {"SEARXNG_SECRET": "new"}})
+    assert inf.secrets[("/searxng", "SEARXNG_SECRET")] == "old"  # never overwrite
     assert kom.writes == []
     assert [w for w in inf.writes if w[1] != "/api/v1/auth/universal-auth/login"] == []
 
@@ -171,7 +171,7 @@ def test_invalid_secret_in_komodo_is_replaced_and_old_revoked():
     inf, kom = FakeInfisical(), FakeKomodo()
     run(inf, kom)
     iid = inf.identities["stacks-worker-1"]
-    kom.variables["INFISICAL_CLIENT_SECRET_WORKER_1"]["value"] = "kaputt"
+    kom.variables["INFISICAL_CLIENT_SECRET_WORKER_1"]["value"] = "broken"
     run(inf, kom)
     assert len(inf.client_secrets[iid]) == 1
     assert kom.variables["INFISICAL_CLIENT_SECRET_WORKER_1"]["value"] in inf.client_secrets[iid]

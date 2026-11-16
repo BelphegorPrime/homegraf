@@ -1,5 +1,5 @@
 class IngressError(Exception):
-    """Basisfehler; Meldungen dürfen keine Secrets enthalten."""
+    """Base error; messages must not contain secrets."""
 
 
 class ManifestError(IngressError):
@@ -19,7 +19,7 @@ class AdapterError(IngressError):
         super().__init__(f"{system}: {message}" + (f" (HTTP {status})" if status else ""))
         self.system = system
         self.status = status
-        # ambiguous: Mutation evtl. ausgeführt (Timeout/Verbindungsabbruch) -> vor Wiederholung Live-Abgleich
+        # ambiguous: mutation may have run (timeout/connection drop) -> reconcile live state before retrying
         self.ambiguous = ambiguous
 
 
@@ -33,5 +33,5 @@ class CertificateError(IngressError):
 
 class PendingIssuance(IngressError):
     def __init__(self, request_id: str):
-        super().__init__(f"Infisical-Zertifikatsanfrage {request_id} ist noch ausstehend")
+        super().__init__(f"Infisical certificate request {request_id} is still pending")
         self.request_id = request_id

@@ -1,4 +1,4 @@
-"""Tests für ingressctl.presets mit lokalem Fake statt Netzwerk."""
+"""Tests for ingressctl.presets with a local fake instead of the network."""
 from __future__ import annotations
 
 import pytest
@@ -99,7 +99,7 @@ def test_resolve_reports_changed_list(tmp_path):
 
     res = resolve_presets(state, ["github-hooks"], session_for(FakeGithubMeta()), persist=True)
 
-    assert res.notes == ["preset github-hooks: Liste geändert (+2606:50c0::/32,2a0a:a440::/29, -192.30.252.0/22)"]
+    assert res.notes == ["preset github-hooks: list changed (+2606:50c0::/32,2a0a:a440::/29, -192.30.252.0/22)"]
     assert state.get_preset("github-hooks")["cidrs"] == GOOD_SORTED
 
 
@@ -113,8 +113,8 @@ def test_resolve_falls_back_to_last_good_list(tmp_path):
     assert res.cidrs == {"github-hooks": ("140.82.112.0/20",)}
     assert res.errors == {}
     assert len(res.notes) == 1
-    assert "Abruf fehlgeschlagen" in res.notes[0]
-    assert f"nutze letzten guten Stand vom {before['fetched_at']}" in res.notes[0]
+    assert "fetch failed" in res.notes[0]
+    assert f"using last good copy from {before['fetched_at']}" in res.notes[0]
     assert state.get_preset("github-hooks") == before
 
 

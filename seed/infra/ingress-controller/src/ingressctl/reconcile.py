@@ -43,6 +43,8 @@ class Context:
     checker: Checker
     clock: callable = lambda: dt.datetime.now(dt.timezone.utc)
     source_repo: str | None = None
+    # DNS-01 von Let's Encrypt: Zugangsdaten des Providers, nie protokolliert
+    le_dns_credentials: str | None = None
     # NPM antwortet auf PUT/POST, bevor nginx den Reload abgeschlossen hat -> Prüfung mehrfach versuchen
     verify_attempts: int = 6
     verify_delay: float = 2.0
@@ -62,10 +64,12 @@ class ServicePlan:
     blockers: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     resume_host_id: int | None = None
+    renew_cert: bool = False
+    renew_not_after: dt.datetime | None = None
 
     @property
     def noop(self) -> bool:
-        return not (self.create_host or self.host_changes or self.cert_reasons)
+        return not (self.create_host or self.host_changes or self.cert_reasons or self.renew_cert)
 
     def render(self) -> str:
         s = self.spec
@@ -83,6 +87,9 @@ class ServicePlan:
                 lines.append(f"  ~ {k}: {old!r} -> {new!r}")
         for r in self.cert_reasons:
             lines.append(f"  * Zertifikat ausstellen: {r}")
+        if self.renew_cert:
+            until = f"{self.renew_not_after:%Y-%m-%d}" if self.renew_not_after else "?"
+            lines.append(f"  * Let's-Encrypt-Zertifikat erneuern (läuft am {until} ab)")
         lines += [f"  i {n}" for n in self.notes]
         if self.noop and not self.blockers:
             lines.append("  = keine Änderung")
@@ -123,9 +130,47 @@ def _static_blockers(ctx: Context, spec: ServiceSpec) -> list[str]:
     missing = ctx.inv.issuers[spec.issuer_ref].missing()
     if missing:
         b.append(f"Issuer '{spec.issuer_ref}' unvollständig: {', '.join(missing)}")
+    if spec.dns_challenge and ctx.npm and not ctx.le_dns_credentials:
+        b.append("LETSENCRYPT_DNS_CREDENTIALS fehlt")
     if spec.upstream_host is None:
         b.append(f"Upstream-Server '{spec.upstream_server}' hat keine bestätigte Adresse in inventory/servers.yaml")
     return b
+
+
+def _parse_expires(value) -> dt.datetime | None:
+    """NPM liefert expires_on als 'YYYY-MM-DD HH:MM:SS' (ältere Versionen mit T/Z); ohne Zone = UTC."""
+    if not value:
+        return None
+    text = str(value).strip().replace("Z", "+00:00").replace(" ", "T", 1)
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def _plan_le_certificate(ctx: Context, spec: ServiceSpec, st: dict | None, live_cert: dict | None,
+                         p: ServicePlan) -> None:
+    """Let's Encrypt: kein PEM über die API -> kein Fingerprint-Vergleich; NPM erneuert selbst, hier der Vorlauf."""
+    cert_id = st.get("npm_cert_id") if st else None
+    if not cert_id:
+        p.cert_reasons.append("kein eigenes Zertifikat vorhanden")
+        return
+    if live_cert is None:
+        p.cert_reasons.append(f"NPM-Zertifikat {cert_id} fehlt")
+        return
+    if st.get("policy_hash") != spec.policy_hash():
+        p.cert_reasons.append("Domains, Issuer oder Challenge geändert")
+        return
+    expires = _parse_expires(live_cert.get("expires_on"))
+    if expires is not None and expires - ctx.clock() < dt.timedelta(days=spec.renew_before_days):
+        p.renew_cert = True
+        p.renew_not_after = expires
+
+
+def _iso_expires(value) -> str | None:
+    parsed = _parse_expires(value)
+    return parsed.isoformat() if parsed else (str(value) if value else None)
 
 
 def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_certs: dict[int, dict]) -> ServicePlan:
@@ -171,7 +216,9 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
 
     cert_id = st.get("npm_cert_id") if st else None
     live_cert = live_certs.get(cert_id) if cert_id else None
-    if not cert_id:
+    if ctx.inv.issuers[spec.issuer_ref].type == "letsencrypt":
+        _plan_le_certificate(ctx, spec, st, live_cert, p)
+    elif not cert_id:
         p.cert_reasons.append("kein eigenes Zertifikat vorhanden")
     elif live_cert is None or live_cert.get("info") is None:
         p.cert_reasons.append(f"NPM-Zertifikat {cert_id} fehlt oder ist unlesbar")
@@ -237,6 +284,8 @@ def check_commit_order(ctx: Context, spec: ServiceSpec, commit: str | None, allo
 
 def ensure_certificate(ctx: Context, spec: ServiceSpec) -> dict:
     issuer = ctx.inv.issuers[spec.issuer_ref]
+    if issuer.type == "letsencrypt":
+        return _ensure_le_certificate(ctx, spec)
     inf = ctx.issuers[spec.issuer_ref]
     npm = ctx.npm[spec.npm_instance]
     state = ctx.state
@@ -307,6 +356,69 @@ def ensure_certificate(ctx: Context, spec: ServiceSpec) -> dict:
     return {"op": op, "npm_cert_id": npm_cert_id, "info": info, "infisical_cert_id": bundle["certificate_id"]}
 
 
+def _le_resume_candidate(ctx: Context, spec: ServiceSpec) -> dict | None:
+    """Zertifikat eines abgebrochenen LE-POST: NPM überschreibt nice_name, daher über Domains und Nutzung suchen.
+
+    Nur nach `npm_requesting` und nie, wenn eine State-Zeile es schon beansprucht oder ein Host es benutzt.
+    """
+    npm = ctx.npm[spec.npm_instance]
+    claimed = {r.get("npm_cert_id") for r in ctx.state.all() if r.get("npm_cert_id")}
+    for cert in npm.list_certificates():
+        if cert.get("provider") != "letsencrypt":
+            continue
+        if sorted(cert.get("domain_names") or []) != list(spec.domains):
+            continue
+        if cert.get("id") in claimed or npm.certificate_users(cert["id"]) != 0:
+            continue
+        return cert
+    return None
+
+
+def _ensure_le_certificate(ctx: Context, spec: ServiceSpec) -> dict:
+    """NPM-managed Let's Encrypt: ein POST stellt aus, kein PEM in der Antwort -> info bleibt None."""
+    issuer = ctx.inv.issuers[spec.issuer_ref]
+    npm = ctx.npm[spec.npm_instance]
+    state = ctx.state
+    op = state.open_op(spec.resource_id, OP_ISSUE)
+    if op and op["data"].get("policy") != spec.policy_hash():
+        state.close_op(op, "abandoned")
+        op = None
+    if op is None:
+        op = state.start_op(spec.resource_id, OP_ISSUE, {"policy": spec.policy_hash(), "domains": list(spec.domains)})
+    else:
+        log.event("issue", "resume", service=spec.resource_id, op=op["op_id"], step=op["step"])
+    cert_id = op["data"].get("npm_cert_id")
+    if cert_id and npm.get_certificate(cert_id) is None:
+        cert_id = None
+    expires_on, le_issuer = op["data"].get("expires_on"), op["data"].get("le_issuer")
+    if not cert_id and op["step"] == "npm_requesting":
+        candidate = _le_resume_candidate(ctx, spec)
+        if candidate is not None:
+            cert_id = candidate["id"]
+            expires_on, le_issuer = candidate.get("expires_on"), candidate.get("le_issuer")
+            log.event("issue", "resume-certificate", service=spec.resource_id, npm_cert_id=cert_id)
+    if not cert_id:
+        if not spec.dns_challenge:
+            results = npm.test_http_challenge(list(spec.domains))
+            blocked = {d: results.get(d, "keine Antwort") for d in spec.domains if results.get(d) != "ok"}
+            if blocked:
+                state.close_op(op, "blocked")  # nichts angelegt: nächster Lauf beginnt mit frischer Operation
+                detail = ", ".join(f"{d}: {r}" for d, r in sorted(blocked.items()))
+                raise IngressError(f"HTTP-01-Prüfung für {', '.join(spec.domains)} fehlgeschlagen ({detail}); "
+                                   "Port 80 aus dem Internet erreichbar machen oder "
+                                   "certificate.dns_challenge: true")
+        state.step(op, "npm_requesting")
+        created = npm.create_letsencrypt_certificate(
+            list(spec.domains), dns_challenge=spec.dns_challenge,
+            dns_provider=issuer.dns_provider if spec.dns_challenge else None,
+            dns_credentials=ctx.le_dns_credentials if spec.dns_challenge else None,
+            propagation_seconds=issuer.propagation_seconds if spec.dns_challenge else None)
+        cert_id, expires_on, le_issuer = created["id"], created.get("expires_on"), created.get("le_issuer")
+    state.step(op, "npm_created", npm_cert_id=cert_id, expires_on=expires_on, le_issuer=le_issuer)
+    log.event("issue", "ok", service=spec.resource_id, npm_cert_id=cert_id, not_after=expires_on)
+    return {"op": op, "npm_cert_id": cert_id, "info": None, "infisical_cert_id": None}
+
+
 def _chain_without_leaf(chain_pem: str | None, leaf_fp: str) -> str | None:
     parts = [c for c in certs.split_pem_chain(chain_pem) if certs.cert_info(c).fingerprint != leaf_fp]
     if not parts:
@@ -359,9 +471,16 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
             raise IngressError(msg)
 
     old_cert_id = st.get("npm_cert_id") if st else None
+    issuer = ctx.inv.issuers[spec.issuer_ref]
+    is_le = issuer.type == "letsencrypt"
     new_cert = ensure_certificate(ctx, spec) if plan.cert_reasons else None
     cert_id = new_cert["npm_cert_id"] if new_cert else old_cert_id
-    expected_fp = new_cert["info"].fingerprint if new_cert else st.get("cert_fingerprint")
+    renewed = npm.renew_certificate(cert_id) if (is_le and plan.renew_cert and not plan.cert_reasons) else None
+    if is_le:
+        # Die API liefert kein PEM: kein Soll-Fingerprint; verglichen wird mit dem, was die Prüfung sieht.
+        expected_fp = None
+    else:
+        expected_fp = new_cert["info"].fingerprint if new_cert else st.get("cert_fingerprint")
     want = desired_host(spec, cert_id)
 
     host_existed = not plan.create_host
@@ -386,19 +505,25 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
         if new_cert:
             changes["certificate_id"] = cert_id
             changes["ssl_forced"] = want["ssl_forced"]
-        npm.update_proxy_host(host_id, changes)
-        log.event("host", "updated", npm_host_id=host_id, fields=sorted(changes))
+        if changes:
+            npm.update_proxy_host(host_id, changes)
+            log.event("host", "updated", npm_host_id=host_id, fields=sorted(changes))
 
     npm_cfg = ctx.inv.npm_instances[spec.npm_instance]
+    # Let's Encrypt: System-Trust-Store, sofern der Issuer kein eigenes Bundle vorgibt.
+    ca_bundle = issuer.ca_bundle if (issuer.ca_bundle or not is_le) else None
+    observed_fp = None
     for attempt in range(1, ctx.verify_attempts + 1):
         failures = []
         for domain in spec.domains:
             res = ctx.checker.https(npm_cfg.tls_address, npm_cfg.tls_port, domain, spec.health_path,
-                                    spec.health_statuses, ctx.inv.issuers[spec.issuer_ref].ca_bundle)
+                                    spec.health_statuses, ca_bundle)
             if not res.ok:
                 failures.append(res.error)
             elif expected_fp and res.fingerprint != expected_fp:
                 failures.append(f"{domain}: NPM präsentiert nicht das erwartete Zertifikat")
+            else:
+                observed_fp = res.fingerprint
         if not failures:
             break
         if attempt < ctx.verify_attempts:
@@ -417,13 +542,33 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
     fields = dict(manifest=spec.to_json(), reconciled_commit=commit, last_result="ok", last_error=None,
                   public_config=public_config)
     if new_cert:
-        info = new_cert["info"]
-        fields.update(npm_cert_id=cert_id, infisical_cert_id=new_cert["infisical_cert_id"],
-                      cert_fingerprint=info.fingerprint, cert_sans=info.sans, cert_not_after=info.not_after.isoformat(),
-                      cert_issuer=info.issuer, policy_hash=spec.policy_hash())
+        if is_le:
+            data = new_cert["op"]["data"]
+            fields.update(npm_cert_id=cert_id, infisical_cert_id=None, cert_issuer=data.get("le_issuer"),
+                          cert_fingerprint=observed_fp, cert_not_after=_iso_expires(data.get("expires_on")),
+                          policy_hash=spec.policy_hash())
+        else:
+            info = new_cert["info"]
+            fields.update(npm_cert_id=cert_id, infisical_cert_id=new_cert["infisical_cert_id"],
+                          cert_fingerprint=info.fingerprint, cert_sans=info.sans,
+                          cert_not_after=info.not_after.isoformat(), cert_issuer=info.issuer,
+                          policy_hash=spec.policy_hash())
         state.close_op(new_cert["op"], "done")
+    elif renewed is not None:
+        fields.update(npm_cert_id=cert_id, infisical_cert_id=None,
+                      cert_issuer=renewed.get("le_issuer") or (st.get("cert_issuer") if st else None),
+                      cert_fingerprint=observed_fp, cert_not_after=_iso_expires(renewed.get("expires_on")),
+                      policy_hash=spec.policy_hash())
     state.upsert(spec.resource_id, **fields)
-    log.event("apply", "ok", not_after=(new_cert["info"].not_after if new_cert else st.get("cert_not_after")))
+    if new_cert and new_cert["info"]:
+        not_after = new_cert["info"].not_after
+    elif new_cert:
+        not_after = new_cert["op"]["data"].get("expires_on")
+    elif renewed is not None:
+        not_after = renewed.get("expires_on")
+    else:
+        not_after = st.get("cert_not_after") if st else None
+    log.event("apply", "ok", not_after=not_after)
 
     if new_cert and old_cert_id and old_cert_id != cert_id:
         try:

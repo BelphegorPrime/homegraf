@@ -18,7 +18,7 @@ Field contract (environment -> attribute, reused names first)::
                                                                           contains both logins below
     FORGEHANDS_AGENT_LOGIN                     agent_login                homegraf-agent
     FORGEHANDS_HUMAN_LOGIN                     human_login                required, not the agent
-    FORGEHANDS_FORGEJO_AGENT_TOKEN             forgejo_agent_token        FORGEJO_TOKEN falls back
+    FORGEHANDS_FORGEJO_AGENT_TOKEN             forgejo_agent_token        optional; supplied by #72
     FORGEHANDS_FORGEJO_WEBHOOK_SECRET          forgejo_webhook_secret     required
     FORGEHANDS_MIRROR_URL                      mirror_url                 optional
     FORGEHANDS_MIRROR_TOKEN                    mirror_token               optional
@@ -34,6 +34,11 @@ without an entry stays manual (``repository_merge_policy()`` returns ``None``); 
 ``{}`` stays empty.  Only when the variable is unset does a fresh opt-in get
 ``DEFAULT_MERGE_DENY`` for its own repository.  Operator policy is never replaced by the
 default and is never read from a repository file.
+
+The agent token is not an operator input: ``ensure_agent_user`` (#72) creates the agent user and
+its token during the bootstrap, and the runtime writer (#58) publishes it.  A fresh setup leaves
+``FORGEHANDS_FORGEJO_AGENT_TOKEN`` empty and this parser accepts that; ``FORGEJO_TOKEN`` is never
+a fallback, because it holds the operator's token.
 
 Secrets (the backend key, gateway key, agent token, webhook secret and mirror token) are
 excluded from ``repr()``; validation errors name the variable, never its value.
@@ -138,11 +143,7 @@ class FactoryConfig:
         max_concurrent = _limit(env, "FORGEHANDS_MAX_CONCURRENT", 4, MAX_CONCURRENT)
         if max_concurrent_per_tier > max_concurrent:
             raise FactoryConfigError("FORGEHANDS_MAX_CONCURRENT_PER_TIER must not exceed FORGEHANDS_MAX_CONCURRENT")
-        agent_token = (_secret(env, "FORGEHANDS_FORGEJO_AGENT_TOKEN", required=False)
-                       or _secret(env, "FORGEJO_TOKEN", required=False))
-        if not agent_token:
-            raise FactoryConfigError("FORGEHANDS_FORGEJO_AGENT_TOKEN (or FORGEJO_TOKEN) is not set "
-                                     f"(the factory is opted in with {OPT_IN}=1)")
+        agent_token = _secret(env, "FORGEHANDS_FORGEJO_AGENT_TOKEN", required=False)
         allowed_senders = _senders(env, "FORGEHANDS_ALLOWED_SENDERS")
         agent_login = _login(env, "FORGEHANDS_AGENT_LOGIN", default=DEFAULT_AGENT_LOGIN)
         human_login = _login(env, "FORGEHANDS_HUMAN_LOGIN")

@@ -38,6 +38,34 @@ x-bootstrap-env: &bootstrap-env
       STATE_VOLUME: ${PROJECT_PREFIX:-homegraf}-ingressctl-state
       COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
 
+# What the bootstrap needs to reconcile the factory and write the ForgeHands runtime handoff.  Only the bootstrap gets these; the
+# certificates step does not need the model or gateway credentials.
+x-factory-env: &factory-env
+      FORGEHANDS_BOOTSTRAP: ${FORGEHANDS_BOOTSTRAP:-}
+      FORGEHANDS_OPENHANDS_API_URL: ${FORGEHANDS_OPENHANDS_API_URL:-http://openhands:8000}
+      OPENHANDS_LOCAL_BACKEND_API_KEY: ${OPENHANDS_LOCAL_BACKEND_API_KEY:-}
+      FORGEHANDS_FORGEJO_URL: ${FORGEHANDS_FORGEJO_URL:-http://forgejo:3000}
+      FORGEHANDS_FORGEJO_AGENT_TOKEN: ${FORGEHANDS_FORGEJO_AGENT_TOKEN:-}
+      FORGEHANDS_FORGEJO_WEBHOOK_SECRET: ${FORGEHANDS_FORGEJO_WEBHOOK_SECRET:-}
+      FORGEHANDS_AGENT_LOGIN: ${FORGEHANDS_AGENT_LOGIN:-homegraf-agent}
+      FORGEHANDS_HUMAN_LOGIN: ${FORGEHANDS_HUMAN_LOGIN:-}
+      FORGEHANDS_ALLOWED_REPOS: ${FORGEHANDS_ALLOWED_REPOS:-}
+      FORGEHANDS_ALLOWED_SENDERS: ${FORGEHANDS_ALLOWED_SENDERS:-}
+      FORGEHANDS_AGENT_SECRETS: ${FORGEHANDS_AGENT_SECRETS:-}
+      FORGEHANDS_MERGE_POLICY: ${FORGEHANDS_MERGE_POLICY:-}
+      FORGEHANDS_STRONG_MODEL: ${FORGEHANDS_STRONG_MODEL:-}
+      FORGEHANDS_CHEAP_MODEL: ${FORGEHANDS_CHEAP_MODEL:-}
+      FORGEHANDS_GATEWAY_URL: ${FORGEHANDS_GATEWAY_URL:-}
+      FORGEHANDS_GATEWAY_API_KEY: ${FORGEHANDS_GATEWAY_API_KEY:-}
+      FORGEHANDS_RUNTIME_DIR: ${FORGEHANDS_RUNTIME_DIR:-/factory-runtime}
+      FORGEHANDS_MAX_CONCURRENT_PER_TIER: ${FORGEHANDS_MAX_CONCURRENT_PER_TIER:-2}
+      FORGEHANDS_MAX_CONCURRENT: ${FORGEHANDS_MAX_CONCURRENT:-4}
+      FORGEHANDS_MAX_RUNS_PER_HOUR: ${FORGEHANDS_MAX_RUNS_PER_HOUR:-30}
+      FORGEHANDS_MAX_RUN_MINUTES: ${FORGEHANDS_MAX_RUN_MINUTES:-120}
+      FORGEHANDS_MAX_ROUNDS: ${FORGEHANDS_MAX_ROUNDS:-3}
+      FORGEHANDS_MIRROR_URL: ${FORGEHANDS_MIRROR_URL:-}
+      FORGEHANDS_MIRROR_TOKEN: ${FORGEHANDS_MIRROR_TOKEN:-}
+
 # One network with a fixed name: ingressctl (a Komodo stack, so not part of this file) joins it to reach the proxy and Infisical by name.
 networks:
   default:
@@ -531,18 +559,46 @@ services:
       start_period: 60s
     logging: *logging
 
+  # A new named volume is root-owned, while the bootstrap and ForgeHands run as uid 1000.  This one-shot only gives the dedicated
+  # handoff directory to that uid (0700) before the bootstrap writes the 0600 file; it cannot touch bootstrap-state.
+  factory-runtime-init:
+    image: ${BOOTSTRAP_IMAGE:-ghcr.io/belphegorprime/homegraf-bootstrap:main}
+    container_name: ${PROJECT_PREFIX:-homegraf}-factory-runtime-init
+    profiles: [agents]
+    restart: "no"
+    user: "0:0"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    entrypoint: ["python3", "-c", "import os; os.chmod('/factory-runtime', 0o700); os.chown('/factory-runtime', 1000, 1000)"]
+    volumes:
+      - factory-runtime:/factory-runtime
+    logging: *logging
+
   forgehands:
-    # Releases before 0.2.5 started nothing for a label added to an existing issue; before 0.2.8 there were no pull request rounds.
-    # Pin the version.
-    image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:v0.2.11}
+    # Releases before 0.2.15 do not carry the pull request rounds and the profile-id routes the factory relies on. Pin the version.
+    image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:v0.2.15}
     container_name: ${PROJECT_PREFIX:-homegraf}-forgehands
     profiles: [agents]
     restart: unless-stopped
     init: true
     depends_on:
+      # OpenHands is ready before the bootstrap writes the handoff, and the bootstrap is done before the launcher reads it.
       openhands:
         condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    # The launcher starts the image's own command unchanged.  With FORGEHANDS_BOOTSTRAP=1 it first waits for the bootstrap's runtime
+    # handoff and refuses to start on a missing, partial or invalid file; without the opt-in it never reads that file.
+    entrypoint: ["node", "/factory/forgehands-entrypoint.mjs"]
+    command: ["docker-entrypoint.sh", "node", "src/index.mjs"]
     environment:
+      FORGEHANDS_BOOTSTRAP: ${FORGEHANDS_BOOTSTRAP:-}
+      # Operator-only launcher switches.  A non-empty operator variable keeps its value; the handoff fills what is empty.
+      FORGEHANDS_RUNTIME_FILE: ${FORGEHANDS_RUNTIME_FILE:-/factory-runtime/forgehands.json}
+      FORGEHANDS_RUNTIME_WAIT_MS: ${FORGEHANDS_RUNTIME_WAIT_MS:-120000}
       # Both modes: Forgejo delivers the issues events ForgeHands works from (at least 16 characters).
       FORGEJO_WEBHOOK_SECRET: ${FORGEHANDS_FORGEJO_WEBHOOK_SECRET:-}
       # Webhook mode only (empty OPENHANDS_API_URL): the HMAC secret and the URL of the Canvas automation. Empty until the webhook is
@@ -551,25 +607,35 @@ services:
       OPENHANDS_WEBHOOK_SECRET: ${FORGEHANDS_OPENHANDS_WEBHOOK_SECRET:-}
       OPENHANDS_WEBHOOK_URL: ${FORGEHANDS_OPENHANDS_WEBHOOK_URL:-}
       # Direct mode: with OPENHANDS_API_URL set, ForgeHands calls POST /api/conversations itself and the two OpenHands webhook settings
-      # above are ignored (FORGEJO_WEBHOOK_SECRET is not). Empty keeps webhook mode, so an existing .env changes nothing.
+      # above are ignored (FORGEJO_WEBHOOK_SECRET is not). Empty keeps webhook mode; the runtime handoff fills it only once the four
+      # profile ids were read back, so a fresh stack never starts direct mode from a profile name.
       OPENHANDS_API_URL: ${FORGEHANDS_OPENHANDS_API_URL:-}
       OPENHANDS_API_KEY: ${OPENHANDS_LOCAL_BACKEND_API_KEY:-}
       # Variables handed to every conversation: without them the agent has no Forgejo token (saved secrets need to be named).
       AGENT_SECRETS: ${FORGEHANDS_AGENT_SECRETS:-}
       FORGEJO_URL: ${FORGEHANDS_FORGEJO_URL:-http://forgejo:3000}
-      FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+      # The agent user's token only.  The operator's FORGEJO_TOKEN never reaches ForgeHands; in opted-in mode the bootstrap's
+      # handoff supplies the agent token, and the launcher checks its identity before anything starts.
+      FORGEJO_TOKEN: ${FORGEHANDS_FORGEJO_AGENT_TOKEN:-}
       # Label -> profile id, tier, max_iterations (and optional max_budget, max_concurrent); ids from GET /api/agent-profiles, a name is
       # rejected with HTTP 422. Empty keeps direct mode off.
       LABEL_ROUTES: ${FORGEHANDS_LABEL_ROUTES:-}
       ALLOWED_REPOS: ${FORGEHANDS_ALLOWED_REPOS:-}
       ALLOWED_SENDERS: ${FORGEHANDS_ALLOWED_SENDERS:-}
+      HUMAN_LOGIN: ${FORGEHANDS_HUMAN_LOGIN:-}
       MAX_CONCURRENT_PER_TIER: ${FORGEHANDS_MAX_CONCURRENT_PER_TIER:-2}
       MAX_CONCURRENT: ${FORGEHANDS_MAX_CONCURRENT:-4}
       MAX_RUNS_PER_HOUR: ${FORGEHANDS_MAX_RUNS_PER_HOUR:-30}
       MAX_RUN_MINUTES: ${FORGEHANDS_MAX_RUN_MINUTES:-120}
+      MAX_ROUNDS: ${FORGEHANDS_MAX_ROUNDS:-3}
+      MERGE_POLICY: ${FORGEHANDS_MERGE_POLICY:-}
+      TIER_WEEKLY_BUDGETS: ${FORGEHANDS_TIER_WEEKLY_BUDGETS:-}
       WORKSPACE_DIR: /workspace
       JOBS_FILE: /app/data/jobs.json
     volumes:
+      - ./scripts/forgehands-entrypoint.mjs:/factory/forgehands-entrypoint.mjs:ro
+      # Only the handoff directory, read-only: not bootstrap-state, which holds unrelated credentials.
+      - factory-runtime:/factory-runtime:ro
       - forgehands-data:/app/data
       - forgehands-workspace:/workspace
     ports:
@@ -670,10 +736,20 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    environment: *bootstrap-env
+    environment:
+      <<: [*bootstrap-env, *factory-env]
     volumes:
       - bootstrap-state:/state
+      # Writable here only: the bootstrap publishes the ForgeHands runtime handoff (atomic 0600) and ForgeHands mounts it read-only.
+      - factory-runtime:/factory-runtime
     depends_on:
+      # With the agents profile the bootstrap waits for a ready Canvas and the runtime volume owner before writing the handoff.
+      openhands:
+        condition: service_healthy
+        required: false
+      factory-runtime-init:
+        condition: service_completed_successfully
+        required: false
       forgejo-admin:
         condition: service_completed_successfully
       komodo-core:
@@ -720,6 +796,8 @@ services:
 
 volumes:
   bootstrap-state:
+  # The ForgeHands runtime handoff only, separate from bootstrap-state so ForgeHands never sees the unrelated credentials there.
+  factory-runtime:
   kuma-data:
   runner-dind:
   runner-data:

@@ -77,8 +77,9 @@ jobs:
           # The last 80 lines, without ANSI colours and without anything that looks like a credential.
           { if [ -s "$LOG" ]; then tail -n 80 "$LOG"; else echo "no output: $LOG is missing or empty"; fi; } |
             sed -E -e 's/\x1b\[[0-9;]*[A-Za-z]//g' \
-              -e 's/(token|password|passwd|secret|bearer)([=: ]+)[^[:space:]`]+/\1\2<redacted>/Ig' \
-              -e 's/[A-Za-z0-9+=]{40,}/<redacted>/g' |
+              -e 's/(token|password|passwd|secret)([[:space:]]*[=:][[:space:]]*)[^[:space:]`]+/\1\2<redacted>/Ig' \
+              -e 's/(bearer)([[:space:]]+)[^[:space:]`]+/\1\2<redacted>/Ig' \
+              -e 's/[A-Za-z0-9+]{40,}/<redacted>/g' |
             tr -d '\000-\010\013\014\016-\037\177' > ci-output.tail
           {
             printf 'CI job `%s` failed for commit `%s`.\n\n```\n' "$JOB" "$COMMIT"
@@ -133,8 +134,9 @@ jobs:
           # The last 80 lines, without ANSI colours and without anything that looks like a credential.
           { if [ -s "$LOG" ]; then tail -n 80 "$LOG"; else echo "no output: $LOG is missing or empty"; fi; } |
             sed -E -e 's/\x1b\[[0-9;]*[A-Za-z]//g' \
-              -e 's/(token|password|passwd|secret|bearer)([=: ]+)[^[:space:]`]+/\1\2<redacted>/Ig' \
-              -e 's/[A-Za-z0-9+=]{40,}/<redacted>/g' |
+              -e 's/(token|password|passwd|secret)([[:space:]]*[=:][[:space:]]*)[^[:space:]`]+/\1\2<redacted>/Ig' \
+              -e 's/(bearer)([[:space:]]+)[^[:space:]`]+/\1\2<redacted>/Ig' \
+              -e 's/[A-Za-z0-9+]{40,}/<redacted>/g' |
             tr -d '\000-\010\013\014\016-\037\177' > ci-output.tail
           {
             printf 'CI job `%s` failed for commit `%s`.\n\n```\n' "$JOB" "$COMMIT"
@@ -195,8 +197,9 @@ jobs:
           # The last 80 lines, without ANSI colours and without anything that looks like a credential.
           { if [ -s "$LOG" ]; then tail -n 80 "$LOG"; else echo "no output: $LOG is missing or empty"; fi; } |
             sed -E -e 's/\x1b\[[0-9;]*[A-Za-z]//g' \
-              -e 's/(token|password|passwd|secret|bearer)([=: ]+)[^[:space:]`]+/\1\2<redacted>/Ig' \
-              -e 's/[A-Za-z0-9+=]{40,}/<redacted>/g' |
+              -e 's/(token|password|passwd|secret)([[:space:]]*[=:][[:space:]]*)[^[:space:]`]+/\1\2<redacted>/Ig' \
+              -e 's/(bearer)([[:space:]]+)[^[:space:]`]+/\1\2<redacted>/Ig' \
+              -e 's/[A-Za-z0-9+]{40,}/<redacted>/g' |
             tr -d '\000-\010\013\014\016-\037\177' > ci-output.tail
           {
             printf 'CI job `%s` failed for commit `%s`.\n\n```\n' "$JOB" "$COMMIT"

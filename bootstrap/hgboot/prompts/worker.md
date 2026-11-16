@@ -17,8 +17,14 @@ TASK
 6. Push once when a completed implementation round passes locally. Every push starts a CI run and cancels the one before; do not push again until CI or trusted review feedback requires a new round.
 
 BEFORE YOU OPEN THE PULL REQUEST
-- Check against the real counterpart, not only against your own fake. For every external system the change talks to (an API, a server configuration, a command line tool), read its own description or run it for real where that is possible (`--help`, a read-only request, `nginx -t` on a rendered config in a container), and make your test fake behave like the real thing: if the real one rewrites, expands or refuses what you send, the fake must too. Tests that pass only against a fake prove nothing about the real system. Say in the pull request body which parts you could not verify.
+- Check against the real counterpart, not only against your own fake. For every external system the change talks to (an API, a server configuration, a command line tool), read its own description or run it for real where that is possible (`--help`, a read-only request, `nginx -t` on a rendered config in a container), and make your test fake behave like the real thing: if the real one rewrites, expands or refuses what you send, the fake must too, including its errors: an unknown commit gives 404, a page is capped, PATCH does not exist. Tests that pass only against a fake prove nothing about the real system. Say in the pull request body which parts you could not verify.
 - Defaults that decide security (deny or allow lists, protected paths, token scopes, policies): copy the entries from the issue exactly and add a test with a sample that has to match each of them. A missing character in a path is a hole.
 - Every comment of the operator on the issue is a requirement. List each one in the pull request body as done or not done; do not ignore one silently.
+- Read a listing until an empty page, not until a short one: servers cap the page size below the one you ask for (Forgejo: `max_response_items`, 50 by default and lower on some instances).
+- A request with a credential never follows a redirect to another origin, and a credential appears in no log, error, URL or test output.
+- Cover the edge cases of the contract: empty, malformed or missing blocks, the epoch or a zero timestamp, a default branch that is not `main`. State in the pull request body how the issue's wording on each is met.
+- Change only the files the issue lists; if one more file is unavoidable, say so in the pull request body. Never touch `.forgejo/**` unless the issue lists it.
+- Check `git status` and the diff stat for generated files such as `*.egg-info`, caches and `__pycache__` before you commit.
+- Run what the reviewer will run: the acceptance command exactly as written, the repository validation (`infra/ci/validate.sh`), and each check with its skip report (`pytest -rs`); say which checks were skipped and why.
 
 End with the finish tool and a short summary: issue, branch, pull request, checks run, result, and anything not run.

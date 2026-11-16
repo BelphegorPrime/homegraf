@@ -17,9 +17,19 @@ def apply(env, stack="omniroute", **kw):
 
 
 def set_public(env, value: str | None):
-    """Setzt (oder entfernt) den einzeiligen proxy.public-Block im Omniroute-Manifest."""
+    """Setzt (oder entfernt) den einzeiligen proxy.public-Block im Omniroute-Manifest.
+
+    proxy.public verlangt einen Let's-Encrypt-Issuer; deshalb stellt das Manifest für diese Tests auf den
+    öffentlichen LE-Host um. Das Entfernen lässt Issuer und Domain unverändert (kein neues Zertifikat).
+    """
     path = env.root / "stacks/ai/omniroute/ingress.yaml"
-    lines = [line for line in path.read_text().splitlines() if "public:" not in line]
+    text = path.read_text()
+    if value is not None:
+        text = (text.replace("domains: [Omni.Lab.Example.]", "domains: [omni.pub.example]")
+                    .replace("certificate: {issuer_ref: homelab-private-ca, validity_days: 90,"
+                             " renew_before_days: 30}",
+                             "certificate: {issuer_ref: letsencrypt, renew_before_days: 30}"))
+    lines = [line for line in text.splitlines() if "public:" not in line]
     if value is not None:
         i = next(i for i, line in enumerate(lines) if "force_https:" in line)
         lines.insert(i + 1, f"      public: {value}")
@@ -402,7 +412,7 @@ def test_changed_public_paths_update_advanced_config_without_new_cert(env):
     set_public(env, '{paths: [/hook/other, "/files/*"], methods: [post]}')
     ctx, spec, res = apply(env)
     host = env.npm.hosts[row["npm_host_id"]]
-    assert res == "applied" and env.inf.issued == 1
+    assert res == "applied" and len(env.npm.le_issued) == 1
     assert host["advanced_config"] == render_public_config(spec.public)
     assert host["certificate_id"] == row["npm_cert_id"]
 

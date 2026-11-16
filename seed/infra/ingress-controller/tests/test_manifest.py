@@ -162,12 +162,10 @@ def test_existing_manifest_has_no_public_spec(env):
 
 
 def test_public_block_is_validated_and_round_trips(env):
-    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
-        "      force_https: true\n",
-        "      force_https: true\n"
-        "      public: "
-        '{paths: [/hook/abc, "/files/*"], methods: [post], allow_cidrs: [10.0.0.0/8]}\n')
-    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    _set_le_issuer(env, dns_provider="cloudflare")
+    _le_manifest(env, cert="issuer_ref: letsencrypt, dns_challenge: true",
+                 proxy_extra="      public: "
+                             '{paths: [/hook/abc, "/files/*"], methods: [post], allow_cidrs: [10.0.0.0/8]}\n')
     (spec,) = env.specs("omniroute")
     assert spec.public is not None
     assert spec.public.paths == ("/files/*", "/hook/abc")
@@ -178,11 +176,7 @@ def test_public_block_is_validated_and_round_trips(env):
 
 
 def test_public_block_accepts_a_preset(env):
-    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
-        "      force_https: true\n",
-        "      force_https: true\n"
-        "      public: {paths: [/hook/abc], allow_cidrs: {preset: github-hooks}}\n")
-    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    _le_manifest(env, proxy_extra="      public: {paths: [/hook/abc], allow_cidrs: {preset: github-hooks}}\n")
     (spec,) = env.specs("omniroute")
     assert spec.public is not None
     assert spec.public.allow_cidrs == ()
@@ -192,10 +186,9 @@ def test_public_block_accepts_a_preset(env):
 
 def test_from_json_accepts_public_without_allow_presets(env):
     """Zustandszeilen, die vor dieser Scheibe geschrieben wurden, tragen kein allow_presets."""
-    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
-        "      force_https: true\n",
-        "      force_https: true\n      public: {paths: [/a], allow_cidrs: [10.0.0.0/8]}\n")
-    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    _set_le_issuer(env, dns_provider="cloudflare")
+    _le_manifest(env, cert="issuer_ref: letsencrypt, dns_challenge: true",
+                 proxy_extra="      public: {paths: [/a], allow_cidrs: [10.0.0.0/8]}\n")
     (spec,) = env.specs("omniroute")
     data = json.loads(spec.to_json())
     del data["public"]["allow_presets"]
@@ -205,19 +198,13 @@ def test_from_json_accepts_public_without_allow_presets(env):
 
 
 def test_invalid_public_block_is_rejected(env):
-    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
-        "      force_https: true\n",
-        "      force_https: true\n      public: {paths: [/]}\n")
-    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    _le_manifest(env, proxy_extra="      public: {paths: [/]}\n")
     with pytest.raises(ManifestError, match="proxy.public.paths"):
         env.specs("omniroute")
 
 
 def test_public_block_unknown_field_is_rejected(env):
-    text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
-        "      force_https: true\n",
-        "      force_https: true\n      public: {paths: [/hook], typo: 1}\n")
-    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
+    _le_manifest(env, proxy_extra="      public: {paths: [/hook], typo: 1}\n")
     with pytest.raises(ManifestError, match="typo"):
         env.specs("omniroute")
 
@@ -356,13 +343,13 @@ def test_letsencrypt_public_allow_cidrs_with_dns_challenge_accepted(env):
     assert spec.dns_challenge is True and spec.public.allow_cidrs == ("10.0.0.0/8",)
 
 
-def test_letsencrypt_public_allow_cidrs_rule_does_not_touch_private_ca(env):
+def test_public_block_requires_letsencrypt_issuer(env):
     text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace(
         "      force_https: true\n",
         "      force_https: true\n      public: {paths: [/hook], allow_cidrs: [10.0.0.0/8]}\n")
     (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
-    (spec,) = env.specs("omniroute")
-    assert spec.public.allow_cidrs == ("10.0.0.0/8",) and spec.dns_challenge is False
+    with pytest.raises(ManifestError, match="proxy.public verlangt einen Let's-Encrypt-Issuer"):
+        env.specs("omniroute")
 
 
 def test_unknown_issuer_type_is_config_error(env):

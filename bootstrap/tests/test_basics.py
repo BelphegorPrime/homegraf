@@ -115,14 +115,14 @@ class SeedTests(unittest.TestCase):
 
     def test_placeholders_are_filled_in_text_files_only_and_junk_is_skipped(self):
         d = self.make({"inventory/a.yaml": b"domain: @@DOMAIN@@\nrepo: @@REPOSITORY@@\n", "bin.dat": b"\xff\xfe@@DOMAIN@@", ".git/config": b"x",
-                       "pkg/__pycache__/m.pyc": b"x", "README.md": "Grüße @@HOST_IP@@".encode()})
+                       "pkg/__pycache__/m.pyc": b"x", "README.md": "Hello 👋 @@HOST_IP@@".encode()})
         import pathlib
         subs = seed.substitutions(config(), "Local")
         got = dict(seed.collect(pathlib.Path(d), subs))
         self.assertEqual(sorted(got), ["README.md", "bin.dat", "inventory/a.yaml"])
         self.assertEqual(got["inventory/a.yaml"], b"domain: home.lab\nrepo: owner/infrastructure\n")
         self.assertEqual(got["bin.dat"], b"\xff\xfe@@DOMAIN@@")
-        self.assertEqual(got["README.md"].decode(), "Grüße 192.168.1.10")
+        self.assertEqual(got["README.md"].decode(), "Hello 👋 192.168.1.10")
 
     def test_an_unknown_placeholder_is_an_error(self):
         import pathlib

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""stackctl: Inventar validieren und betroffene Stacks einer Git-Änderung bestimmen.
+"""stackctl: validate the inventory and determine the stacks affected by a Git change.
 
-Ausschließlich lesend; benötigt keine Credentials. Abhängigkeiten: Python >= 3.11, PyYAML, git.
+Read-only; needs no credentials. Dependencies: Python >= 3.11, PyYAML, git.
 
   stackctl validate --root .
   stackctl affected --root . --head <sha> (--base <sha> | --deployed deployed.json)
 
-`--deployed` ist eine JSON-Map {stack_id: zuletzt erfolgreich deployter Commit | null}. Dadurch wird je
-Stack gegen dessen eigenen Stand verglichen, nicht nur gegen den letzten Push-Diff.
+`--deployed` is a JSON map {stack_id: commit deployed successfully last | null}. Each stack is then
+compared against its own state, not only against the last push diff.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ import stacklist  # noqa: E402
 STACK_KEYS = {"id", "namespace", "path", "compose_files", "legacy", "komodo_stack", "server", "project_name",
               "status", "extra_files", "notes", "secrets", "job"}
 STACK_REQUIRED = {"id", "namespace", "path", "compose_files", "status"}
-STATUSES = {"unverified", "verified", "inactive", "unmanaged", "derived"}  # unmanaged: nicht über Komodo ausgerollt; derived: nur als Ordner mit compose.yaml + ingress.yaml
+STATUSES = {"unverified", "verified", "inactive", "unmanaged", "derived"}  # unmanaged: not rolled out through Komodo; derived: only a folder with compose.yaml + ingress.yaml
 SECRET_SOURCES = {"infisical"}  # infra/infisical/stack_secrets.py
 INGRESS_FILE = "ingress.yaml"
 INGRESS_GLOBAL = ("inventory/ingress.yaml", "inventory/namespaces.yaml")
@@ -66,7 +66,7 @@ def glob_match(path: str, patterns) -> bool:
 def git(root: pathlib.Path, *args: str, check: bool = True) -> str:
     res = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
     if check and res.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} fehlgeschlagen: {res.stderr.strip()}")
+        raise RuntimeError(f"git {' '.join(args)} failed: {res.stderr.strip()}")
     return res.stdout
 
 
@@ -77,7 +77,7 @@ def load_yaml_text(text: str | None, default):
 
 
 def read_at(root: pathlib.Path, commit: str | None, rel: str):
-    """Datei-Inhalt zu einem Commit (None = Arbeitsverzeichnis). Fehlende Datei -> None."""
+    """File content at a commit (None = working directory). Missing file -> None."""
     if commit is None:
         p = root / rel
         return p.read_text() if p.exists() else None
@@ -90,7 +90,7 @@ class Inventory:
         self.root = root
         self.commit = commit
         self.stacks = load_yaml_text(read_at(root, commit, "inventory/stacks.yaml"), {}).get("stacks") or []
-        if commit is None:   # Ordner mit compose.yaml + ingress.yaml ohne Eintrag (im Arbeitsverzeichnis; ein Commit-Stand kennt sie nicht)
+        if commit is None:   # folder with compose.yaml + ingress.yaml without an entry (in the working directory; a commit state does not know them)
             self.stacks = self.stacks + stacklist.derived(root, self.stacks)
         self.servers = load_yaml_text(read_at(root, commit, "inventory/servers.yaml"), {}).get("servers") or {}
         self.namespaces = load_yaml_text(read_at(root, commit, "inventory/namespaces.yaml"), {}).get("namespaces") or {}
@@ -107,60 +107,60 @@ def validate(root: pathlib.Path, strict: bool = False) -> tuple[list[str], list[
     for i, s in enumerate(inv.stacks):
         where = f"inventory/stacks.yaml[{i}]"
         if not isinstance(s, dict):
-            errors.append(f"{where}: Eintrag ist kein Objekt")
+            errors.append(f"{where}: entry is not an object")
             continue
         where = f"{where} ({s.get('id')})"
         for k in sorted(set(s) - STACK_KEYS):
-            errors.append(f"{where}: unbekanntes Feld '{k}'")
+            errors.append(f"{where}: unknown field '{k}'")
         for k in sorted(STACK_REQUIRED - set(s)):
-            errors.append(f"{where}: Pflichtfeld '{k}' fehlt")
+            errors.append(f"{where}: required field '{k}' is missing")
         sid = s.get("id")
         if sid in seen:
-            errors.append(f"{where}: doppelte Stack-ID")
+            errors.append(f"{where}: duplicate stack ID")
         seen.add(sid)
         ns = s.get("namespace")
         path = str(s.get("path", ""))
         if ns not in inv.namespaces:
-            errors.append(f"{where}: unbekannter Namespace '{ns}'")
+            errors.append(f"{where}: unknown namespace '{ns}'")
         elif not any((path + "/").startswith(p) for p in inv.namespaces[ns].get("paths", [])):
-            errors.append(f"{where}: Pfad '{path}' liegt nicht im Namespace '{ns}'")
+            errors.append(f"{where}: path '{path}' is not inside namespace '{ns}'")
         if not (root / path).is_dir():
-            errors.append(f"{where}: Verzeichnis '{path}' fehlt")
+            errors.append(f"{where}: directory '{path}' is missing")
         for f in s.get("compose_files") or []:
             cf = root / path / f
             if not cf.is_file():
-                errors.append(f"{where}: Compose-Datei '{path}/{f}' fehlt")
+                errors.append(f"{where}: compose file '{path}/{f}' is missing")
                 continue
             try:
                 doc = yaml.safe_load(cf.read_text())
                 if not isinstance(doc, dict) or not isinstance(doc.get("services"), dict):
-                    errors.append(f"{where}: '{path}/{f}' enthält keine services")
+                    errors.append(f"{where}: '{path}/{f}' has no services")
             except yaml.YAMLError as e:
-                errors.append(f"{where}: '{path}/{f}' ist kein gültiges YAML: {str(e).splitlines()[0]}")
+                errors.append(f"{where}: '{path}/{f}' is not valid YAML: {str(e).splitlines()[0]}")
         for f in s.get("extra_files") or []:
             if not (root / f).exists():
-                errors.append(f"{where}: extra_file '{f}' fehlt")
+                errors.append(f"{where}: extra_file '{f}' is missing")
         if s.get("server") is not None and s["server"] not in inv.servers:
-            errors.append(f"{where}: unbekannter Server '{s['server']}'")
+            errors.append(f"{where}: unknown server '{s['server']}'")
         if s.get("status") not in STATUSES:
-            errors.append(f"{where}: status muss einer von {sorted(STATUSES)} sein")
+            errors.append(f"{where}: status must be one of {sorted(STATUSES)}")
         if "secrets" in s:
             if s["secrets"] not in SECRET_SOURCES:
-                errors.append(f"{where}: secrets muss einer von {sorted(SECRET_SOURCES)} sein")
+                errors.append(f"{where}: secrets must be one of {sorted(SECRET_SOURCES)}")
             elif s.get("komodo_stack") is None or s.get("server") is None:
-                errors.append(f"{where}: secrets braucht komodo_stack und server")
-        if "job" in s:  # einmaliger Lauf: die UI liest den Exit-Code der Container über Komodo
+                errors.append(f"{where}: secrets needs komodo_stack and server")
+        if "job" in s:  # one-off run: the UI reads the containers' exit code through Komodo
             if s["job"] is not True:
-                errors.append(f"{where}: job muss true sein (oder fehlen)")
+                errors.append(f"{where}: job must be true (or absent)")
             elif s.get("komodo_stack") is None:
-                errors.append(f"{where}: job braucht komodo_stack")
+                errors.append(f"{where}: job needs komodo_stack")
         missing = [k for k in ("komodo_stack", "server", "project_name") if s.get(k) is None]
         if missing and s.get("status") in ("unverified", "verified"):
-            (errors if strict else warnings).append(f"{where}: noch unbestätigt: {', '.join(missing)}")
+            (errors if strict else warnings).append(f"{where}: not yet confirmed: {', '.join(missing)}")
     for pattern, targets in (inv.paths.get("shared") or {}).items():
         for t in targets or []:
             if t not in seen:
-                errors.append(f"inventory/paths.yaml shared['{pattern}']: unbekannte Stack-ID '{t}'")
+                errors.append(f"inventory/paths.yaml shared['{pattern}']: unknown stack ID '{t}'")
     return errors, warnings
 
 
@@ -169,7 +169,7 @@ def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
     files = []
     for line in out.splitlines():
         parts = line.split("\t")
-        files.extend(parts[1:])  # bei Umbenennung alter und neuer Pfad
+        files.extend(parts[1:])  # on a rename the old and the new path
     return sorted(set(files))
 
 
@@ -184,7 +184,7 @@ def _is_ancestor(root: pathlib.Path, a: str, b: str) -> bool:
 
 
 def _stack_hit(stack: dict, siblings: list[dict], path: str) -> str | None:
-    """'app', 'ingress' oder None für eine geänderte Datei relativ zu einem Stack."""
+    """'app', 'ingress' or None for a changed file relative to a stack."""
     base = stack["path"].rstrip("/") + "/"
     if path in (stack.get("extra_files") or []):
         return "app"
@@ -195,7 +195,7 @@ def _stack_hit(stack: dict, siblings: list[dict], path: str) -> str | None:
         return "ingress"
     other_compose = {f for s in siblings if s is not stack for f in s.get("compose_files") or []}
     if rel in other_compose and rel not in (stack.get("compose_files") or []):
-        return None  # Compose-Datei einer anderen Variante im selben Verzeichnis
+        return None  # compose file of another variant in the same directory
     return "app"
 
 
@@ -218,13 +218,13 @@ def affected(root: pathlib.Path, head: str, base: str | None = None, deployed: d
         entry = {"id": sid, "app": False, "ingress": False, "baseline": b, "reasons": []}
         if b is None or not _commit_exists(root, b):
             entry.update(app=True, ingress=True)
-            entry["reasons"].append("kein bekannter Deploy-Stand" if b is None else f"Baseline {b} nicht im Checkout")
+            entry["reasons"].append("no known deploy state" if b is None else f"baseline {b} not in the checkout")
             entry["requires_confirmation"] = b is not None
             result["stacks"].append(entry)
             continue
         if not _is_ancestor(root, b, head):
             entry["requires_confirmation"] = True
-            entry["reasons"].append("Baseline ist kein Vorfahre von head (Rollback/Force-Push?)")
+            entry["reasons"].append("baseline is not an ancestor of head (rollback/force-push?)")
         if b not in diff_cache:
             diff_cache[b] = _changed_files(root, b, head)
         files = diff_cache[b]
@@ -233,14 +233,14 @@ def affected(root: pathlib.Path, head: str, base: str | None = None, deployed: d
         old = inv_base.by_id().get(sid)
         if old != s:
             entry["app"] = True
-            entry["reasons"].append("Inventareintrag neu oder geändert")
+            entry["reasons"].append("inventory entry is new or changed")
         if any(f in files for f in INGRESS_GLOBAL) and read_at(root, head, f"{s['path']}/{INGRESS_FILE}") is not None:
             entry["ingress"] = True
-            entry["reasons"].append("globale Ingress-Konfiguration geändert")
+            entry["reasons"].append("global ingress configuration changed")
         srv = s.get("server")
         if srv and inv_base.servers.get(srv) != inv_head.servers.get(srv):
             entry["ingress"] = True
-            entry["reasons"].append(f"Servereintrag '{srv}' geändert")
+            entry["reasons"].append(f"server entry '{srv}' changed")
 
         for f in files:
             hit = _stack_hit(s, by_path.get(s["path"], []), f)
@@ -266,9 +266,9 @@ def affected(root: pathlib.Path, head: str, base: str | None = None, deployed: d
         elif glob_match(f, rules.get("controller") or []):
             result["controller"] = True
         elif f == "inventory/paths.yaml":
-            result["no_deploy"].append(f)  # Klassifikationsregeln selbst ändern keine Deploy-Ziele
+            result["no_deploy"].append(f)  # the classification rules themselves do not change deploy targets
         elif f in ("inventory/stacks.yaml", "inventory/servers.yaml", *INGRESS_GLOBAL):
-            pass  # pro Eintrag oben ausgewertet
+            pass  # evaluated per entry above
         elif any(f.startswith(p) for p in stack_paths) or f in extra:
             pass
         elif any(glob_match(f, [p]) for p in (rules.get("shared") or {})):
@@ -283,13 +283,13 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate")
     v.add_argument("--root", default=".")
-    v.add_argument("--strict", action="store_true", help="unbestätigte Felder als Fehler werten")
+    v.add_argument("--strict", action="store_true", help="treat unconfirmed fields as errors")
     a = sub.add_parser("affected")
     a.add_argument("--root", default=".")
     a.add_argument("--head", required=True)
     g = a.add_mutually_exclusive_group(required=True)
     g.add_argument("--base")
-    g.add_argument("--deployed", help="JSON-Datei {stack_id: sha|null}")
+    g.add_argument("--deployed", help="JSON file {stack_id: sha|null}")
     args = ap.parse_args(argv)
     root = pathlib.Path(args.root).resolve()
 
@@ -299,7 +299,7 @@ def main(argv=None) -> int:
             print(f"WARN  {w}", file=sys.stderr)
         for e in errors:
             print(f"ERROR {e}", file=sys.stderr)
-        print(f"stackctl validate: {len(errors)} Fehler, {len(warnings)} Warnungen", file=sys.stderr)
+        print(f"stackctl validate: {len(errors)} errors, {len(warnings)} warnings", file=sys.stderr)
         return 1 if errors else 0
 
     deployed = json.loads(pathlib.Path(args.deployed).read_text()) if args.deployed else None

@@ -403,19 +403,108 @@ def inventory_block(app: "App") -> str:
     return block + ("  secrets: infisical\n" if app.secrets else "")
 
 
+def _ingress_public():
+    """ingressctl's own validator, the source of truth for a `proxy.public` block."""
+    src = str(CODE / "infra/ingress-controller/src")
+    if src not in sys.path:
+        sys.path.insert(0, src)
+    from ingressctl import public
+    return public
+
+
+PUBLIC_FULL_HOST = ("--public-full-host: a fully public host needs a public certificate (Let's Encrypt, see #21); "
+                    "expose selected paths with --public-path instead")
+
+
+def _public_dict(paths: list[str], methods: list[str], cidrs: list[str], presets: list[str]) -> dict:
+    raw: dict = {"paths": list(paths)}
+    if methods:
+        raw["methods"] = [m.upper() for m in methods]
+    sources = list(cidrs) + [{"preset": name} for name in presets]
+    if sources:
+        raw["allow_cidrs"] = sources
+    return raw
+
+
+def public_problem(paths: list[str], methods: list[str], cidrs: list[str], presets: list[str]) -> str | None:
+    """Why ingressctl would refuse this block, or None."""
+    for path in paths:
+        if path == "/":
+            return "'/' would expose the whole host; list the paths that should be public"
+        if path == "/*":
+            return "'/*' would expose the whole host; list the paths that should be public"
+    ingress_public = _ingress_public()
+    try:
+        ingress_public.parse_public(_public_dict(paths, methods, cidrs, presets))
+    except ingress_public.ManifestError as exc:
+        return str(exc)
+    return None
+
+
+def public_block(p: dict) -> dict | None:
+    """The `proxy.public` block the --public-* flags ask for; None when none of them is given."""
+    if p.get("public_full_host"):
+        raise SystemExit(PUBLIC_FULL_HOST)
+    paths = list(p.get("public_paths") or [])
+    methods = list(p.get("public_methods") or [])
+    cidrs = list(p.get("public_cidrs") or [])
+    presets = list(p.get("public_presets") or [])
+    if not paths:
+        for flag, values in (("--public-method", methods), ("--public-cidr", cidrs), ("--public-preset", presets)):
+            if values:
+                raise SystemExit(f"{flag}: needs --public-path (the path to expose)")
+        return None
+    if problem := public_problem(paths, methods, cidrs, presets):
+        raise SystemExit(f"--public-path: {problem}")
+    return _public_dict(paths, methods, cidrs, presets)
+
+
+def public_summary(public: dict) -> str:
+    methods = ", ".join(public.get("methods") or ["GET", "HEAD"])
+    sources = [f"preset {s['preset']}" if isinstance(s, dict) else s for s in public.get("allow_cidrs") or []]
+    return f"{', '.join(public['paths'])} ({methods}) from {', '.join(sources) or 'any address'}"
+
+
+def _ask_public() -> dict:
+    def split(a: str) -> list[str]:
+        return [x.strip() for x in a.split(",") if x.strip()]
+
+    paths = split(ui.ask("Paths to expose publicly, comma-separated (the UI stays private)",
+                         example="/hook/abc or /files/*", check=lambda a: public_problem(split(a), [], [], [])))
+    methods = split(ui.ask("Methods allowed on these paths, comma-separated", "GET,HEAD",
+                           check=lambda a: public_problem(paths, split(a), [], [])))
+    known = sorted(_ingress_public().KNOWN_PRESETS)
+    options = ["any address"] + [f"preset {name}" for name in known] + ["custom networks"]
+    i = ui.choose("Who may reach these paths?", options)
+    cidrs, presets = [], []
+    if i:
+        if i == len(options) - 1:
+            cidrs = split(ui.ask("Source networks, comma-separated", example="203.0.113.0/24",
+                                 check=lambda a: public_problem(paths, methods, split(a), [])))
+        else:
+            presets = [known[i - 1]]
+    if problem := public_problem(paths, methods, cidrs, presets):
+        raise SystemExit(f"--public-path: {problem}")
+    return _public_dict(paths, methods, cidrs, presets)
+
+
 def _proxy_service(app: "App", service_id: str, domain: str, port: int | None, websockets: bool,
-                   health_path: str, statuses: list[int]) -> dict:
+                   health_path: str, statuses: list[int], public: dict | None = None) -> dict:
+    proxy = {"domains": [domain],
+             "upstream": {"scheme": "http", "server": app.server, "port": port},
+             "websockets": websockets, "force_https": app.force_https}
+    if public is not None:
+        proxy["public"] = public
     return {"id": service_id, "stack": app.id, "lifecycle": "present",
-            "proxy": {"domains": [domain],
-                      "upstream": {"scheme": "http", "server": app.server, "port": port},
-                      "websockets": websockets, "force_https": app.force_https},
+            "proxy": proxy,
             "certificate": {"issuer_ref": "homelab-private-ca", "validity_days": 90, "renew_before_days": 30},
             "healthcheck": {"path": health_path, "accepted_statuses": statuses}}
 
 
 def manifest(app: "App") -> str:
     """The stack's routing: the app's own host, and a service of its own for every further host a template brings."""
-    services = [_proxy_service(app, app.id, app.domain, app.upstream_port, app.websockets, app.health_path, app.statuses)]
+    services = [_proxy_service(app, app.id, app.domain, app.upstream_port, app.websockets, app.health_path, app.statuses,
+                               app.public)]
     services += [_proxy_service(app, f"{app.id}-{r['service']}", r["domain"], r["port"], r["websockets"], r["health_path"],
                                 r["statuses"]) for r in app.routes]
     doc = {"apiVersion": "homelab.ingress/v1", "namespace": "infrastructure", "services": services}
@@ -487,6 +576,7 @@ class App:
     first_run: str = ""               # what to do once it runs (from a template)
     host_paths: list[str] = dataclasses.field(default_factory=list)   # folders the template wants chosen on the server
     routes: list[dict] = dataclasses.field(default_factory=list)      # further hosts of the ingress.yaml (service, domain, port, ...)
+    public: dict | None = None        # proxy.public of the app's own service: selected paths only, never the UI
 
     @property
     def dir(self) -> pathlib.Path:
@@ -645,6 +735,14 @@ def _ask_routing(app: App, ports: list[tuple[str, int, int]], p: dict) -> bool:
     else:
         app.domain = ui.ask("Domain", f"{app.id}.{suffix}", check=check_domain, example=f"{app.id}.{suffix}",
                             flag="--domain")
+    public = public_block(p)
+    if public is None and not ui.AUTO and ui.yes("Expose selected paths publicly? (not the UI)"):
+        public = _ask_public()
+    if public is not None:
+        app.public = public
+        if not public.get("allow_cidrs"):
+            ui.warn("no source restriction: every internet address can reach these paths")
+        ui.warn("only the listed paths are public; the app's UI is not exposed")
     app.websockets = p["websockets"] if p.get("websockets") is not None else ui.yes(
         "Pass WebSockets through? (yes for live UIs, e.g. Home Assistant, code-server)")
     app.force_https = p["force_https"] if p.get("force_https") is not None else ui.yes(
@@ -757,6 +855,8 @@ def gather(p: dict | None = None) -> App | None:
 
     ingress_path = app.dir / "ingress.yaml"
     ports = [p_ for p_ in compose_ports(app.compose) if p_[0] not in tool_services(app.compose)]   # the app's, not a tool's
+    if public_block(p) is not None and p.get("routing") is False:
+        raise SystemExit("--no-routing: the --public-* flags need a routed host; drop --no-routing or the public flags")
     if ingress_path.is_file():
         services = yaml.safe_load(ingress_path.read_text())["services"] or [{}]
         svc = services[0]
@@ -765,14 +865,20 @@ def gather(p: dict | None = None) -> App | None:
         app.statuses = (svc.get("healthcheck") or {}).get("accepted_statuses", DEFAULT_STATUSES)
         app.routes = routes_from_manifest(app_id, services)
         ui.ok(f"routing from {ingress_path.relative_to(ROOT)}: https://{app.domain} -> {server}:{app.upstream_port}")
+        if public_block(p) is not None:
+            ui.warn(f"--public-*: {ingress_path.relative_to(ROOT)} exists, add proxy.public there by hand")
     elif not ports:
         ui.warn("the compose file publishes no port: no routing (add `ports:` and start again if you want it)")
+        if public_block(p) is not None:
+            ui.warn("--public-*: the compose file publishes no port, so these paths are not exposed")
     elif p.get("routing") if p.get("routing") is not None else ui.yes(
             f"\nStep 3: make it reachable via HTTPS, e.g. https://{app_id}.{settings.domain(ops.ROOT)}?", True):
         if not _ask_routing(app, ports, p):
             return None
         if chosen and app.domain:
             app.routes = template_routes(chosen[0], app, ports)
+    elif public_block(p) is not None:
+        ui.warn("--public-*: no routing, so these paths are not exposed")
 
     required, optional = compose_vars(app.compose)
     preset = p.get("secrets") or {}
@@ -798,6 +904,8 @@ def gather(p: dict | None = None) -> App | None:
     if app.files:
         print(f"  files from the template {app.template}: {', '.join(app.files)}")
     print(f"  routing: {f'https://{app.domain} -> {app.server}:{app.upstream_port}' if app.domain else 'none'}")
+    if app.public:
+        print(f"  public: {public_summary(app.public)}")
     for r in app.routes:
         print(f"  also: {r['service']} at https://{r['domain']} -> {app.server}:{r['port']}")
     print(f"  secrets: {', '.join(k + ('' if v else ' (keep existing / later)') for k, v in app.secrets.items()) or 'none'}")

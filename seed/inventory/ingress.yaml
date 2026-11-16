@@ -17,6 +17,17 @@ issuers:
     ca_bundle: inventory/homegraf-root-ca.pem  # root/intermediate chain to verify with (no key)
     allowed_domains: ["*.@@DOMAIN@@"]         # must match the policy in Infisical
 
+# A public host (proxy.public) needs a Let's Encrypt issuer. Uncomment and fill in; the block is not active.
+# NPM 2.16.0 registers the Let's Encrypt account with the e-mail address of the technical NPM user
+# (infra/secrets/npm.env), so `email` has to be that user's address.
+# letsencrypt:
+#   type: letsencrypt
+#   email: ingressctl@lab.example
+#   allowed_domains: []                   # public names this issuer may certify; empty allows nothing
+#   dns_challenge: false                  # true = DNS-01; then dns_provider is required
+#   dns_provider: null                    # provider name NPM passes to certbot
+#   propagation_seconds: 60               # optional wait for the DNS record
+
 controller:
   default_npm_instance: main
   management_server: "@@SERVER@@"          # the Komodo server ingressctl runs on (single writer)

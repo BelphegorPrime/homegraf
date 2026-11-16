@@ -1,6 +1,9 @@
 """Tests for the wizards and the secrets menu (pytest infra/homelab)."""
+import os
 import pathlib
+import re
 import shutil
+import subprocess
 import sys
 
 import pytest
@@ -10,6 +13,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import newapp  # noqa: E402
 import removeapp  # noqa: E402
 import secrets_menu  # noqa: E402
+
+SEED = pathlib.Path(__file__).resolve().parents[2]
 
 COMPOSE = """
 services:
@@ -70,13 +75,12 @@ def test_inventory_block_and_manifest():
     assert svc["certificate"]["issuer_ref"] == "homelab-private-ca"
 
 
-def test_wizard_files_pass_ingressctl(tmp_path, monkeypatch):
-    """The wizard's manifest + inventory entry against ingressctl's real schema and a small inventory of its own."""
+@pytest.fixture
+def ingressctl_repo(tmp_path, monkeypatch):
+    """A repository small enough for ingressctl's real parser: inventory, issuer, one server."""
     real = pathlib.Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(real / "infra/ingress-controller/src"))
     pytest.importorskip("jsonschema")
-    from ingressctl.inventory import load_inventory
-    from ingressctl.manifest import parse_manifest
     inv = tmp_path / "inventory"
     inv.mkdir()
     (inv / "stacks.yaml").write_text("stacks:\n- {id: other, namespace: infrastructure, path: stacks/other, compose_files: [compose.yaml], status: verified}\n")
@@ -89,6 +93,14 @@ def test_wizard_files_pass_ingressctl(tmp_path, monkeypatch):
         "controller: {default_npm_instance: main, allowed_repos: [owner/infrastructure]}\n")
     monkeypatch.setattr(newapp, "ROOT", tmp_path)
     monkeypatch.setattr(newapp.ops, "ROOT", tmp_path)
+    return tmp_path
+
+
+def test_wizard_files_pass_ingressctl(ingressctl_repo):
+    """The wizard's manifest + inventory entry against ingressctl's real schema and a small inventory of its own."""
+    from ingressctl.inventory import load_inventory
+    from ingressctl.manifest import parse_manifest
+    tmp_path = ingressctl_repo
     newapp.write_files(_app())
     specs = parse_manifest(tmp_path, tmp_path / "stacks/demo/ingress.yaml", load_inventory(tmp_path))
     assert [s.resource_id for s in specs] == ["infrastructure/demo"]
@@ -102,6 +114,97 @@ def test_wizard_files_pass_ingressctl(tmp_path, monkeypatch):
     assert [(s.resource_id, s.domains, s.upstream_port, s.websockets, s.health_path) for s in specs] == [
         ("infrastructure/agents", ("agents.lab.example",), 8081, False, "/"),
         ("infrastructure/agents-openhands", ("openhands.lab.example",), 8000, True, "/health")]
+
+
+# --- public paths (proxy.public) ---
+
+
+def test_public_paths_land_on_the_app_service_and_ingressctl_accepts_them(ingressctl_repo):
+    """The block goes into the app's own service only, and the real parser reads it back."""
+    from ingressctl.inventory import load_inventory
+    from ingressctl.manifest import parse_manifest
+    public = {"paths": ["/hook/abc"], "methods": ["POST"], "allow_cidrs": [{"preset": "github-hooks"}]}
+    app = _app(public=public, routes=[{"service": "openhands", "domain": "openhands.lab.example", "port": 8000,
+                                       "websockets": True, "health_path": "/health", "statuses": [200]}])
+    newapp.write_files(app)
+    doc = yaml.safe_load((ingressctl_repo / "stacks/demo/ingress.yaml").read_text())
+    assert doc["services"][0]["proxy"]["public"] == public
+    assert "public" not in doc["services"][1]["proxy"]
+    specs = parse_manifest(ingressctl_repo, ingressctl_repo / "stacks/demo/ingress.yaml", load_inventory(ingressctl_repo))
+    assert [s.public for s in specs] == [specs[0].public, None]
+    assert specs[0].public.paths == ("/hook/abc",)
+    assert specs[0].public.methods == ("POST",)
+    assert specs[0].public.allow_presets == ("github-hooks",)
+
+
+@pytest.mark.parametrize("paths, expected", [
+    (["/"], "'/' would expose the whole host"),
+    (["/*"], "'/*' would expose the whole host"),
+    (["/hook", "/"], "'/' would expose the whole host"),
+])
+def test_public_paths_must_not_expose_the_whole_host(paths, expected):
+    with pytest.raises(SystemExit) as exc:
+        newapp.public_block({"public_paths": paths})
+    assert expected in str(exc.value)
+
+
+def test_public_method_and_sources_need_a_path():
+    for flag in ("public_methods", "public_cidrs", "public_presets"):
+        with pytest.raises(SystemExit, match="--public-path"):
+            newapp.public_block({flag: ["POST" if flag == "public_methods" else
+                                        "203.0.113.0/24" if flag == "public_cidrs" else "github-hooks"]})
+
+
+def test_public_full_host_is_refused_always():
+    expected = ("--public-full-host: a fully public host needs a public certificate (Let's Encrypt, see #21); "
+                "expose selected paths with --public-path instead")
+    for p in ({"public_full_host": True}, {"public_full_host": True, "public_paths": ["/hook"]}):
+        with pytest.raises(SystemExit) as exc:
+            newapp.public_block(p)
+        assert str(exc.value) == expected
+
+
+def test_a_public_preset_is_written_as_an_allow_cidrs_entry():
+    block = newapp.public_block({"public_paths": ["/hook/abc"], "public_presets": ["github-hooks"]})
+    assert block == {"paths": ["/hook/abc"], "allow_cidrs": [{"preset": "github-hooks"}]}
+    with pytest.raises(SystemExit) as exc:
+        newapp.public_block({"public_paths": ["/x"], "public_presets": ["nope"]})
+    assert "nope" in str(exc.value)
+
+
+def test_public_block_needs_a_valid_cidr_and_method():
+    with pytest.raises(SystemExit, match="--public-path"):
+        newapp.public_block({"public_paths": ["/x"], "public_cidrs": ["not-a-network"]})
+    with pytest.raises(SystemExit, match="--public-path"):
+        newapp.public_block({"public_paths": ["/x"], "public_methods": ["TRACE"]})
+
+
+def test_without_public_flags_the_manifest_has_no_public_key():
+    assert newapp.public_block({}) is None
+    assert "public" not in yaml.safe_load(newapp.manifest(_app()))["services"][0]["proxy"]
+
+
+def test_public_summary_names_paths_methods_and_sources():
+    assert newapp.public_summary({"paths": ["/hook"], "allow_cidrs": ["203.0.113.0/24"]}) == "/hook (GET, HEAD) from 203.0.113.0/24"
+    assert newapp.public_summary({"paths": ["/hook"], "methods": ["POST"]}) == "/hook (POST) from any address"
+    assert newapp.public_summary({"paths": ["/hook"], "allow_cidrs": [{"preset": "github-hooks"}]}).endswith("from preset github-hooks")
+
+
+def test_help_shows_each_public_flag_once():
+    """The acceptance lines of the issue: five matching lines, and the literal example of step 1."""
+    env = {k: v for k, v in os.environ.items() if k != "HOMELAB_ROOT"}
+    done = subprocess.run([sys.executable, "-B", "-I", str(SEED / "homelab.py"), "new-app", "--help"],
+                          cwd=str(SEED), env=env, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    example = "--public-path /hook/abc --public-method POST --public-preset github-hooks"
+    assert sum(example in line for line in done.stdout.splitlines()) == 1
+    lines = [line for line in done.stdout.splitlines()
+             if re.search(r"--public-(path|method|cidr|preset|full-host)", line)]
+    assert len(lines) == 5, lines
+    assert sorted(line.split()[0] for line in lines) == [
+        "--public-cidr", "--public-full-host", "--public-method", "--public-path", "--public-preset"]
+    # the example rides on the --public-path entry; a line of its own would be a sixth match
+    assert any(line.startswith("  --public-path") and example in line for line in lines), lines
 
 
 @pytest.fixture
@@ -228,6 +331,45 @@ def test_agent_gather_from_flags(agent, monkeypatch):
     assert app.domain == "demo.lab.example" and app.upstream_port == 8000   # 8123 is taken by "other"
     assert app.force_https is True and app.websockets is False
     assert app.secrets["API_TOKEN"] == "from-env" and len(app.secrets["DB_PASSWORD"]) == 16
+    assert app.public is None
+
+
+def test_agent_gather_writes_public_paths(agent):
+    app = newapp.gather({"app_id": "demo", "server": "worker-1", "image": "x:1", "container_port": 80,
+                         "secret_vars": [], "mount": "", "public_paths": ["/hook/abc"],
+                         "public_methods": ["POST"], "public_presets": ["github-hooks"]})
+    assert app.public == {"paths": ["/hook/abc"], "methods": ["POST"], "allow_cidrs": [{"preset": "github-hooks"}]}
+
+
+def test_public_flags_without_routing_are_refused(agent):
+    with pytest.raises(SystemExit, match="--no-routing"):
+        newapp.gather({"app_id": "demo", "server": "worker-1", "image": "x:1", "container_port": 80,
+                       "secret_vars": [], "mount": "", "routing": False, "public_paths": ["/hook"]})
+    with pytest.raises(SystemExit, match="--public-full-host"):
+        newapp.gather({"app_id": "demo", "server": "worker-1", "image": "x:1", "container_port": 80,
+                       "secret_vars": [], "mount": "", "routing": False, "public_full_host": True})
+
+
+def test_public_flags_without_a_published_port_warn(agent, tmp_path, capsys):
+    """No `ports:` means no host and no ingress.yaml, so say that the paths are not exposed instead of dropping them."""
+    compose = tmp_path / "no-ports.yaml"
+    compose.write_text("services:\n  demo:\n    image: x:1\n")
+    app = newapp.gather({"app_id": "demo", "server": "worker-1", "compose_file": str(compose),
+                         "public_paths": ["/hook/abc"]})
+    assert app is not None and app.public is None
+    assert "--public-*: the compose file publishes no port, so these paths are not exposed" in capsys.readouterr().out
+
+
+def test_public_flags_dropped_by_declining_routing_warn(agent, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(newapp.ui, "AUTO", False)
+    compose = tmp_path / "routed.yaml"
+    compose.write_text("services:\n  demo:\n    image: x:1\n    ports: ['8124:80']\n")
+    answers = iter(["n", "n"])   # routing: no; set it up now: no
+    monkeypatch.setattr("builtins.input", lambda _=None: next(answers))
+    app = newapp.gather({"app_id": "demo", "server": "worker-1", "compose_file": str(compose),
+                         "public_paths": ["/hook/abc"]})
+    assert app is None
+    assert "--public-*: no routing, so these paths are not exposed" in capsys.readouterr().out
 
 
 def test_agent_missing_answers_name_the_flag(agent):

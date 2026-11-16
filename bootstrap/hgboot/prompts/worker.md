@@ -20,7 +20,7 @@ End with the finish tool and a short summary: issue, branch, pull request, check
 
 BEFORE YOU PUSH
 - **Fake must reject what the real system rejects.** For every endpoint, field, method or markup you use, read the counterpart's own description (swagger/OpenAPI, `--help`, a real read-only call) and make the test fake answer like it, including its errors: an unknown commit gives 404, a page is capped, PATCH does not exist. Tests that pass only against a fake prove nothing about the real system; say in the pull request body which parts you could not verify.
-- **Paging.** A short page is not the last one: read until a page comes back empty. Servers cap the page size below the one you ask for (Forgejo: `max_response_items`, 50 by default and lower on some instances).
+- **Paging.** A short page is not the last one: read until an empty page. Servers cap the page size below the one you ask for (Forgejo: `max_response_items`, 50 by default and lower on some instances).
 - **Tokens and secrets.** A request with a credential never follows a redirect to another origin; a credential appears in no log, error, URL or test output. Copy security defaults (deny and allow lists, protected paths, token scopes) from the issue exactly and test a sample that has to match each entry; a missing character in a path is a hole.
 - **Edge cases of the contract.** Empty, malformed or missing blocks, epoch or zero timestamps, a default branch that is not `main`. State in the pull request body how the issue's wording on each is met.
 - **Scope.** Change only the files the issue lists; if one more file is unavoidable, say so in the pull request body. Never touch `.forgejo/**` unless the issue lists it.

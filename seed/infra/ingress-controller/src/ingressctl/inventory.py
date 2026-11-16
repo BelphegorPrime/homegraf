@@ -19,6 +19,10 @@ class NpmInstance:
     tls_port: int = 443
 
 
+ISSUER_TYPES = ("infisical", "letsencrypt")
+LE_VALIDITY_DAYS = 90  # Let's Encrypt legt die Laufzeit fest
+
+
 @dataclass
 class Issuer:
     name: str
@@ -30,12 +34,22 @@ class Issuer:
     max_validity_days: int
     ca_bundle: str | None
     allowed_domains: tuple[str, ...] = ()
+    email: str | None = None
+    dns_challenge: bool = False
+    dns_provider: str | None = None
+    propagation_seconds: int | None = None
 
     def permits(self, domain: str) -> bool:
-        """Glob wie in der Infisical-Policy (`*` = beliebige Zeichen); leere Liste = keine Einschränkung."""
-        return not self.allowed_domains or any(fnmatch.fnmatchcase(domain, p) for p in self.allowed_domains)
+        """Glob wie in der Infisical-Policy (`*` = beliebige Zeichen).
+        Die private CA ohne Liste erlaubt alles; Let's Encrypt ohne Liste erlaubt nichts (fail closed).
+        """
+        if not self.allowed_domains:
+            return self.type != "letsencrypt"
+        return any(fnmatch.fnmatchcase(domain, p) for p in self.allowed_domains)
 
     def missing(self) -> list[str]:
+        if self.type == "letsencrypt":
+            return [k for k in ("email", "allowed_domains") if not getattr(self, k)]
         return [k for k in ("api_url", "project_id", "profile_id", "application_id", "ca_bundle") if not getattr(self, k)]
 
 
@@ -113,15 +127,23 @@ def load_inventory(root: pathlib.Path) -> Inventory:
                           tls_address=c.get("tls_address"), tls_port=int(c.get("tls_port", 443)))
         for name, c in (ing.get("npm_instances") or {}).items()
     }
-    issuers = {
-        name: Issuer(name=name, type=c.get("type", ""), api_url=c.get("api_url"), project_id=c.get("project_id"),
-                     profile_id=c.get("profile_id"), application_id=c.get("application_id"),
-                     max_validity_days=int(c.get("max_validity_days", 90)), ca_bundle=c.get("ca_bundle"),
-                     allowed_domains=tuple(d.lower() for d in c.get("allowed_domains") or ()))
-        for name, c in (ing.get("issuers") or {}).items()
-    }
-    for i in issuers.values():
-        if i.type != "infisical":
-            raise ConfigError(f"Issuer '{i.name}': nur type 'infisical' wird unterstützt")
+    issuers = {}
+    for name, c in (ing.get("issuers") or {}).items():
+        typ = c.get("type", "")
+        if typ not in ISSUER_TYPES:
+            raise ConfigError(f"Issuer '{name}': type muss 'infisical' oder 'letsencrypt' sein")
+        propagation = c.get("propagation_seconds")
+        if propagation is not None and (isinstance(propagation, bool) or not isinstance(propagation, int)
+                                        or propagation < 0):
+            raise ConfigError(f"Issuer '{name}': propagation_seconds muss eine ganze Zahl >= 0 sein")
+        issuers[name] = Issuer(
+            name=name, type=typ, api_url=c.get("api_url"), project_id=c.get("project_id"),
+            profile_id=c.get("profile_id"), application_id=c.get("application_id"),
+            max_validity_days=LE_VALIDITY_DAYS if typ == "letsencrypt" else int(c.get("max_validity_days", 90)),
+            ca_bundle=c.get("ca_bundle"),
+            allowed_domains=tuple(d.lower() for d in c.get("allowed_domains") or ()),
+            email=c.get("email"), dns_challenge=bool(c.get("dns_challenge", False)),
+            dns_provider=c.get("dns_provider"), propagation_seconds=propagation,
+        )
     return Inventory(root=root, stacks=stacks, servers=servers, namespaces=namespaces, npm_instances=npm,
                      issuers=issuers, controller=ing.get("controller") or {})

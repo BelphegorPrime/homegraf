@@ -53,7 +53,8 @@
             "properties": {
               "issuer_ref": {"type": "string", "pattern": "^[a-z0-9-]+$"},
               "validity_days": {"type": "integer", "minimum": 1, "maximum": 398, "default": 90},
-              "renew_before_days": {"type": "integer", "minimum": 1, "maximum": 180, "default": 30}
+              "renew_before_days": {"type": "integer", "minimum": 1, "maximum": 180, "default": 30},
+              "dns_challenge": {"type": "boolean"}
             }
           },
           "healthcheck": {

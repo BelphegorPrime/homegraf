@@ -1,4 +1,4 @@
-"""Schlüssel/CSR erzeugen, ausgestellte Zertifikate prüfen, Erneuerungsentscheidung."""
+"""Generate keys/CSRs, validate issued certificates, decide on renewal."""
 from __future__ import annotations
 
 import datetime as dt
@@ -16,7 +16,7 @@ _PEM_CERT_END = "-----END CERTIFICATE-----"
 
 @dataclass(frozen=True)
 class CertInfo:
-    fingerprint: str          # SHA-256 des Leaf-Zertifikats (hex)
+    fingerprint: str          # SHA-256 of the leaf certificate (hex)
     sans: tuple[str, ...]
     not_before: dt.datetime
     not_after: dt.datetime
@@ -68,12 +68,12 @@ def cert_info(cert: x509.Certificate) -> CertInfo:
 def info_from_pem(pem: str) -> CertInfo:
     certs = split_pem_chain(pem)
     if not certs:
-        raise CertificateError("kein Zertifikat im PEM")
+        raise CertificateError("no certificate in PEM")
     return cert_info(certs[0])
 
 
 def public_key_id(obj) -> str:
-    """Fingerprint des öffentlichen Schlüssels (für Zertifikat, CSR oder privaten Schlüssel)."""
+    """Fingerprint of the public key (for a certificate, CSR or private key)."""
     pub = obj.public_key()
     der = pub.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     h = hashes.Hash(hashes.SHA256())
@@ -87,31 +87,31 @@ def key_id_from_pem(key_pem: bytes) -> str:
 
 def validate_issued(cert_pem: str, chain_pem: str | None, key_pem: bytes, domains: tuple[str, ...],
                     trust_pem: str, now: dt.datetime) -> CertInfo:
-    """Prüft Schlüsselzuordnung, SANs, serverAuth, Gültigkeit und Kette bis zu einem Trust-Anchor.
+    """Validate key match, SANs, serverAuth, validity and chain up to a trust anchor.
 
-    Wirft CertificateError; dann darf NPM nicht auf dieses Zertifikat umgeschaltet werden.
+    Raises CertificateError; NPM must then not be switched over to this certificate.
     """
     leaf_list = split_pem_chain(cert_pem)
     if len(leaf_list) != 1:
-        raise CertificateError("erwartet genau ein Leaf-Zertifikat")
+        raise CertificateError("expected exactly one leaf certificate")
     leaf = leaf_list[0]
     info = cert_info(leaf)
     if public_key_id(leaf) != key_id_from_pem(key_pem):
-        raise CertificateError("Zertifikat passt nicht zum privaten Schlüssel")
+        raise CertificateError("certificate does not match the private key")
     if info.sans != tuple(sorted(domains)):
-        raise CertificateError(f"SANs {list(info.sans)} entsprechen nicht {list(domains)}")
+        raise CertificateError(f"SANs {list(info.sans)} do not match {list(domains)}")
     try:
         eku = leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
         if ExtendedKeyUsageOID.SERVER_AUTH not in eku:
-            raise CertificateError("ExtendedKeyUsage enthält kein serverAuth")
+            raise CertificateError("ExtendedKeyUsage does not contain serverAuth")
     except x509.ExtensionNotFound:
-        pass  # ohne EKU-Extension ist serverAuth nicht eingeschränkt
+        pass  # without an EKU extension serverAuth is not restricted
     if not (info.not_before <= now < info.not_after):
-        raise CertificateError("Zertifikat ist (noch) nicht gültig")
+        raise CertificateError("certificate is not valid (yet)")
 
     anchors = split_pem_chain(trust_pem)
     if not anchors:
-        raise CertificateError("kein Trust-Anchor (CA-Bundle leer)")
+        raise CertificateError("no trust anchor (CA bundle is empty)")
     anchor_fps = {a.fingerprint(hashes.SHA256()) for a in anchors}
     intermediates = [c for c in split_pem_chain(chain_pem) if c.fingerprint(hashes.SHA256()) not in anchor_fps]
     current = leaf
@@ -124,22 +124,22 @@ def validate_issued(cert_pem: str, chain_pem: str | None, key_pem: bytes, domain
             break
         intermediates.remove(nxt)
         current = nxt
-    raise CertificateError("Kette endet nicht bei einem vertrauenswürdigen CA-Zertifikat")
+    raise CertificateError("chain does not end at a trusted CA certificate")
 
 
 def _issued_by(cert: x509.Certificate, issuer: x509.Certificate) -> bool:
     try:
         cert.verify_directly_issued_by(issuer)
         return True
-    except Exception:  # InvalidSignature, Namensabweichung, nicht unterstützter Schlüsseltyp
+    except Exception:  # InvalidSignature, name mismatch, unsupported key type
         return False
 
 
 def renewal_lead(info: CertInfo, renew_before_days: int) -> dt.timedelta:
-    """Vorlauf, begrenzt auf ein Drittel der tatsächlichen Laufzeit.
+    """Lead time, capped at one third of the actual lifetime.
 
-    Stellt der Issuer kürzere Zertifikate aus als beantragt, löst ein frisch ausgestelltes Zertifikat so
-    keine sofortige erneute Erneuerung aus (keine Endlosschleife).
+    If the issuer issues shorter certificates than requested, a freshly issued certificate thus does not
+    trigger an immediate renewal (no endless loop).
     """
     return min(dt.timedelta(days=renew_before_days), info.lifetime / 3)
 

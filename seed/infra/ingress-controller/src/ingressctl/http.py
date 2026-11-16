@@ -1,4 +1,4 @@
-"""Gemeinsame HTTP-Hilfen für die Adapter: Timeouts, Fehlerabbildung ohne Response-Bodies."""
+"""Shared HTTP helpers for the adapters: timeouts, error mapping without response bodies."""
 from __future__ import annotations
 
 import requests
@@ -13,10 +13,10 @@ def request(session: requests.Session, system: str, method: str, url: str, *, mu
     try:
         resp = session.request(method, url, **kw)
     except requests.Timeout:
-        raise AdapterError(system, f"Timeout bei {method} {_path(url)}", ambiguous=mutating) from None
+        raise AdapterError(system, f"timeout on {method} {_path(url)}", ambiguous=mutating) from None
     except requests.ConnectionError as e:
-        # Bei Mutationen ist unklar, ob der Server die Anfrage verarbeitet hat.
-        raise AdapterError(system, f"nicht erreichbar ({type(e).__name__}) bei {method} {_path(url)}",
+        # For mutations it is unclear whether the server processed the request.
+        raise AdapterError(system, f"unreachable ({type(e).__name__}) on {method} {_path(url)}",
                            ambiguous=mutating) from None
     if resp.status_code >= 400:
         raise AdapterError(system, f"{method} {_path(url)}: {_error_message(resp)}", status=resp.status_code)
@@ -28,15 +28,15 @@ def _path(url: str) -> str:
 
 
 def _error_message(resp: requests.Response) -> str:
-    """Nur die strukturierte Fehlermeldung übernehmen, nie den rohen Body (kann Secrets enthalten)."""
+    """Use only the structured error message, never the raw body (may contain secrets)."""
     try:
         body = resp.json()
     except ValueError:
-        return resp.reason or "Fehler"
+        return resp.reason or "error"
     if isinstance(body, dict):
         err = body.get("error")
         if isinstance(err, dict) and isinstance(err.get("message"), str):
             return err["message"][:300]
         if isinstance(body.get("message"), str):
             return body["message"][:300]
-    return resp.reason or "Fehler"
+    return resp.reason or "error"

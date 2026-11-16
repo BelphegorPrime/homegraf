@@ -162,6 +162,23 @@ class RunTests(unittest.TestCase):
         self.assertIn("contains no seed", err)
         self.assertEqual(s.forgejo.repos, {})
 
+    def test_a_legacy_run_writes_no_factory_handoff(self):
+        s = self.stack()
+        s.env["FORGEHANDS_RUNTIME_DIR"] = f"{s.state_dir}/factory-runtime"
+        code, out, err = s.run()
+        self.assertEqual((code, err), (0, ""))
+        self.assertFalse(os.path.exists(f"{s.state_dir}/factory-runtime"))
+        self.assertNotIn("Factory (direct mode)", out)
+
+    def test_a_broken_factory_opt_in_stops_before_the_first_write(self):
+        s = self.stack()
+        s.env["FORGEHANDS_BOOTSTRAP"] = "1"
+        code, _, err = s.run()
+        self.assertEqual(code, 2)
+        self.assertIn("FORGEHANDS_OPENHANDS_API_URL is not set", err)
+        self.assertEqual(s.forgejo.repos, {})
+        self.assertFalse(os.path.exists(f"{s.state_dir}/homegraf.env"))
+
     def test_missing_settings_are_a_clear_error(self):
         s = self.stack()
         del s.env["ADMIN_PASSWORD"]

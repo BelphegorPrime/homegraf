@@ -81,8 +81,12 @@ jobs:
     container:
       image: ${{ matrix.image }}
     steps:
-      - name: git
-        run: apt-get update -q && apt-get install -y -q --no-install-recommends git
+      - name: git and nginx
+        run: |
+          # The tests call `nginx -t` with their own config; the service itself must not run. This container has no
+          # init, so the policy script stops the package's postinst from starting a daemon here.
+          printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d
+          apt-get update -q && apt-get install -y -q --no-install-recommends git nginx
       - name: checkout
         env:
           TOKEN: ${{ github.token }}
@@ -90,4 +94,11 @@ jobs:
           git init -q . && git config --global --add safe.directory "$PWD"
           git -c http.extraheader="Authorization: token $TOKEN" fetch -q --no-tags "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
           git checkout -q "${{ github.sha }}"
-      - run: scripts/check-seed.sh
+      - name: seed check as an unprivileged user
+        # GitHub's runners are unprivileged, this container is root. Running the check as root hides permission
+        # problems such as the nginx log path that failed on GitHub from #79 until #116.
+        run: |
+          # The workspace belongs to root; the unprivileged user gets a copy it can reach.
+          cp -a . /tmp/seed-src && chmod -R a+rX /tmp/seed-src
+          mkdir -p /tmp/seed-home && chmod 777 /tmp/seed-home
+          cd /tmp/seed-src && setpriv --reuid=65534 --regid=65534 --clear-groups env HOME=/tmp/seed-home TMPDIR=/tmp bash scripts/check-seed.sh

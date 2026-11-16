@@ -23,7 +23,18 @@ def homegraf_env(cfg, state) -> dict[str, str]:
     }
 
 
-def summary(cfg, state, notes: list[str]) -> str:
+def factory_summary(report) -> list[str]:
+    """The configured factory stages, without response bodies or any credential."""
+    return ["", "Factory (direct mode): ready",
+            f"  agent user               {report.agent_login}",
+            f"  profiles                 {report.profiles} verified, {report.routes} label/event routes",
+            f"  runner                   {report.runner}",
+            f"  GitHub mirror            {report.mirror}",
+            "  stages                   " + ", ".join(f"{s.name}: {s.status}" for s in report.stages),
+            f"  ForgeHands reads         {report.runtime_file}"]
+
+
+def summary(cfg, state, notes: list[str], factory=None) -> str:
     p, ip, d = cfg.ports, cfg.host_ip, cfg.domain
     lines = ["", "=" * 72, "homegraf stack: ready", "=" * 72, "", "Open (by name, once the names reach this host; by port right away):"]
     ports = {"git": p["FORGEJO"], "komodo": p["KOMODO"], "secrets": p["INFISICAL"], "proxy": p["NPM_ADMIN"], "homegraf": p["HOMEGRAF"],
@@ -42,6 +53,8 @@ def summary(cfg, state, notes: list[str]) -> str:
               "", f"Your repository: http://git.{d}/{cfg.repository}  or  http://{ip}:{p['FORGEJO']}/{cfg.repository}",
               "homegraf reads it (Komodo keeps a clone current) and opens its pull requests there.",
               "homegraf has the Komodo key, the Forgejo token and the Infisical identity it needs (no token to type anywhere)."]
+    if factory is not None:
+        lines += factory_summary(factory)
     if notes:
         lines += ["", "Still to do by hand:"] + [f"  - {n}" for n in notes]
     lines.append("")

@@ -4,9 +4,10 @@ from __future__ import annotations
 import os
 import sys
 
-from . import handoff, seed
+from . import factory, handoff, seed
 from .adguard import AdGuard
 from .config import Config, ConfigError
+from .factory_config import FactoryConfig
 from .forgejo import Forgejo
 from .hosts import Hosts, agent_compose, check_address, check_name
 from .http import Unreachable
@@ -59,10 +60,12 @@ def certificates(env=os.environ) -> int:
 def run(env=os.environ) -> int:
     try:
         cfg = Config.from_env(env)
+        factory_cfg = FactoryConfig.from_env(env, cfg.repository)
     except ConfigError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     state = State(f"{cfg.state_dir}/state.json")
+    report = None
     try:
         files = seed.collect(seed.seed_dir(cfg), seed.substitutions(cfg, "Local"))
         if not files:
@@ -82,12 +85,14 @@ def run(env=os.environ) -> int:
             AdGuard(cfg, state).run()
         elif cfg.dns_mode == "technitium":
             Technitium(cfg, state).run()
+        if factory_cfg.enabled:
+            report = factory.run(factory_cfg, cfg, state, env)
         write_env_file(f"{cfg.state_dir}/homegraf.env", handoff.homegraf_env(cfg, state))
         log("handoff", f"homegraf's settings written to {cfg.state_dir}/homegraf.env (homegraf reads it at start)")
     except (StepError, Unreachable, TimeoutError, ValueError) as e:
         print(f"\nerror: {e}\nNothing that is done is undone: fix the cause and run it again (docker compose up -d bootstrap).", file=sys.stderr)
         return 1
-    print(handoff.summary(cfg, state, handoff.next_steps(cfg)), flush=True)
+    print(handoff.summary(cfg, state, handoff.next_steps(cfg), factory=report), flush=True)
     return 0
 
 

@@ -25,6 +25,7 @@ import type { Applier } from "./apply.js";
 import type { SecretTool } from "./apps.js";
 import type { PullStateReader, RemovalStore } from "./removals.js";
 import { domainOfLog, type CreationStore, type CreationTracker } from "./creations.js";
+import { reposRoutes, type RepoRoutesOptions } from "./repos.js";
 import type { Authenticator, Denied, Principal } from "./auth.js";
 import { cookieValue, SESSION_COOKIE, STATE_COOKIE, type Oidc } from "./oidc.js";
 import { ADMIN, UserError, type UserStore } from "./users.js";
@@ -101,6 +102,8 @@ export interface Deps {
   stacks: StacksDeps;
   /** Signing in through an OpenID Connect provider; none when it is not set up. */
   sso?: { oidc?: Oidc; problem?: string };
+  /** The repository routes read Forgejo and run the operator command; their settings come from the environment unless a test passes them. */
+  repos?: RepoRoutesOptions;
 }
 
 export function createApp({
@@ -120,6 +123,7 @@ export function createApp({
   hosts,
   stacks,
   sso,
+  repos,
 }: Deps) {
   const app = new Hono<Env>();
 
@@ -367,6 +371,9 @@ export function createApp({
       return c.json({ jobId: job.id }, 202);
     },
   );
+
+  // Repositories: the list with its factory status, the profiles, and creating one through the operator command.
+  app.route("/api", reposRoutes({ authorize, ...(repos ?? {}) }));
 
   // Who am I: checks the credentials without doing anything.
   app.get("/api/me", authorize(), (c) => c.json(c.get("principal")));

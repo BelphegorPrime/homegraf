@@ -439,6 +439,76 @@ def test_the_agents_form_values_pass_the_factory_configuration(agent):
     assert factory.denied_paths("owner/other") is None   # a repository without an entry stays manual
 
 
+_FACTORY_SAMPLES = {
+    "FORGEHANDS_OPENHANDS_API_URL": "http://openhands:8000",
+    "OPENHANDS_LOCAL_BACKEND_API_KEY": "backend-key",
+    "FORGEHANDS_STRONG_MODEL": "vendor/strong-model",
+    "FORGEHANDS_CHEAP_MODEL": "vendor/cheap-model",
+    "FORGEHANDS_GATEWAY_URL": "https://llm.example/v1",
+    "FORGEHANDS_GATEWAY_API_KEY": "gateway-key",
+    "FORGEHANDS_ALLOWED_REPOS": "owner/repository",
+    "FORGEHANDS_ALLOWED_SENDERS": "homegraf-agent,operator",
+    "FORGEHANDS_AGENT_LOGIN": "homegraf-agent",
+    "FORGEHANDS_HUMAN_LOGIN": "operator",
+    "FORGEHANDS_FORGEJO_AGENT_TOKEN": "agent-token",
+    "FORGEHANDS_FORGEJO_WEBHOOK_SECRET": "webhook-secret",
+}
+
+
+def _factory_inputs_the_bootstrap_requires():
+    """Every input the real opt-in validation asks for, taken from its own error messages, not a copied list."""
+    bootstrap = pathlib.Path(__file__).resolve().parents[3] / "bootstrap"
+    if not (bootstrap / "hgboot" / "factory_config.py").is_file():
+        pytest.skip("the bootstrap is outside seed/ (scripts/check-seed.sh copies seed/ alone)")
+    sys.path.insert(0, str(bootstrap))
+    from hgboot.factory_config import FactoryConfig, FactoryConfigError  # noqa: E402
+
+    env, missing = {"FORGEHANDS_BOOTSTRAP": "1"}, []
+    for _ in range(len(_FACTORY_SAMPLES) + 1):
+        try:
+            FactoryConfig.from_env(env, "owner/repository")
+        except FactoryConfigError as error:
+            name = re.match(r"([A-Z][A-Z0-9_]+)", str(error)).group(1)
+            if name in missing:
+                raise AssertionError(f"FactoryConfig rejects the sample for {name}: {error}") from error
+            missing.append(name)
+            env[name] = _FACTORY_SAMPLES[name]
+        else:
+            return missing
+    raise AssertionError("the sample values do not satisfy FactoryConfig")
+
+
+def test_the_agents_first_run_points_at_the_automated_hgboot_path(agent):
+    """The note names the automated setup and every input the real factory validation wants, instead of the
+    operator typing the profiles by hand."""
+    text = _agents(agent).first_run
+    assert "hgboot" in text and "FORGEHANDS_BOOTSTRAP=1" in text
+    required = _factory_inputs_the_bootstrap_requires()
+    assert {"FORGEHANDS_OPENHANDS_API_URL", "OPENHANDS_LOCAL_BACKEND_API_KEY", "FORGEHANDS_FORGEJO_AGENT_TOKEN"} <= set(required)
+    for name in required:
+        assert name in text, name                       # a missing input makes the opt-in fail closed
+    assert "FORGEHANDS_MERGE_POLICY" in text             # the operator's policy, not a file of the repository
+
+
+def test_the_agents_first_run_claims_no_bootstrap_run_it_did_not_have(agent):
+    """A stack created by this template alone has no profiles and no routes; the note says so and keeps webhook mode."""
+    text = _agents(agent).first_run
+    assert "add a model provider key" in text           # a stack without the bootstrap still needs the key
+    assert "a stack that no bootstrap ran for has no profiles" in text
+    assert "create the agent profiles yourself" in text and "keep LABEL_ROUTES empty" in text
+    assert "webhook mode" in text and "register the OpenHands automation webhook" in text
+    assert "once #58 connects the factory reconcilers" in text and "Until #58 lands" in text
+    assert "not typed by hand" not in text
+    assert not re.search(r"\b(?:already|has) (?:created|ran|set up|configured)\b", text)
+
+
+def test_the_agents_first_run_names_the_webhook_events_the_pinned_release_needs(agent):
+    """An issues-only hook starts no round and no review, so the note names every event."""
+    text = _agents(agent).first_run
+    for event in ("issues", "pull_request_label", "action_run_failure", "action_run_success", "push"):
+        assert re.search(rf"\b{event}\b", text), event
+
+
 def test_the_ingress_of_a_template_with_routes_declares_both_hosts(agent):
     doc = yaml.safe_load(newapp.manifest(_agents(agent)))
     assert [(s["id"], s["proxy"]["domains"]) for s in doc["services"]] == [

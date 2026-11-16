@@ -1,6 +1,6 @@
 # ingressctl
 
-Reconciles `ingress.yaml` manifests next to the stacks with Nginx Proxy Manager (2.16.0) and the private Infisical CA (v0.167.2). Git holds the desired state. The SQLite state only records ownership, progress, and what was applied.
+Reconciles `ingress.yaml` manifests next to the stacks with Nginx Proxy Manager (2.16.0) and certificates from the private Infisical CA (v0.167.2) or, for public hosts, from Let's Encrypt. Git holds the desired state. The SQLite state only records ownership, progress, and what was applied.
 
 It runs as the Komodo stack `ingressctl` on `proxy-host`, the single writer. Use `python3 infra/komodo/run_ingressctl.py <command> …` to run it there (see the [README tutorials](../../README.md#4-give-a-localcodes-service-https)).
 
@@ -8,7 +8,7 @@ It runs as the Komodo stack `ingressctl` on `proxy-host`, the single writer. Use
 
 | Command | Credentials | Effect |
 | --- | --- | --- |
-| `ingressctl validate --root .` | none | Schema, normalization, namespace/stack mapping, domain uniqueness across the repo, issuer domain allow-list; reports configuration gaps |
+| `ingressctl validate --root .` | none | Schema, normalization, namespace/stack mapping, domain uniqueness across the repo, issuer domain allow-list per issuer; reports configuration gaps |
 | `ingressctl plan --root . [--stack <id>]` | yes | Reads live state and shows changes, drift, and blockers; changes nothing |
 | `ingressctl apply --root . --commit <sha> --stack <id> [--deployed-commit <sha>]` | yes | Applies only the manifests of the selected stacks, under the per-NPM-instance lock |
 | `ingressctl renew --all-deployed --inventory-root .` | yes | Renews from the last successfully applied manifests stored in the state |
@@ -27,6 +27,7 @@ Exit codes: `0` ok, `1` error or blocker, `2` renewal failed, `3` issuance pendi
 | `INGRESSCTL_STATE_DIR` | State directory (default `/var/lib/ingressctl`; Docker volume `ingressctl-state` in the stack) with `state.sqlite3`, `locks/`, `pending/` (0700) |
 | `NPM_IDENTITY[_FILE]`, `NPM_SECRET[_FILE]` | Technical NPM user (no 2FA, visibility "all") |
 | `INFISICAL_CLIENT_ID[_FILE]`, `INFISICAL_CLIENT_SECRET[_FILE]` | Machine identity `ingressctl` (Universal Auth, application role `operator`) |
+| `LETSENCRYPT_DNS_CREDENTIALS[_FILE]` | DNS provider credentials for a Let's Encrypt issuer with `dns_challenge: true`, passed to NPM as `meta.dns_provider_credentials`; a missing value is a blocker in `plan` and `apply` |
 | `INGRESSCTL_API_CA_BUNDLE` | Optional CA bundle for HTTPS APIs; there is no `verify=False` |
 
 The stack's entrypoint sources `infra/secrets/npm.env` and `infra/secrets/ingressctl.env` from the checkout.
@@ -41,8 +42,10 @@ The stack's entrypoint sources `infra/secrets/npm.env` and `infra/secrets/ingres
    2. Have Infisical sign the CSR.
    3. Verify key, SANs, serverAuth, and the chain against `ca_bundle`.
    4. Upload it as a **new** NPM custom certificate named `ingressctl:<resource>:<op>`.
+
+   A Let's Encrypt issuer has no local key and no CSR: there, step 4 is one `POST /nginx/certificates` with `provider: letsencrypt`, which NPM answers after certbot has run (see [Let's Encrypt (public hosts)](#lets-encrypt-public-hosts)).
 5. **Proxy host.** Create it, or PUT only the managed fields: domains, upstream, websockets, `ssl_forced`, certificate, enabled, and `advanced_config` when `proxy.public` is declared. The PUT reloads nginx; `meta.nginx_online=false` counts as an error.
-6. **HTTPS check.** For each domain, connect to NPM:443 with SNI and `ca_bundle`; NPM must present the expected certificate. NPM acknowledges the PUT before nginx has finished reloading, so the check retries (6 × 2 s). If it still fails, the host is switched back to the previous certificate.
+6. **HTTPS check.** For each domain, connect to NPM:443 with SNI and `ca_bundle` (for Let's Encrypt: the system trust store); NPM must present the expected certificate. NPM acknowledges the PUT before nginx has finished reloading, so the check retries (6 × 2 s). If it still fails, the host is switched back to the previous certificate.
 7. **Record and clean up.** Write the state. Delete the old NPM certificate only when nothing references it. Nothing is revoked in Infisical.
 
 Every external step is journaled. A re-run after a timeout or crash first looks for its own objects (NPM certificate name marker, Infisical metadata `ingressctl-op`) instead of creating duplicates.
@@ -89,7 +92,7 @@ The order is visible from outside: a source outside `allow_cidrs` gets 404 on an
 - **It is not authentication.** An exposed path is reachable by whoever may send to it: the allowlist decides where, not who. The service behind it has to verify the sender itself — a signature or HMAC over the raw body in constant time, a timestamp or event id against replays, the secret from Infisical. A wrong signature is the service's 4xx, not nginx's.
 - **A path is not a secret.** Paths are in git, in the NPM UI and in logs. A token in a path is a published token; authenticate with a header or the body.
 - **Nothing about the content.** No body or header inspection, no rate limit, no size limit, no WAF; these three fields are the only filtering `public:` does.
-- **Not TLS.** NPM terminates TLS and ingressctl only issues the certificate, from the private CA until #21 brings public names. The allowlist neither encrypts nor proves identity; a sender outside your network has to trust that CA (or you turn verification off), and a webhook provider that does not trust it will refuse the connection.
+- **Not TLS.** NPM terminates TLS and ingressctl only issues the certificate, from the private CA, or from Let's Encrypt for a public host (see [Let's Encrypt (public hosts)](#lets-encrypt-public-hosts)). The allowlist neither encrypts nor proves identity; a sender outside your network has to trust that CA (or you turn verification off), and a webhook provider that does not trust it will refuse the connection.
 - **Not reachability.** DNS, the router's port forward and the firewall decide whether the host is reachable at all; `public:` only decides what answers once a request arrives.
 - **Not the upstream.** A service that publishes a port or is reachable from another network is bypassed by talking to it directly. Publish it only on the stack network.
 - **Only this host.** Another proxy host or domain is not covered; neither is the NPM admin UI.
@@ -97,7 +100,7 @@ The order is visible from outside: a source outside `allow_cidrs` gets 404 on an
 ### Pitfalls
 
 - **NPM's own `location /`.** Advanced config is server level: NPM renders it before its `location /` and before the locations you add by hand. ingressctl cannot disable or guard that location, it only puts the checks in front of it, and only directives that are valid at server level are used. A hand-made `location` that sets its own `allow`/`deny` replaces the address check for itself.
-- **The ACME exemption.** `/.well-known/acme-challenge/` passes the path and the method check. With the private CA, NPM adds no ACME location for the host, so such a request is proxied to the service like any other. `allow_cidrs` still applies: with it set, a source outside the list gets 403 on the challenge too, and HTTP-01 from the internet fails (#21). A Let's Encrypt certificate makes NPM add its own `location ^~ /.well-known/acme-challenge/` with `allow all`, and that overrides the server-level `deny all`: the challenge path is then open to every source, whatever `allow_cidrs` says.
+- **The ACME exemption.** `/.well-known/acme-challenge/` passes the path and the method check. With the private CA, NPM adds no ACME location for the host, so such a request is proxied to the service like any other. `allow_cidrs` still applies: with it set, a source outside the list gets 403 on the challenge too, and HTTP-01 from the internet fails, so `validate` rejects `allow_cidrs` together with HTTP-01 (see [Let's Encrypt (public hosts)](#lets-encrypt-public-hosts)). A Let's Encrypt certificate makes NPM add its own `location ^~ /.well-known/acme-challenge/` with `allow all`, and that overrides the server-level `deny all`: the challenge path is then open to every source, whatever `allow_cidrs` says.
 - **The address nginx sees.** NPM trusts `X-Real-IP` from RFC 1918 addresses and from its generated CDN ranges (`set_real_ip_from`, `real_ip_header X-Real-IP`, `real_ip_recursive on`), and `allow_cidrs` compares the result. Behind a CDN or a tunnel that arrives from a trusted address, the tunnel has to set the client address; if it does not, every request looks like the tunnel and is denied. The other way round, a sender that reaches NPM from a trusted network chooses the address with that header — `allow_cidrs` is a coarse filter for known senders, not a security boundary.
 - **`$uri` is not the raw request.** The path check uses `$uri`: percent-decoded, `.` and `..` resolved, `//` collapsed, query string dropped. `/hook/%70rovider`, `/hook/./provider`, `/hook/x/../provider` and `/hook//provider` all match `/hook/provider`. NPM forwards `$request_uri` to the service — the raw spelling — so the app receives a different string than the one the allowlist matched. Verify the signature over the request target the app actually receives, not over a path the framework re-encodes or re-decodes.
 - **The redirect comes first.** With `force_https`, NPM's 301 to https sits before the block, so on port 80 an outsider gets 301, not 404 or 403. Check over https.
@@ -136,6 +139,79 @@ python3 infra/komodo/run_ingressctl.py apply --root . --commit <sha> --stack <id
 `apply` removes exactly the block ingressctl wrote — marker, and only while it is unchanged at the start of the advanced config — and leaves lines added by hand in place. The host then has **no path restriction at all**: removing `public:` reopens everything, it does not close the service. To close the host, remove the service from the manifest, commit, and run `ingressctl remove --resource <namespace>/<id>` (it refuses while any manifest still declares the service, then deletes the NPM host and its certificate); also drop the DNS record or the router rule, which is what made the host reachable in the first place.
 
 `plan` shows the advanced-config diff. While `public:` is declared, ingressctl owns the whole advanced config: its value has to be exactly the rendered block, so a line added by hand counts as drift and the next `apply` removes it — put other directives into NPM's `/data/nginx/custom` files instead. A host without `public:` keeps its advanced config untouched. A hand-made advanced config on a host that should receive `public:` stops the run with a conflict that names the host, because adoption is explicit.
+
+## Let's Encrypt (public hosts)
+
+A host that the internet has to reach — `proxy.public` implies it — takes its certificate from Let's Encrypt instead of the private CA. Declare an issuer of type `letsencrypt` in `inventory/ingress.yaml`; `seed/inventory/ingress.yaml` carries a commented example:
+
+```yaml
+issuers:
+  letsencrypt:
+    type: letsencrypt
+    email: ingressctl@lab.example
+    allowed_domains: [app.lab.example, "*.lab.example"]
+    dns_challenge: false
+    dns_provider: null
+    propagation_seconds: null
+```
+
+| Field | Meaning |
+| --- | --- |
+| `type` | `letsencrypt`. NPM runs ACME; ingressctl never holds the private key of a public certificate. |
+| `email` | Required. NPM 2.16.0 registers the Let's Encrypt account with the e-mail address of the technical NPM user, so this value has to be that user's address; the bootstrap creates `ingressctl@<domain>`. |
+| `allowed_domains` | Required, and the allow-list for public names: names or `fnmatch` patterns (`*.lab.example`), compared case-insensitively. An empty list allows nothing — and `plan`/`apply` report the issuer as incomplete until it lists a name. |
+| `dns_challenge` | Default `false` (HTTP-01). `true` makes DNS-01 the default for every certificate of this issuer; a manifest can override it. |
+| `dns_provider` | Required with `dns_challenge: true`: the provider name NPM hands to certbot. |
+| `propagation_seconds` | Optional, a whole number ≥ 0: how long NPM waits for the DNS record before it asks Let's Encrypt to validate. |
+
+The manifest names the issuer and no lifetime:
+
+```yaml
+certificate: {issuer_ref: letsencrypt, dns_challenge: false}
+```
+
+`validity_days` is not allowed for Let's Encrypt — certbot fixes the lifetime at 90 days, and `validate` rejects the field. `renew_before_days` keeps its meaning (default 30) and has to stay below 90. `proxy.public` requires a `letsencrypt` issuer; `validate` rejects the private CA there.
+
+### The NPM role of the technical user
+
+ingressctl signs in as the technical NPM user (`NPM_IDENTITY`, `NPM_SECRET`). For Let's Encrypt that account needs:
+
+- role `user` (not `admin`)
+- item visibility `all`
+- permission `proxy_hosts: manage`
+- permission `certificates: manage`
+- permissions `redirection_hosts`, `dead_hosts`, `streams`, `access_lists`: `hidden`
+- a valid e-mail address
+- no 2FA
+
+`certificates: view` is enough for `plan` and for the HTTP-01 test, but not for `apply`: creating and renewing a certificate needs `manage`. The account can check itself with its own token:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "$NPM_API_URL/users/me?expand=permissions" \
+  | jq '{email, roles, permissions}'
+```
+
+Expected: `roles` is `["user"]`, `email` set, `permissions.visibility` `"all"`, `permissions.proxy_hosts` and `permissions.certificates` `"manage"`.
+
+### HTTP-01 and DNS-01
+
+HTTP-01 needs port 80 of NPM reachable from the internet for **every** domain of the certificate: the DNS record, the router's port forward and the firewall have to be in place before `apply`. `apply` checks it first with NPM's `test-http` (`POST /nginx/certificates/test-http`) and stops before it creates or changes anything in NPM if a domain fails; the error names each failing domain and its reason. `plan` does not make this check, because it talks to no ACME server.
+
+The alternative is DNS-01: `dns_challenge: true` in the manifest (or on the issuer) with `dns_provider` in the inventory, and the provider credentials in `LETSENCRYPT_DNS_CREDENTIALS` or `LETSENCRYPT_DNS_CREDENTIALS_FILE` (see the Environment table); a missing credential is a blocker. DNS-01 is also what a host with `allow_cidrs` needs: `validate` rejects `allow_cidrs` together with HTTP-01, because NPM's challenge check would arrive through the allowlist and get 403.
+
+### Renewal
+
+NPM renews Let's Encrypt certificates itself, 30 days before they expire. In addition, `ingressctl renew --all-deployed --inventory-root .` renews through `POST /nginx/certificates/{id}/renew` when the remaining lifetime is below `renew_before_days` (default 30), and `apply` does the same when its plan sees a certificate below that lead time. The renew call is synchronous and can take minutes; a failed renewal of a certificate close to expiry is exit code 2.
+
+### Hand-made hosts
+
+A host created in the NPM UI is never managed implicitly. A manifest whose domain belongs to such a host is a **BLOCKER** in `plan` and `apply`, and nothing is changed until the host is taken over explicitly, with the domains of the manifest and of the host matching exactly:
+
+```bash
+python3 infra/komodo/run_ingressctl.py adopt --resource <namespace>/<id> --npm-host-id <N>
+```
+
+The manifest for `<namespace>/<id>` has to exist already (that is what makes the domain ingressctl's), and `adopt` stores a snapshot of the host in the state first. After adopting, the next `apply` requests ingressctl's own certificate and switches the host to it; the old hand-made certificate stays in NPM — it is not ingressctl's — and can be deleted by hand. `inventory/npm-hosts.yaml` drops the host on the next `python3 infra/graph/npm_snapshot.py` run, because the domain is now declared in a manifest.
 
 ## Tests
 

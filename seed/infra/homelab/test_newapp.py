@@ -191,15 +191,20 @@ def test_public_summary_names_paths_methods_and_sources():
 
 
 def test_help_shows_each_public_flag_once():
-    """The acceptance line of the issue: five matching lines, one per flag, none in usage or epilog."""
+    """The acceptance lines of the issue: five matching lines, and the literal example of step 1."""
     env = {k: v for k, v in os.environ.items() if k != "HOMELAB_ROOT"}
     done = subprocess.run([sys.executable, "-B", "-I", str(SEED / "homelab.py"), "new-app", "--help"],
                           cwd=str(SEED), env=env, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
+    example = "--public-path /hook/abc --public-method POST --public-preset github-hooks"
+    assert sum(example in line for line in done.stdout.splitlines()) == 1
     lines = [line for line in done.stdout.splitlines()
              if re.search(r"--public-(path|method|cidr|preset|full-host)", line)]
+    assert len(lines) == 5, lines
     assert sorted(line.split()[0] for line in lines) == [
         "--public-cidr", "--public-full-host", "--public-method", "--public-path", "--public-preset"]
+    # the example rides on the --public-path entry; a line of its own would be a sixth match
+    assert any(line.startswith("  --public-path") and example in line for line in lines), lines
 
 
 @pytest.fixture

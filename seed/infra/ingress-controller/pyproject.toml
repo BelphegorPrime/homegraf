@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ingressctl"
 version = "0.1.0"
-description = "Deklarative HTTPS-Zugänge: ingress.yaml -> Nginx Proxy Manager + Infisical private CA"
+description = "Declarative HTTPS endpoints: ingress.yaml -> Nginx Proxy Manager + Infisical private CA"
 requires-python = ">=3.11"
 dependencies = [
   "PyYAML==6.0.3",

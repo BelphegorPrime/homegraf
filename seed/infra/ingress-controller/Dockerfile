@@ -1,5 +1,5 @@
-# Reproduzierbarer Build aus einem festen Quellcommit (kein Registry-Zwang): Komodo baut diesen Stack
-# beim Deploy aus dem gepinnten Commit. Basis-Image per Digest gepinnt (python 3.15, bookworm).
+# Reproducible build from a fixed source commit (no registry required): Komodo builds this stack
+# on deploy from the pinned commit. Base image pinned by digest (python 3.15, bookworm).
 FROM python:3.15-slim-bookworm@sha256:96599df822d0e1c6bb700014a05c7f3c8cabc6e0f7ff3c4f9f69cee033b4b5d9
 
 RUN apt-get update \

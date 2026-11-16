@@ -284,6 +284,11 @@ class AgentProfilesTest(unittest.TestCase):
             self.assertNotIn("revision", body)
             self.assertEqual(body["name"], role.name)
 
+        reviewer = (PROMPTS / "reviewer.md").read_text(encoding="utf-8")
+        self.assertIn('list every skipped test or check in the evidence comment under "Not run here"',
+                      reviewer)
+        self.assertIn("The `WIP: ` prefix of the title and a draft state are never a reason for NOT OK",
+                      reviewer)
         self.assertEqual(self.fake.agents["default"], default_before)
         self.assertEqual(self.fake.llm["default"], default_llm_before)
         self.assertEqual(self.fake.active_agent, DEFAULT_ID)

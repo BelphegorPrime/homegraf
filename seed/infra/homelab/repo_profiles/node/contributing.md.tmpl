@@ -1,0 +1,28 @@
+# Contributing
+
+Thanks for looking. Bug reports, ideas and pull requests are welcome.
+
+## Before you open a pull request
+
+```sh
+{{validate_command}}
+```
+
+CI runs the same command. A change is ready when it exits 0.
+
+## Conventions
+
+- **Commits:** [Conventional Commits](https://www.conventionalcommits.org) (`feat: ...`, `fix: ...`, `docs: ...`), one concern per commit.
+- **Language:** English in code, comments, docs and commit messages.
+- **Tests with the change:** a fix comes with a test that fails without it; a new action comes with a test for who may do it and who may not.
+- **Generic examples:** tests, docs and examples use neutral names (`owner/repository`, `lab.example`), never a real host, address or token.
+- **Docs with the change:** the README says what the change does.
+
+## Pull requests
+
+Target `{{default_branch}}` from a branch named `ai/issue-<n>`, one pull request per issue. The title starts with
+`WIP: ` and a human removes the prefix when the pull request is ready for review. Say what changes and why, and
+how you checked it. By contributing you agree that your contribution is licensed under the license of this
+repository.
+
+Maintainer: {{owner}}.

@@ -1,0 +1,32 @@
+# CI on Forgejo. Jobs run in containers on the runner labelled `docker` and check the sources out with a
+# plain git fetch and the token Forgejo passes to the job, so no action from a marketplace is needed.
+# The image is a pinned digest: keep its tag and its digest together when you update it (Renovate does).
+name: ci
+on:
+  push:
+    branches: [{{default_branch}}]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: docker
+    timeout-minutes: 10
+    container:
+      image: node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1
+    steps:
+      - name: git
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+      - name: checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q . && git config --global --add safe.directory "$PWD"
+          git -c http.extraheader="Authorization: token $TOKEN" fetch -q --no-tags "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
+          git checkout -q "${{ github.sha }}"
+      - name: install and validate
+        # A new repository has no package.json yet; npm ci needs it and the lockfile next to it.
+        run: |
+          if [ ! -f package.json ]; then echo "no package.json yet: nothing to install or validate"; exit 0; fi
+          npm ci
+          {{validate_command}}

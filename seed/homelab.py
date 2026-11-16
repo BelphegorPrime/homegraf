@@ -6,7 +6,7 @@
   ./homelab.py addons [--json]                   # building blocks for new-app --addon (postgres, redis, ...)
   ./homelab.py templates [--json]                # starting points for new-app --template (web servers, ready-made apps)
   ./homelab.py repo-profiles [--json]            # the files a new repository starts with (python, node, generic)
-  ./homelab.py new-repo --name NAME --profile P [--yes]  # create a repository, wired for the agents
+  ./homelab.py new-repo --name NAME --profile P [--wire] [--yes]  # create a repository, wired for the agents
   ./homelab.py remove-app --app-id ID [--yes]
   ./homelab.py hosts [--json]                    # hosts ingressctl manages, and whether each redirects HTTP to HTTPS
   ./homelab.py force-https DOMAIN on|off [--pr] [--yes]
@@ -187,6 +187,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     visibility.add_argument("--public", dest="visibility", action="store_const", const="public", help="public repository")
     p.add_argument("--branch", help="the default branch (default: main)")
     p.add_argument("--agent-login", help="the agent's Forgejo user, collaborator with write (default: openhands)")
+    p.add_argument("--wire", action="store_true",
+                   help="also add the repository to ALLOWED_REPOS and MERGE_POLICY of the stack that runs ForgeHands, as "
+                        "a pull request (needs FORGEJO_TOKEN); nothing is deployed by this command")
     p.add_argument("--json", action="store_true", help="machine-readable: the plan without --yes, the read-back result with it")
     p.add_argument("--yes", action="store_true", help="create; without it the run prints the plan and changes nothing")
     p.set_defaults(visibility="private")

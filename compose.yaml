@@ -559,6 +559,24 @@ services:
       start_period: 60s
     logging: *logging
 
+  # A new named volume is root-owned, while the bootstrap and ForgeHands run as uid 1000.  This one-shot only gives the dedicated
+  # handoff directory to that uid (0700) before the bootstrap writes the 0600 file; it cannot touch bootstrap-state.
+  factory-runtime-init:
+    image: ${BOOTSTRAP_IMAGE:-ghcr.io/belphegorprime/homegraf-bootstrap:main}
+    container_name: ${PROJECT_PREFIX:-homegraf}-factory-runtime-init
+    profiles: [agents]
+    restart: "no"
+    user: "0:0"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    entrypoint: ["python3", "-c", "import os; os.chmod('/factory-runtime', 0o700); os.chown('/factory-runtime', 1000, 1000)"]
+    volumes:
+      - factory-runtime:/factory-runtime
+    logging: *logging
+
   forgehands:
     # Releases before 0.2.15 do not carry the pull request rounds and the profile-id routes the factory relies on. Pin the version.
     image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:v0.2.15}
@@ -725,9 +743,12 @@ services:
       # Writable here only: the bootstrap publishes the ForgeHands runtime handoff (atomic 0600) and ForgeHands mounts it read-only.
       - factory-runtime:/factory-runtime
     depends_on:
-      # With the agents profile the bootstrap reconciles the profiles against a ready Canvas before it writes the handoff.
+      # With the agents profile the bootstrap waits for a ready Canvas and the runtime volume owner before writing the handoff.
       openhands:
         condition: service_healthy
+        required: false
+      factory-runtime-init:
+        condition: service_completed_successfully
         required: false
       forgejo-admin:
         condition: service_completed_successfully

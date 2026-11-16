@@ -286,7 +286,22 @@ class ComposeContractTests(unittest.TestCase):
         self.assertIn("bootstrap:\n        condition: service_completed_successfully", joined)
         bootstrap = "\n".join(self.bootstrap)
         self.assertIn("openhands:\n        condition: service_healthy\n        required: false", bootstrap)
+        self.assertIn("factory-runtime-init:\n        condition: service_completed_successfully\n        required: false",
+                      bootstrap)
         self.assertNotIn("forgehands:", bootstrap)
+
+    def test_the_runtime_volume_is_writable_by_the_bootstrap_uid(self):
+        init = "\n".join(block(self.text, "factory-runtime-init"))
+        self.assertIn("profiles: [agents]", init)
+        self.assertIn('user: "0:0"', init)
+        self.assertIn("read_only: true", init)
+        self.assertIn("cap_drop: [ALL]", init)
+        self.assertIn("cap_add: [CHOWN, FOWNER]", init)
+        self.assertIn("no-new-privileges:true", init)
+        self.assertIn("factory-runtime:/factory-runtime", volumes(block(self.text, "factory-runtime-init")))
+        self.assertIn("os.chown('/factory-runtime', 1000, 1000)", init)
+        self.assertIn("0o700", init)
+        self.assertNotIn("bootstrap-state", init)
 
     def test_legacy_webhook_mode_defaults_are_unchanged(self):
         self.assertEqual(self.env["OPENHANDS_WEBHOOK_SECRET"], "${FORGEHANDS_OPENHANDS_WEBHOOK_SECRET:-}")
@@ -314,9 +329,14 @@ class ComposeContractTests(unittest.TestCase):
                "KOMODO_DB_PASSWORD": "db", "KOMODO_JWT_SECRET": "jwt",
                "INFISICAL_DB_PASSWORD": "db", "INFISICAL_ENCRYPTION_KEY": "key",
                "INFISICAL_AUTH_SECRET": "auth"}
-        result = subprocess.run([docker, "compose", "--profile", "agents", "config"], cwd=ROOT, env=env,
+        agents = subprocess.run([docker, "compose", "--profile", "agents", "config"], cwd=ROOT, env=env,
                                 capture_output=True, text=True, timeout=60)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(agents.returncode, 0, agents.stderr)
+        legacy = subprocess.run([docker, "compose", "config"], cwd=ROOT, env=env,
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(legacy.returncode, 0, legacy.stderr)
+        self.assertNotIn("\n  forgehands:", legacy.stdout)
+        self.assertNotIn("\n  factory-runtime-init:", legacy.stdout)
 
 
 class RuntimePermissionTests(unittest.TestCase):

@@ -298,7 +298,11 @@ def test_rendered_config_is_accepted_by_nginx(tmp_path):
         main = tmp_path / "nginx.conf"
         main.write_text(
             "worker_processes 1;\nerror_log stderr;\npid " + str(tmp_path / "nginx.pid") + ";\n"
-            "events {}\nhttp {\n" + _server_block(text) + "}\n"
+            # nginx -t opens its default log and temp paths under /var, which an unprivileged runner may not write.
+            "events {}\nhttp {\naccess_log off;\n"
+            + "".join(f"{name} {tmp_path / name};\n" for name in (
+                "client_body_temp_path", "proxy_temp_path", "fastcgi_temp_path", "uwsgi_temp_path", "scgi_temp_path"))
+            + _server_block(text) + "}\n"
         )
         command = ["nginx", "-t", "-p", str(tmp_path), "-c", str(main)]
     else:

@@ -334,6 +334,48 @@ export interface RootCaInfo {
   certificates: { subject: string; issuer: string; notAfter: string; fingerprint: string; root: boolean }[];
 }
 
+/** One part of a repository's factory wiring: true, false, or "unknown" when Forgejo (or the setting) cannot say. */
+export type RepoCheck = boolean | "unknown";
+
+/** How far a repository is wired for the factory: the ForgeHands webhook, the agent labels, the agent as a collaborator
+ * with write, and the repository in ForgeHands' allowed list (FORGEHANDS_ALLOWED_REPOS). */
+export interface RepoFactoryStatus {
+  webhook: RepoCheck;
+  labels: RepoCheck;
+  agentAccess: RepoCheck;
+  allowed: RepoCheck;
+}
+
+/** A repository of the operator's Forgejo owner, with how far its factory wiring is. */
+export interface RepoInfo {
+  name: string;
+  private: boolean;
+  default_branch: string;
+  /** Forgejo's `updated_at`. */
+  updated: string;
+  factory: RepoFactoryStatus;
+}
+
+/** A profile a new repository starts with (`homelab.py repo-profiles --json`). */
+export interface RepoProfileInfo {
+  name: string;
+  description: string;
+  validate_command: string;
+  /** The files it writes, relative to the new repository. */
+  files: string[];
+}
+
+/** The progress of a `new-repo` job: the command's output so far, and its result once it is through. */
+export interface RepoJobSnapshot {
+  id: string;
+  /** The name of the repository the job creates. */
+  repository: string;
+  requestedBy?: string;
+  state: "running" | "done" | "failed";
+  exitCode?: number;
+  log: string;
+}
+
 /** Whether signing in through an identity provider is set up, and who is signed in through it right now (cookie session). */
 export interface SsoSession {
   enabled: boolean;

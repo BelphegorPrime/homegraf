@@ -100,13 +100,15 @@ def parse_args(argv=None) -> argparse.Namespace:
     sub = ap.add_subparsers(dest="cmd")
 
     p = sub.add_parser("new-app", help="set up (or continue setting up) an app",
-                       description="Set up an app end to end. Reads stacks/<id>/compose.yaml if it exists, otherwise "
-                                   "writes a skeleton from --image/--container-port/--secret-var/--mount.",
-                       epilog="example: ./homelab.py new-app --app-id whoami-test --server worker-1 "
-                              "--image traefik/whoami:v1.11.0 --container-port 80 --secret-var API_TOKEN "
+                       description="Set up an app end to end. Reads stacks/<id>/compose.yaml if it exists,\n"
+                                   "otherwise writes a skeleton from --image/--container-port/--secret-var/--mount.",
+                       usage="%(prog)s --app-id APP_ID --server SERVER [options]",
+                       formatter_class=argparse.RawDescriptionHelpFormatter,
+                       epilog="example: ./homelab.py new-app --app-id whoami-test --server worker-1\n"
+                              "--image traefik/whoami:v1.11.0 --container-port 80 --secret-var API_TOKEN\n"
                               "--secret API_TOKEN=generate --yes\n"
-                              "public paths only (the UI stays private): ./homelab.py new-app --app-id hooks "
-                              "--server worker-1 --public-path /hook/abc --public-method POST --public-preset github-hooks")
+                              "public paths only (the UI stays private): the public flags of the routing section\n"
+                              "above, e.g. path /hook/abc, method POST, preset github-hooks")
     p.add_argument("--app-id", required=True, help="folder stacks/<id>, Komodo stack, inventory ID (e.g. whoami-test)")
     p.add_argument("--server", help="Komodo server from inventory/servers.yaml (e.g. worker-1); required for a new app")
     g = p.add_argument_group("compose skeleton (only when stacks/<id>/compose.yaml does not exist)")

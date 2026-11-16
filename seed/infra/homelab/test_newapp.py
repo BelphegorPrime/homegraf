@@ -1,6 +1,9 @@
 """Tests for the wizards and the secrets menu (pytest infra/homelab)."""
+import os
 import pathlib
+import re
 import shutil
+import subprocess
 import sys
 
 import pytest
@@ -10,6 +13,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import newapp  # noqa: E402
 import removeapp  # noqa: E402
 import secrets_menu  # noqa: E402
+
+SEED = pathlib.Path(__file__).resolve().parents[2]
 
 COMPOSE = """
 services:
@@ -183,6 +188,18 @@ def test_public_summary_names_paths_methods_and_sources():
     assert newapp.public_summary({"paths": ["/hook"], "allow_cidrs": ["203.0.113.0/24"]}) == "/hook (GET, HEAD) from 203.0.113.0/24"
     assert newapp.public_summary({"paths": ["/hook"], "methods": ["POST"]}) == "/hook (POST) from any address"
     assert newapp.public_summary({"paths": ["/hook"], "allow_cidrs": [{"preset": "github-hooks"}]}).endswith("from preset github-hooks")
+
+
+def test_help_shows_each_public_flag_once():
+    """The acceptance line of the issue: five matching lines, one per flag, none in usage or epilog."""
+    env = {k: v for k, v in os.environ.items() if k != "HOMELAB_ROOT"}
+    done = subprocess.run([sys.executable, "-B", "-I", str(SEED / "homelab.py"), "new-app", "--help"],
+                          cwd=str(SEED), env=env, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    lines = [line for line in done.stdout.splitlines()
+             if re.search(r"--public-(path|method|cidr|preset|full-host)", line)]
+    assert sorted(line.split()[0] for line in lines) == [
+        "--public-cidr", "--public-full-host", "--public-method", "--public-path", "--public-preset"]
 
 
 @pytest.fixture

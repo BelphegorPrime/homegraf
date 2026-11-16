@@ -10,12 +10,15 @@ ARG APP_VERSION=dev
 RUN APP_VERSION=$APP_VERSION npm run build && npm prune --omit=dev
 
 # The command-line tools (the paths listed in TOOLS, without their tests): the app runs them against the repository it is
-# given, and `docker exec homegraf homelab.py ...` runs them by hand.
+# given, and `docker exec homegraf homelab.py ...` runs them by hand. hgboot comes with them because new-repo uses the
+# Forgejo side of the bootstrap (bootstrap/hgboot/new_repo.py); the tools import it as a sibling package.
 FROM node:26.13.0-slim AS tools
 COPY TOOLS /ctx/TOOLS
 COPY seed /ctx/seed
+COPY bootstrap/hgboot /ctx/hgboot
 RUN mkdir /out && cd /ctx/seed \
  && for p in $(grep -v '^#' /ctx/TOOLS); do mkdir -p "/out/$(dirname "$p")" && cp -a "$p" "/out/$p"; done \
+ && cp -a /ctx/hgboot /out/hgboot \
  && find /out \( -name __pycache__ -o -name .pytest_cache -o -name tests \) -prune -exec rm -rf {} + \
  && find /out -name 'test_*.py' -delete
 

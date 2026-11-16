@@ -1,0 +1,9 @@
+name: python
+description: "a Python project: pytest, a .gitignore for Python and a CI job on a pinned python image"
+validate_command: python -m pytest -q
+files:
+  - {source: agents.md.tmpl, target: AGENTS.md}
+  - {source: readme.md.tmpl, target: README.md}
+  - {source: contributing.md.tmpl, target: CONTRIBUTING.md}
+  - {source: gitignore.tmpl, target: .gitignore}
+  - {source: forgejo-ci.yaml.tmpl, target: .forgejo/workflows/ci.yaml}

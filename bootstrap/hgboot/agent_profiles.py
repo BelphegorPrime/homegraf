@@ -1,4 +1,4 @@
-"""The factory's two LLM profiles and four agent profiles, reconciled and verified by reading them back.
+"""The factory's two LLM profiles and five agent profiles, reconciled and verified by reading them back.
 
 Verified against a running OpenHands agent-server (the Agent Canvas backend, agent-server 1.62.0):
 
@@ -18,7 +18,7 @@ that a write stuck, so each write is followed by a read and a comparison of the 
 read that still shows other values fails closed, publishes no ids, and is not retried in a loop.
 
 The LLM profile names are the ones of the reference installation: ``smart`` for the strong tier and
-``cheap`` for the free one.  The four agent profiles clone ``default`` when they are missing, but
+``cheap`` for the free one.  The five agent profiles clone ``default`` when they are missing, but
 ``default`` itself is never written or activated.
 """
 from __future__ import annotations
@@ -54,6 +54,7 @@ ROLES = (
     Role("worker", LLM_CHEAP, "worker.md"),
     Role("worker-strong", LLM_STRONG, "worker-strong.md"),
     Role("reviewer", LLM_STRONG, "reviewer.md"),
+    Role("sensitive-reviewer", LLM_STRONG, "sensitive-reviewer.md"),
 )
 
 

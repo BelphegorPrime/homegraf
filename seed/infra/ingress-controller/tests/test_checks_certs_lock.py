@@ -37,14 +37,14 @@ def test_validate_issued_accepts_good_certificate():
 def test_validate_rejects_wrong_key():
     ca = FakeCa()
     _, pem = _issue(ca, ["a.lab.example"])
-    with pytest.raises(CertificateError, match="Schlüssel"):
+    with pytest.raises(CertificateError, match="private key"):
         certs.validate_issued(pem, ca.pem, certs.generate_key_pem(), ("a.lab.example",), ca.pem, _now())
 
 
 def test_validate_rejects_untrusted_chain():
     ca, other = FakeCa(), FakeCa("Other Root")
     key, pem = _issue(ca, ["a.lab.example"])
-    with pytest.raises(CertificateError, match="Kette"):
+    with pytest.raises(CertificateError, match="chain"):
         certs.validate_issued(pem, ca.pem, key, ("a.lab.example",), other.pem, _now())
 
 
@@ -94,13 +94,13 @@ def test_https_check_verifies_chain_sni_and_status(tls_server):
     res = Checker(timeout=5).https("127.0.0.1", port, "svc.lab.example", "/", (200,), bundle)
     assert res.ok and res.fingerprint == fp
     res = Checker(timeout=5).https("127.0.0.1", port, "auth.lab.example", "/", (200, 401), bundle)
-    assert res.ok and res.status == 401  # fehlende Authentifizierung ist kein Ausfall, wenn erlaubt
+    assert res.ok and res.status == 401  # missing authentication is not an outage when it is allowed
 
 
 def test_https_check_fails_for_wrong_hostname_or_ca(tls_server):
     port, bundle, _, tmp = tls_server
     res = Checker(timeout=5).https("127.0.0.1", port, "other.lab.example", "/", (200,), bundle)
-    assert not res.ok and "TLS-Prüfung" in res.error
+    assert not res.ok and "TLS verification" in res.error
     (tmp / "other.pem").write_text(FakeCa("x").pem)
     res = Checker(timeout=5).https("127.0.0.1", port, "svc.lab.example", "/", (200,), str(tmp / "other.pem"))
     assert not res.ok
@@ -108,7 +108,7 @@ def test_https_check_fails_for_wrong_hostname_or_ca(tls_server):
 
 def test_upstream_check_reports_unreachable():
     ok, msg = Checker(timeout=1).upstream("http", "127.0.0.1", 1, "/", (200,))
-    assert not ok and "nicht erreichbar" in msg
+    assert not ok and "unreachable" in msg
 
 
 def test_lock_is_exclusive(tmp_path):

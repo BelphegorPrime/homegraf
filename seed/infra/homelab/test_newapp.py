@@ -23,7 +23,7 @@ services:
       - {published: 7000, target: 70}
     environment:
       A: ${DB_PASSWORD}
-      B: ${API_KEY:?fehlt}
+      B: ${API_KEY:?missing}
       C: ${OPT:-x}
       D: $PLAIN
       E: $${NOT_A_VAR}
@@ -170,14 +170,14 @@ def test_secrets_menu_flow(monkeypatch, capsys):
                     "c", "x",                     # missing number, unknown command
                     "q", "n"])                    # quit, no redeploy
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-    monkeypatch.setattr("getpass.getpass", lambda _="": "geheim")
+    monkeypatch.setattr("getpass.getpass", lambda _="": "secret-value")
     monkeypatch.setattr(secrets_menu.secret, "Folder", FakeFolder)
     monkeypatch.setattr(secrets_menu.secret, "compose_refs", lambda stack, key: key == "A")
     stack = {"id": "demo", "komodo_stack": "demo"}
     assert secrets_menu.stack_menu(data, stack) is False
-    assert data == {"A": "geheim"}
+    assert data == {"A": "secret-value"}
     out = capsys.readouterr().out
-    assert "A = geheim" in out and "NEW created" in out and "deleted" in out and "e.g. 'c 1'" in out
+    assert "A = secret-value" in out and "NEW created" in out and "deleted" in out and "e.g. 'c 1'" in out
 
 
 # --- Remove app ---

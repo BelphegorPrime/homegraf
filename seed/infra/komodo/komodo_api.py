@@ -1,6 +1,6 @@
-"""Minimaler Komodo-API-Client (v2.3.x) für die Werkzeuge in infra/komodo und infra/ci.
+"""Minimal Komodo API client (v2.3.x) for the tools in infra/komodo and infra/ci.
 
-Zugang über KOMODO_URL, KOMODO_API_KEY, KOMODO_API_SECRET (siehe infra/komodo/komodo.env).
+Access via KOMODO_URL, KOMODO_API_KEY, KOMODO_API_SECRET (see infra/komodo/komodo.env).
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ def _env_file() -> pathlib.Path:
 
 
 def load_env(path: pathlib.Path | None = None) -> None:
-    """KOMODO_*-Variablen aus komodo.env übernehmen, sofern sie nicht schon gesetzt sind.
-    Ohne die Datei (eine neue Installation, ein Container) kommen sie aus der Umgebung des Prozesses."""
+    """Take the KOMODO_* variables from komodo.env unless they are already set.
+    Without the file (a new installation, a container) they come from the process environment."""
     path = path or _env_file()
     if not path.is_file():
         return
@@ -56,12 +56,12 @@ def write(typ: str, params: dict):
 def execute_and_poll(typ: str, params: dict, timeout: float = 1800) -> dict:
     update = call("execute", typ, params)
     uid = update.get("id") or (update.get("_id") or {}).get("$oid")
-    if not uid:  # wie im offiziellen TS-Client: ohne ID (z. B. DeployStackIfChanged ohne Änderung) nicht pollbar
+    if not uid:  # like the official TS client: without an ID (e.g. DeployStackIfChanged with no change) there is nothing to poll
         return update
     deadline = time.monotonic() + timeout
     while update.get("status") != "Complete":
         if time.monotonic() > deadline:
-            raise TimeoutError(f"Komodo-Update {uid} nicht abgeschlossen")
+            raise TimeoutError(f"Komodo update {uid} did not complete")
         time.sleep(2)
         update = read("GetUpdate", {"id": uid})
     return update

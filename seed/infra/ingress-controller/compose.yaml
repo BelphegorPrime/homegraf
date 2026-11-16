@@ -1,8 +1,8 @@
-# Komodo-Stack "ingressctl" auf dem Management-Server (inventory/ingress.yaml: controller.management_server).
-# Wie alle Stacks: files_on_host im Komodo-Repo-Klon infrastructure-<server>; ../.. ist die Wurzel dieses Klons.
-# Läuft nicht dauerhaft. Deploy baut das Image aus dem ausgecheckten Stand und führt einmal `status` aus.
-# Mutierende Läufe startet Komodo per RunStackService (Procedures ingress-apply und ingress-renew).
-# Zugänge kommen aus infra/secrets/*.env im Checkout (auf Wunsch des Betreibers im Repo).
+# Komodo stack "ingressctl" on the management server (inventory/ingress.yaml: controller.management_server).
+# Like every stack: files_on_host in the Komodo repo clone infrastructure-<server>; ../.. is the root of that clone.
+# Does not run permanently. Deploy builds the image from the checked-out state and runs `status` once.
+# Komodo starts mutating runs via RunStackService (procedures ingress-apply and ingress-renew).
+# Credentials come from infra/secrets/*.env in the checkout (in the repo at the operator's request).
 name: ingressctl
 services:
   ingressctl:
@@ -20,8 +20,8 @@ services:
     environment:
       INGRESSCTL_STATE_DIR: /var/lib/ingressctl
     volumes:
-      - ../..:/repo:ro                                    # Checkout (Komodo-Repo-Klon)
-      - state:/var/lib/ingressctl   # SQLite-State, Locks, Pending-Schlüssel (sichern!); Rechte aus dem Image (uid 10001)
+      - ../..:/repo:ro                                    # checkout (Komodo repo clone)
+      - state:/var/lib/ingressctl   # SQLite state, locks, pending keys (back them up!); permissions from the image (uid 10001)
 
   # Stage 1 of ingress-apply: stacks that exist only as a folder with ingress.yaml get their secrets, Komodo stack and
   # first deploy (infra/komodo/reconcile_stacks.py). Same image; needs infra/secrets/provisioner.env.

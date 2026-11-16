@@ -10,7 +10,12 @@ import sys
 import tempfile
 import unittest
 
-from hgboot.factory_config import DEFAULT_MERGE_DENY
+from hgboot.agent_user import LOGIN as AGENT_LOGIN
+from hgboot.agent_user import TOKEN as AGENT_TOKEN, ensure_agent_user
+from hgboot.config import Config
+from hgboot.factory_config import DEFAULT_MERGE_DENY, FactoryConfig
+
+from .test_agent_user import FakeAgentForgejo, Server, Store
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SETUP = ROOT / "setup.sh"
@@ -194,6 +199,53 @@ class FreshOptInTests(unittest.TestCase):
             after = (tmp / ".env").read_bytes()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(after, before)
+
+
+class FreshDeploymentIntegrationTests(unittest.TestCase):
+    def test_the_fresh_rendered_bootstrap_environment_parses_and_the_agent_identity_supplies_the_token(self):
+        docker = shutil.which("docker")
+        if docker is None:
+            self.skipTest("docker is not installed")
+        try:
+            version = subprocess.run([docker, "compose", "version"], capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            self.skipTest("docker compose is not available")
+        if version.returncode != 0:
+            self.skipTest("docker compose is not available")
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp = pathlib.Path(temporary)
+            run_setup(tmp, overrides={"FORGEJO_TOKEN": "operator-token-123"})
+            fresh = read_env(tmp)
+            rendered = subprocess.run([docker, "compose", "--env-file", str(tmp / ".env"), "--profile", "agents",
+                                       "-f", str(COMPOSE), "config", "--format", "json"],
+                                      cwd=ROOT, capture_output=True, text=True, timeout=60)
+            self.assertEqual(rendered.returncode, 0, rendered.stderr)
+            document = json.loads(rendered.stdout)
+        env = {name: "" if value is None else str(value)
+               for name, value in document["services"]["bootstrap"]["environment"].items()}
+        self.assertNotIn("FORGEJO_TOKEN", env)
+        self.assertEqual(env["FORGEHANDS_FORGEJO_AGENT_TOKEN"], "")
+        cfg = FactoryConfig.from_env(env, "owner/infrastructure")
+        self.assertTrue(cfg.enabled)
+        self.assertEqual(cfg.forgejo_agent_token, "")
+        self.assertEqual(cfg.allowed_senders, ("owner", "homegraf-agent"))
+
+        stack = Config.from_env(fresh)
+        forgejo = FakeAgentForgejo()
+        forgejo.admin, forgejo.password = stack.forgejo_user, stack.admin_password
+        server = Server(forgejo)
+        self.addCleanup(server.close)
+        stack.forgejo_url = server.url
+        forgejo.repos["owner/infrastructure"] = {"empty": True, "files": {}, "private": True, "collaborators": {}}
+        store = Store()
+        settings = ensure_agent_user(stack, store, repositories=("owner/infrastructure",))
+        token = store.get(AGENT_TOKEN)
+        self.assertEqual(settings.login, AGENT_LOGIN)
+        self.assertIn(settings.login, forgejo.users)
+        self.assertIn(token, forgejo.user_tokens[AGENT_LOGIN].values())
+        self.assertNotEqual(token, "operator-token-123")
+        supplied = FactoryConfig.from_env({**env, "FORGEHANDS_FORGEJO_AGENT_TOKEN": token}, "owner/infrastructure")
+        self.assertEqual(supplied.forgejo_agent_token, token)
 
 
 class ComposeContractTests(unittest.TestCase):

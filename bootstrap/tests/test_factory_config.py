@@ -85,17 +85,15 @@ class FieldContractTests(unittest.TestCase):
         self.assertEqual(cfg.mirror_url, "https://github.com/owner/infrastructure.git")
         self.assertEqual(cfg.mirror_token, "mirror-token-123")
 
-    def test_the_existing_forgejo_token_is_the_fallback_for_the_agent(self):
+    def test_a_fresh_opt_in_leaves_the_agent_token_to_the_agent_user_step(self):
         env = {k: v for k, v in ENV.items() if k != "FORGEHANDS_FORGEJO_AGENT_TOKEN"}
-        cfg = FactoryConfig.from_env({**env, "FORGEJO_TOKEN": "existing-token"}, REPOSITORY)
-        self.assertEqual(cfg.forgejo_agent_token, "existing-token")
+        cfg = FactoryConfig.from_env({**env, "FORGEJO_TOKEN": "operator-token-123"}, REPOSITORY)
+        self.assertEqual(cfg.forgejo_agent_token, "")
 
     def test_every_required_input_is_named_when_it_is_missing(self):
         for name in REQUIRED:
             with self.subTest(name=name), self.assertRaisesRegex(FactoryConfigError, name):
                 FactoryConfig.from_env({k: v for k, v in ENV.items() if k != name}, REPOSITORY)
-        with self.assertRaisesRegex(FactoryConfigError, "FORGEHANDS_FORGEJO_AGENT_TOKEN"):
-            FactoryConfig.from_env({k: v for k, v in ENV.items() if k != "FORGEHANDS_FORGEJO_AGENT_TOKEN"}, REPOSITORY)
 
     def test_secrets_are_not_in_repr_or_in_errors(self):
         cfg = FactoryConfig.from_env({**ENV, "FORGEHANDS_MIRROR_URL": "https://github.com/owner/infrastructure.git",

@@ -342,12 +342,14 @@ class FakeChecker:
     def __init__(self, npm: FakeNpm):
         self.npm = npm
         self.upstream_ok = True
+        self.ca_bundles: list[str | None] = []  # was ingressctl der Prüfung als Trust-Store übergibt
 
     def upstream(self, scheme, host, port, path, accepted):
         return (self.upstream_ok, "ok" if self.upstream_ok else "Upstream nicht erreichbar")
 
     def https(self, address, port, domain, path, accepted, ca_bundle):
         from ingressctl.checks import TlsResult
+        self.ca_bundles.append(ca_bundle)
         fp = self.npm.presented.get(domain)
         if fp is None:
             return TlsResult(False, None, None, f"{domain}: kein Zertifikat konfiguriert")

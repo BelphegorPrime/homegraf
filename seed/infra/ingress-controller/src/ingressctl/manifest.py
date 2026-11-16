@@ -152,6 +152,9 @@ def parse_manifest(root: pathlib.Path, path: pathlib.Path, inv: Inventory) -> li
         if issuer is None:
             raise ManifestError(f"{rel}: {rid}: issuer_ref '{cert['issuer_ref']}' ist nicht in inventory/ingress.yaml freigegeben")
         is_le = issuer.type == "letsencrypt"
+        if public is not None and not is_le:
+            raise ManifestError(f"{rel}: {rid}: proxy.public verlangt einen Let's-Encrypt-Issuer "
+                                f"(Issuer '{issuer.name}')")
         if "dns_challenge" in cert and not is_le:
             raise ManifestError(f"{rel}: {rid}: certificate.dns_challenge ist nur bei einem "
                                 f"Let's-Encrypt-Issuer zulässig (Issuer '{issuer.name}')")

@@ -37,6 +37,14 @@ def _api_verify():
     return os.environ.get("INGRESSCTL_API_CA_BUNDLE") or True
 
 
+def _secret_optional(name: str) -> str | None:
+    """Wie _secret, aber ohne Fehler: fehlende DNS-Zugangsdaten werden als Blocker gemeldet."""
+    path = os.environ.get(f"{name}_FILE")
+    if path:
+        return pathlib.Path(path).read_text().strip()
+    return os.environ.get(name) or None
+
+
 def _state_dir() -> pathlib.Path:
     return pathlib.Path(os.environ.get("INGRESSCTL_STATE_DIR", "/var/lib/ingressctl"))
 
@@ -49,14 +57,16 @@ def build_context(root: pathlib.Path | None, inv, specs: list[ServiceSpec]) -> C
             client = NpmClient(cfg.api_url, _secret("NPM_IDENTITY"), _secret("NPM_SECRET"), verify=_api_verify())
             client.login()
             npm[s.npm_instance] = client
-        if s.issuer_ref not in issuers:
+        if s.issuer_ref not in issuers and inv.issuers[s.issuer_ref].type == "infisical":
             cfg = inv.issuers[s.issuer_ref]
             client = InfisicalClient(cfg.api_url, _secret("INFISICAL_CLIENT_ID"), _secret("INFISICAL_CLIENT_SECRET"),
                                      verify=_api_verify())
             client.login()
             issuers[s.issuer_ref] = client
     repo = ",".join(inv.controller.get("allowed_repos") or []) or None
+    needs_dns = any(s.dns_challenge and inv.issuers[s.issuer_ref].type == "letsencrypt" for s in specs)
     return Context(root=root, inv=inv, state=State(_state_dir()), npm=npm, issuers=issuers, checker=Checker(),
+                   le_dns_credentials=_secret_optional("LETSENCRYPT_DNS_CREDENTIALS") if needs_dns else None,
                    source_repo=repo)
 
 

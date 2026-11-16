@@ -1,4 +1,4 @@
-"""Tests für die Änderungserkennung (pytest infra/stackctl)."""
+"""Tests for change detection (pytest infra/stackctl)."""
 import json
 import pathlib
 import subprocess
@@ -82,9 +82,9 @@ def test_validate_secrets(repo):
     repo.write("inventory/stacks.yaml", stacks.replace("status: verified, extra_files", "status: verified, secrets: infisical, extra_files"))
     assert stackctl.validate(repo.root, strict=True)[0] == []
     repo.write("inventory/stacks.yaml", stacks.replace("status: verified, extra_files", "status: verified, secrets: sops, extra_files"))
-    assert any("secrets muss" in e for e in stackctl.validate(repo.root)[0])
+    assert any("secrets must" in e for e in stackctl.validate(repo.root)[0])
     repo.write("inventory/stacks.yaml", stacks.replace("komodo_stack: searxng,", "secrets: infisical,"))
-    assert any("secrets braucht" in e for e in stackctl.validate(repo.root)[0])
+    assert any("secrets needs" in e for e in stackctl.validate(repo.root)[0])
 
 
 def test_validate_job(repo):
@@ -92,9 +92,9 @@ def test_validate_job(repo):
     repo.write("inventory/stacks.yaml", stacks.replace("status: verified, extra_files", "status: verified, job: true, extra_files"))
     assert stackctl.validate(repo.root, strict=True)[0] == []
     repo.write("inventory/stacks.yaml", stacks.replace("status: verified, extra_files", "status: verified, job: yes please, extra_files"))
-    assert any("job muss" in e for e in stackctl.validate(repo.root)[0])
+    assert any("job must" in e for e in stackctl.validate(repo.root)[0])
     repo.write("inventory/stacks.yaml", stacks.replace("komodo_stack: searxng,", "job: true,"))
-    assert any("job braucht" in e for e in stackctl.validate(repo.root)[0])
+    assert any("job needs" in e for e in stackctl.validate(repo.root)[0])
 
 
 def test_only_changed_stack_is_affected(repo):
@@ -180,7 +180,7 @@ def test_controller_change_is_flagged_without_app_redeploy(repo):
 
 def test_previously_failed_stack_still_detected(repo):
     repo.write("stacks/nas/paperless/compose.yaml", "services: {a: {image: y}}\n")
-    c1 = repo.commit()  # paperless-Deploy scheitert, ai/searxng etc. sind auf c1
+    c1 = repo.commit()  # the paperless deploy fails, ai/searxng etc. stay on c1
     repo.write("stacks/ai/searxng/compose.yaml", "services: {a: {image: y}}\n")
     c2 = repo.commit()
     deployed = {"nas/paperless": repo.base, "nas/jellyfin": c1, "nas/jellyfin--ct": c1, "ai/searxng": c1}
@@ -191,7 +191,7 @@ def test_previously_failed_stack_still_detected(repo):
 def test_unknown_baseline_is_conservative(repo):
     head = repo.commit()
     stacks, _ = repo.affected(head, deployed={"nas/paperless": None})
-    assert stacks["nas/paperless"]["app"]  # andere Stacks fehlen in der Map -> ebenfalls konservativ
+    assert stacks["nas/paperless"]["app"]  # other stacks are missing from the map -> conservative as well
     assert set(stacks) == {"nas/paperless", "nas/jellyfin", "nas/jellyfin--ct", "ai/searxng"}
 
 

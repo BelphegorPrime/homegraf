@@ -3,6 +3,8 @@
 Bilden das aus dem Quellcode verifizierte Verhalten nach (docs/discovery.md), nicht die Annahmen von ingressctl:
 - NPM: doppelte Domains -> 400; Upload überschreibt Dateien ohne Reload; nginx liest Zertifikate erst bei
   Create/Update/Enable eines aktiven Hosts; GET auf Zertifikate enthält meta.certificate_key im Klartext.
+- NPM/Let's Encrypt: eigene Fake-CA, nice_name wird aus den Domains gebildet, kein PEM in meta.certificate,
+  test-http liefert "ok"/"no-host"; meta-Schlüssel außerhalb des NPM-Schemas -> 400.
 - Infisical: CSR wird von einer echten Test-CA signiert; optional ausstehend, kürzere Laufzeit, falsche SANs.
 Fehlerinjektion: `fail_after` führt eine Mutation aus und wirft danach requests.Timeout (unklarer Ausgang).
 """
@@ -62,6 +64,11 @@ def _fp(pem: str) -> str:
     return x509.load_pem_x509_certificate(pem.encode()).fingerprint(hashes.SHA256()).hex()
 
 
+# meta-Schlüssel aus backend/schema/components/certificate-object.json (additionalProperties: false)
+LE_META_KEYS = frozenset({"certificate", "certificate_key", "dns_challenge", "dns_provider_credentials",
+                          "dns_provider", "letsencrypt_certificate", "propagation_seconds", "key_type"})
+
+
 class FakeNpm:
     def __init__(self):
         self.hosts: dict[int, dict] = {}
@@ -72,6 +79,11 @@ class FakeNpm:
         self.mutations = 0
         self.reachable = True
         self.fail_after: set[tuple[str, str]] = set()
+        self.user_email = "bot@test"
+        self.http01_ok = True
+        self.le_ca = FakeCa(cn="Fake LE R3")
+        self.le_issued: list[list[str]] = []       # Domains je erfolgreicher LE-Ausstellung
+        self.le_requests: list[dict] = []          # letzte LE-Create-Bodies (für Durchreich-Tests)
 
     def add_manual_host(self, domains, forward_host="10.0.0.9", port=80):
         hid = next(self.ids)
@@ -93,6 +105,45 @@ class FakeNpm:
             if h["id"] != exclude and {d.lower() for d in h["domain_names"]} & {d.lower() for d in domains}:
                 return next(iter({d.lower() for d in h["domain_names"]} & {d.lower() for d in domains}))
         return None
+
+    def _sign_le(self, cid: int) -> dict:
+        """Signiert ein Leaf und speichert nur expires_on; das certbot-Ergebnis ist in NPM reine Antwortdaten."""
+        cert = self.certs[cid]
+        key = ec.generate_private_key(ec.SECP256R1())
+        domains = cert["domain_names"]
+        self.cert_files[cid] = self.le_ca.sign(key.public_key(), list(domains), 90)
+        now = dt.datetime.now(dt.timezone.utc)
+        expires = now + dt.timedelta(days=90)
+        cert["expires_on"] = expires.strftime("%Y-%m-%d %H:%M:%S")
+        return {"cn": domains[0] if domains else "", "issuer": self.le_ca.cn,
+                "dates": {"from": int(now.timestamp()), "to": int(expires.timestamp())}}
+
+    def _create_le(self, data: dict):
+        meta = data.get("meta") or {}
+        if set(meta) - LE_META_KEYS:
+            return 400, {"error": {"code": 400, "message": "Invalid meta: additional properties are not allowed"}}
+        self.le_requests.append(data)
+        if not self.user_email:
+            return 400, {"error": {"code": 400,
+                                   "message": "A valid email address must be set on your user account to use Let's Encrypt"}}
+        domains = data.get("domain_names") or []
+        if not meta.get("dns_challenge") and not self.http01_ok:
+            domain = domains[0] if domains else ""
+            return 400, {"error": {"code": 400,
+                                   "message": f"Certbot failed to authenticate some domains: {domain}: "
+                                              "Invalid response from http://"
+                                              f"{domain}/.well-known/acme-challenge/test-challenge: 404"}}
+        cid = next(self.ids)
+        self.certs[cid] = {"id": cid, "provider": "letsencrypt",
+                           "nice_name": ", ".join(domains),  # NPM überschreibt jeden gesendeten Namen
+                           "domain_names": domains, "expires_on": None,
+                           "meta": {"dns_challenge": bool(meta.get("dns_challenge"))}}
+        cert_info = self._sign_le(cid)
+        self.le_issued.append(list(domains))
+        self._reload()  # NPM lädt nginx nach der LE-Ausstellung neu
+        row = self.certs[cid]
+        # NPM hängt das certbot-Ergebnis nur an die Create-Antwort (und den Audit-Log), nicht an die Zeile.
+        return 201, {**row, "meta": {**row["meta"], "letsencrypt_certificate": cert_info}}
 
     def handle(self, method, path, query, headers, body):
         if not self.reachable:
@@ -144,14 +195,28 @@ class FakeNpm:
             if self.hosts[hid]["enabled"]:
                 self._reload()
             return 200, self.hosts[hid]
+        if p == "/nginx/certificates/test-http" and method == "POST":
+            return 200, {d: "ok" if self.http01_ok else "no-host" for d in json.loads(body)["domains"]}
         if p == "/nginx/certificates":
             if method == "GET":
                 return 200, list(self.certs.values())
             data = json.loads(body)
+            if data.get("provider") == "letsencrypt":
+                return self._create_le(data)
             cid = next(self.ids)
             self.certs[cid] = {"id": cid, "provider": data["provider"], "nice_name": data["nice_name"],
                                "domain_names": [], "expires_on": "now", "meta": {}}
             return 201, self.certs[cid]
+        m = re.fullmatch(r"/nginx/certificates/(\d+)/renew", p)
+        if m:
+            cid = int(m.group(1))
+            if cid not in self.certs:
+                return 404, {"error": {"code": 404, "message": "Not Found"}}
+            if self.certs[cid]["provider"] != "letsencrypt":
+                return 400, {"error": {"code": 400, "message": "Only Let'sEncrypt certificates can be renewed"}}
+            self._sign_le(cid)
+            self._reload()
+            return 200, self.certs[cid]
         m = re.fullmatch(r"/nginx/certificates/(\d+)(/upload)?", p)
         if m:
             cid = int(m.group(1))
@@ -176,6 +241,7 @@ class FakeNpm:
 
 class FakeCa:
     def __init__(self, cn="Test Homelab Root"):
+        self.cn = cn
         self.key = ec.generate_private_key(ec.SECP256R1())
         now = dt.datetime.now(dt.timezone.utc)
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])

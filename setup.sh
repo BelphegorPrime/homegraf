@@ -148,8 +148,54 @@ for o in $optional; do
   case "$o" in renovate | runner | backup | status | agents) ;; *) die "unknown optional service '$o' (renovate, runner, backup, status, agents)" ;; esac
   case ",$profiles," in *,"$o",*) ;; *) profiles="${profiles:+$profiles,}$o" ;; esac
 done
+factory=false
+case ",$profiles," in
+  *,agents,*)
+    factory=true
+    ;;
+esac
+# The factory is opt-in.  Its bootstrap inputs (models, gateway, shared limits) are collected here; direct
+# mode stays off until the bootstrap has read back the four real agent profile ids and writes the handoff.
+forgehands_agent_login=${FORGEHANDS_AGENT_LOGIN:-homegraf-agent}
+forgehands_human_login=${FORGEHANDS_HUMAN_LOGIN:-$forgejo_user}
+forgehands_strong_model=${FORGEHANDS_STRONG_MODEL:-}
+forgehands_cheap_model=${FORGEHANDS_CHEAP_MODEL:-}
+forgehands_gateway_url=${FORGEHANDS_GATEWAY_URL:-}
+forgehands_gateway_key=${FORGEHANDS_GATEWAY_API_KEY:-}
+forgehands_agent_secrets=${FORGEHANDS_AGENT_SECRETS:-FORGEJO_TOKEN,FORGEJO_URL}
+forgehands_max_rounds=${FORGEHANDS_MAX_ROUNDS:-3}
+if $factory; then
+  if $interactive; then
+    echo
+    echo "Factory: the models and the gateway the agents use (the key stays in .env, never in the repository)."
+    [ -n "$forgehands_strong_model" ] || read -r -p "Strong model, as the gateway names it (vendor/model): " forgehands_strong_model
+    [ -n "$forgehands_cheap_model" ] || read -r -p "Cheap model for routine work: " forgehands_cheap_model
+    [ -n "$forgehands_gateway_url" ] || read -r -p "LLM gateway base URL: " forgehands_gateway_url
+    if [ -z "$forgehands_gateway_key" ]; then
+      read -r -s -p "LLM gateway API key: " forgehands_gateway_key
+      echo
+    fi
+  fi
+  for value in "$forgehands_strong_model" "$forgehands_cheap_model" "$forgehands_gateway_url" "$forgehands_gateway_key"; do
+    [ -n "$value" ] || die "the agents profile needs FORGEHANDS_STRONG_MODEL, FORGEHANDS_CHEAP_MODEL, FORGEHANDS_GATEWAY_URL and FORGEHANDS_GATEWAY_API_KEY"
+    case "$value" in *[[:space:]]*) die "the model, the gateway URL and the gateway key must not contain white space" ;; esac
+  done
+  case "$forgehands_agent_login$forgehands_human_login" in
+    *[,[:space:]]*) die "the factory logins must not contain commas or white space" ;;
+  esac
+  case "$forgehands_agent_secrets" in
+    *[[:space:]]*) die "FORGEHANDS_AGENT_SECRETS must be a comma-separated list without white space" ;;
+  esac
+fi
 allowed_repos=${FORGEHANDS_ALLOWED_REPOS:-$forgejo_user/infrastructure}
-allowed_senders=${FORGEHANDS_ALLOWED_SENDERS:-$forgejo_user}
+if [ -n "${FORGEHANDS_ALLOWED_SENDERS:-}" ]; then
+  allowed_senders=$FORGEHANDS_ALLOWED_SENDERS
+elif $factory; then
+  # Both, or ForgeHands ignores the events the agents themselves cause.
+  allowed_senders="$forgehands_human_login,$forgehands_agent_login"
+else
+  allowed_senders=$forgejo_user
+fi
 case ",$profiles," in
   *,agents,*)
     IFS=',' read -r -a allowed_repo_list <<< "$allowed_repos"
@@ -159,6 +205,11 @@ case ",$profiles," in
     done
     ;;
 esac
+# A fresh opt-in protects this stack's own repository; repositories without an entry stay manual.  An explicit
+# FORGEHANDS_MERGE_POLICY (including {}) is the operator's policy and is never replaced.
+factory_repository=$forgejo_user/infrastructure
+factory_default_policy='{"'"$factory_repository"'":{"deny":[".forgejo/**",".github/**","AGENTS.md","CLAUDE.md","CONTRIBUTING.md",".agents/**",".claude/**","compose.yaml","**/compose.yaml","setup.sh","scripts/**","infra/**","stacks/**"]}}'
+forgehands_merge_policy=${FORGEHANDS_MERGE_POLICY:-$factory_default_policy}
 
 umask 077
 mkdir -p data/periphery data/backups
@@ -192,18 +243,27 @@ mkdir -p data/periphery data/backups
   echo "FORGEHANDS_ALLOWED_REPOS=$allowed_repos"
   case ",$profiles," in
     *,agents,*)
-      # ForgeHands starts in webhook mode (docs/stack.md). Direct mode is opt-in: the routes name the agent profile ids, which a fresh
-      # stack does not have yet, so the defaults stay commented until Canvas has the four profiles (GET /api/agent-profiles).
-      echo "# Direct mode: uncomment with the profile ids from GET /api/agent-profiles (a name is rejected with HTTP 422)."
+      # The factory is opted in: the bootstrap creates the LLM/agent profiles and the ForgeHands runtime handoff.
+      # Direct mode itself stays off until it has read back the four real profile ids; a profile name is never used.
+      echo "FORGEHANDS_BOOTSTRAP=1"
+      echo "FORGEHANDS_AGENT_LOGIN=$forgehands_agent_login"
+      echo "FORGEHANDS_HUMAN_LOGIN=$forgehands_human_login"
+      echo "FORGEHANDS_ALLOWED_SENDERS=$allowed_senders"
+      echo "FORGEHANDS_AGENT_SECRETS=$forgehands_agent_secrets"
+      echo "FORGEHANDS_STRONG_MODEL=$forgehands_strong_model"
+      echo "FORGEHANDS_CHEAP_MODEL=$forgehands_cheap_model"
+      echo "FORGEHANDS_GATEWAY_URL=$forgehands_gateway_url"
+      echo "FORGEHANDS_GATEWAY_API_KEY=$forgehands_gateway_key"
+      echo "FORGEHANDS_MERGE_POLICY=$forgehands_merge_policy"
+      echo "FORGEHANDS_MAX_CONCURRENT_PER_TIER=${FORGEHANDS_MAX_CONCURRENT_PER_TIER:-2}"
+      echo "FORGEHANDS_MAX_CONCURRENT=${FORGEHANDS_MAX_CONCURRENT:-4}"
+      echo "FORGEHANDS_MAX_RUNS_PER_HOUR=${FORGEHANDS_MAX_RUNS_PER_HOUR:-30}"
+      echo "FORGEHANDS_MAX_RUN_MINUTES=${FORGEHANDS_MAX_RUN_MINUTES:-120}"
+      echo "FORGEHANDS_MAX_ROUNDS=$forgehands_max_rounds"
+      echo "# Direct mode: uncomment only after GET /api/agent-profiles returned the four real ids (a name is rejected with HTTP 422)."
       echo "# FORGEHANDS_OPENHANDS_API_URL=http://openhands:8000"
       echo "# FORGEHANDS_LABEL_ROUTES='{\"ai:plan\":{\"profile\":\"<planner-id>\",\"tier\":\"planner\",\"max_iterations\":80},\"ai:ready\":{\"profile\":\"<worker-id>\",\"tier\":\"worker\",\"max_iterations\":120},\"ai:escalate\":{\"profile\":\"<worker-strong-id>\",\"tier\":\"worker-strong\",\"max_iterations\":120},\"ai:review\":{\"profile\":\"<reviewer-id>\",\"tier\":\"reviewer\",\"max_iterations\":60}}'"
       echo "# FORGEHANDS_FORGEJO_URL=http://forgejo:3000"
-      echo "# FORGEHANDS_AGENT_SECRETS=FORGEJO_TOKEN,FORGEJO_URL"
-      echo "# FORGEHANDS_ALLOWED_SENDERS=$allowed_senders"
-      echo "# FORGEHANDS_MAX_CONCURRENT_PER_TIER=${FORGEHANDS_MAX_CONCURRENT_PER_TIER:-2}"
-      echo "# FORGEHANDS_MAX_CONCURRENT=${FORGEHANDS_MAX_CONCURRENT:-4}"
-      echo "# FORGEHANDS_MAX_RUNS_PER_HOUR=${FORGEHANDS_MAX_RUNS_PER_HOUR:-30}"
-      echo "# FORGEHANDS_MAX_RUN_MINUTES=${FORGEHANDS_MAX_RUN_MINUTES:-120}"
       ;;
   esac
   echo
@@ -241,10 +301,10 @@ case "$dns_mode" in
 esac
 case ",$profiles," in
   *,agents,*)
-    echo "Agents: ForgeHands starts in webhook mode. Add the model provider key and the agent profiles in Canvas"
-    echo "     (http://$host_ip:${PORT_OPENHANDS:-8000}), register the OpenHands automation webhook and add the Forgejo webhook (events: issues)"
-    echo "     as docs/stack.md says; both modes need the Forgejo webhook. Direct mode is opt-in once the profiles exist: set"
-    echo "     FORGEHANDS_OPENHANDS_API_URL and FORGEHANDS_LABEL_ROUTES with the profile ids, then docker compose up -d forgehands."
+    echo "Agents: the factory is opted in (FORGEHANDS_BOOTSTRAP=1). The bootstrap creates the LLM and agent profiles in Canvas"
+    echo "     (http://$host_ip:${PORT_OPENHANDS:-8000}) and writes the ForgeHands runtime handoff; ForgeHands starts only after it."
+    echo "     Direct mode stays off until GET /api/agent-profiles returned the four real ids; a profile name is never used."
+    echo "     Add the Forgejo webhook (events: issues) as docs/stack.md says; both modes need it."
     ;;
 esac
 echo "Next: docker compose up -d --wait     then see docs/stack.md"

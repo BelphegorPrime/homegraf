@@ -84,15 +84,20 @@ class LabelRoutesTests(unittest.TestCase):
 
 
 class GeneratedDefaultsTests(unittest.TestCase):
-    def test_setup_does_not_enable_direct_mode_with_profile_names(self):
-        """A fresh stack has no profile ids, so direct mode stays off (#25 provides them)."""
+    def test_setup_opts_in_but_does_not_enable_direct_mode_with_profile_names(self):
+        """The factory is opted in, but a fresh stack has no profile ids, so direct mode stays off (#25 provides them)."""
         with tempfile.TemporaryDirectory() as tmp:
             shutil.copy(ROOT / "setup.sh", tmp)
             env = {**os.environ, "HOST_IP": "10.0.0.10", "DNS_MODE": "external",
                    "ADMIN_EMAIL": "owner@lab.example", "ADMIN_PASSWORD": "correct-horse-1",
-                   "OPTIONAL_SERVICES": "agents"}
+                   "OPTIONAL_SERVICES": "agents",
+                   "FORGEHANDS_STRONG_MODEL": "vendor/strong-model",
+                   "FORGEHANDS_CHEAP_MODEL": "vendor/cheap-model",
+                   "FORGEHANDS_GATEWAY_URL": "https://llm.example/v1",
+                   "FORGEHANDS_GATEWAY_API_KEY": "gateway-key"}
             subprocess.run(["bash", "setup.sh", "--yes"], cwd=tmp, env=env, check=True, capture_output=True)
             generated = dict(line.split("=", 1) for line in (pathlib.Path(tmp) / ".env").read_text().splitlines()
                              if "=" in line and not line.startswith("#"))
+        self.assertEqual(generated.get("FORGEHANDS_BOOTSTRAP"), "1")
         self.assertEqual(generated.get("FORGEHANDS_OPENHANDS_API_URL", ""), "")
         self.assertEqual(generated.get("FORGEHANDS_LABEL_ROUTES", ""), "")

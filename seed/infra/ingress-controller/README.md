@@ -61,7 +61,7 @@ proxy:
     allow_cidrs: [203.0.113.0/24, 2001:db8:1::/48]
 ```
 
-`paths` is required; `methods` and `allow_cidrs` have defaults. `validate` rejects unknown fields, and there is no `preset`.
+`paths` is required; `methods` and `allow_cidrs` have defaults. `validate` rejects unknown fields. `allow_cidrs` also accepts `{preset: github-hooks}`; the manifest parses it, but `plan` and `apply` do not resolve presets yet (#20).
 
 | Field | Meaning |
 | --- | --- |

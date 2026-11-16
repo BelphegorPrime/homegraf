@@ -189,7 +189,7 @@ class NewRepository:
 
     def run(self) -> Result:
         repo, repository_status = self._repository()
-        operations = self._plan(repository_status)
+        operations = self._plan(repository_status, repo.get("empty") is True)
         self._ensure_settings(repo, repository_status)
         collaborator_status = self._ensure_collaborator()
         labels_before = self._labels()
@@ -293,7 +293,10 @@ class NewRepository:
         except (ValueError, TypeError):
             raise StepError(f"{what}: Forgejo answered content that is not base64") from None
 
-    def _plan(self, status: str) -> list[dict]:
+    def _plan(self, status: str, empty: bool) -> list[dict]:
+        if empty:
+            return [{"operation": "create", "path": path, "content": base64.b64encode(self.files[path]).decode("ascii")}
+                    for path in sorted(self.files)]
         operations = []
         for path in sorted(self.files):
             have = self._content(path)

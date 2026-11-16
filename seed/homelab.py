@@ -6,6 +6,7 @@
   ./homelab.py addons [--json]                   # building blocks for new-app --addon (postgres, redis, ...)
   ./homelab.py templates [--json]                # starting points for new-app --template (web servers, ready-made apps)
   ./homelab.py repo-profiles [--json]            # the files a new repository starts with (python, node, generic)
+  ./homelab.py new-repo --name NAME --profile P [--yes]  # create a repository, wired for the agents
   ./homelab.py remove-app --app-id ID [--yes]
   ./homelab.py hosts [--json]                    # hosts ingressctl manages, and whether each redirects HTTP to HTTPS
   ./homelab.py force-https DOMAIN on|off [--pr] [--yes]
@@ -37,6 +38,7 @@ import addons  # noqa: E402
 import hostopts  # noqa: E402
 import komodo_api  # noqa: E402
 import newapp  # noqa: E402
+import newrepo  # noqa: E402
 import removeapp  # noqa: E402
 import repoprofiles  # noqa: E402
 import secret  # noqa: E402
@@ -166,6 +168,29 @@ def parse_args(argv=None) -> argparse.Namespace:
                        epilog="example: ./homelab.py repo-profiles --json")
     p.add_argument("--json", action="store_true", help="machine-readable: name, description, validate_command, files")
 
+    p = sub.add_parser("new-repo", help="create a Forgejo repository with the agent files and the factory wiring",
+                       description="Render one of the repository profiles and create the repository through the "
+                                   "Forgejo side of the bootstrap: the repository, the agent as collaborator, the "
+                                   "factory labels, the ForgeHands webhook and the first commit. Needs FORGEJO_TOKEN; "
+                                   "the server comes from FORGEJO_URL or `origin`, the webhook endpoint and secret "
+                                   "from FORGEHANDS_FORGEJO_WEBHOOK_URL and FORGEHANDS_FORGEJO_WEBHOOK_SECRET.",
+                       epilog="example: ./homelab.py new-repo --name whoami --profile python --description \"a small "
+                              "service\" --yes")
+    p.add_argument("--name", help="the repository name (e.g. whoami)")
+    p.add_argument("--owner", help="user or organisation that owns it (default: the owner of `origin`)")
+    p.add_argument("--profile", help="one of ./homelab.py repo-profiles (python, node, generic)")
+    p.add_argument("--description", help="the repository description and the first line of its README "
+                                         "(default: the profile's description)")
+    visibility = p.add_mutually_exclusive_group()
+    visibility.add_argument("--private", dest="visibility", action="store_const", const="private",
+                            help="private repository (the default)")
+    visibility.add_argument("--public", dest="visibility", action="store_const", const="public", help="public repository")
+    p.add_argument("--branch", help="the default branch (default: main)")
+    p.add_argument("--agent-login", help="the agent's Forgejo user, collaborator with write (default: openhands)")
+    p.add_argument("--json", action="store_true", help="machine-readable: the plan without --yes, the read-back result with it")
+    p.add_argument("--yes", action="store_true", help="create; without it the run prints the plan and changes nothing")
+    p.set_defaults(visibility="private")
+
     p = sub.add_parser("remove-app", help="remove an app (stack, files, routing, secrets)",
                        epilog="example: ./homelab.py remove-app --app-id whoami-test --yes")
     p.add_argument("--app-id", required=True)
@@ -290,6 +315,8 @@ def main(argv=None) -> int:
             return print_templates(args.json)
         if args.cmd == "repo-profiles":
             return print_repo_profiles(args.json)
+        if args.cmd == "new-repo":
+            return 0 if newrepo.run(preset(args)) else 1
         if args.cmd == "stacks":
             import json
             rows = stackops.managed()

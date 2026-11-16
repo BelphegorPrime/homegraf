@@ -1,9 +1,10 @@
 # The context of the app image is the repository root: only what the image needs.
 *
 !app
-app/node_modules
-app/dist
 !TOOLS
 !seed
+!bootstrap
+app/node_modules
+app/dist
 **/__pycache__
 **/.pytest_cache

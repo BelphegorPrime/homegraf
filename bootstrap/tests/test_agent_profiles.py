@@ -291,7 +291,7 @@ class AgentProfilesTest(unittest.TestCase):
                       reviewer)
         for prompt_name in ("worker.md", "worker-strong.md"):
             worker = (PROMPTS / prompt_name).read_text(encoding="utf-8")
-            for phrase in ("BEFORE YOU PUSH", "empty page", "redirect", "egg-info", "-rs"):
+            for phrase in ("BEFORE YOU OPEN THE PULL REQUEST", "empty page", "redirect", "egg-info", "-rs"):
                 self.assertIn(phrase, worker)
         self.assertEqual(self.fake.agents["default"], default_before)
         self.assertEqual(self.fake.llm["default"], default_llm_before)

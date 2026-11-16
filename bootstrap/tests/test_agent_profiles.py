@@ -250,7 +250,7 @@ class AgentProfilesTest(unittest.TestCase):
         ids = self.run_profiles()
 
         self.assertEqual(set(ids), {role.name for role in ROLES})
-        self.assertEqual(len(set(ids.values())), 4)
+        self.assertEqual(len(set(ids.values())), len(ROLES))
         for role, profile_id in ids.items():
             self.assertEqual(str(uuid.UUID(profile_id)), profile_id)
             self.assertEqual(self.fake.agents[role]["id"], profile_id)
@@ -266,9 +266,9 @@ class AgentProfilesTest(unittest.TestCase):
         self.assertTrue(strong[0][2]["include_secrets"])
 
         expected_llm = {"planner": LLM_STRONG, "worker": LLM_CHEAP, "worker-strong": LLM_STRONG,
-                        "reviewer": LLM_STRONG}
+                        "reviewer": LLM_STRONG, "sensitive-reviewer": LLM_STRONG}
         expected_prompt = {"planner": "planner.md", "worker": "worker.md", "worker-strong": "worker-strong.md",
-                           "reviewer": "reviewer.md"}
+                           "reviewer": "reviewer.md", "sensitive-reviewer": "sensitive-reviewer.md"}
         for role in ROLES:
             stored = self.fake.agents[role.name]
             prompt = (PROMPTS / expected_prompt[role.name]).read_text(encoding="utf-8")
@@ -289,6 +289,10 @@ class AgentProfilesTest(unittest.TestCase):
                       reviewer)
         self.assertIn("The `WIP: ` prefix of the title and a draft state are never a reason for NOT OK",
                       reviewer)
+        sensitive = (PROMPTS / "sensitive-reviewer.md").read_text(encoding="utf-8")
+        self.assertIn("`## Security review: OK`", sensitive)
+        self.assertIn("`## Security review: CONCERNS`", sensitive)
+        self.assertIn("never set or remove a label", sensitive)
         self.assertEqual(self.fake.agents["default"], default_before)
         self.assertEqual(self.fake.llm["default"], default_llm_before)
         self.assertEqual(self.fake.active_agent, DEFAULT_ID)
@@ -300,6 +304,20 @@ class AgentProfilesTest(unittest.TestCase):
         self.assert_read_after_every_write()
         for req in self.srv.requests:
             self.assertEqual(req.headers.get("x-session-api-key"), BACKEND_KEY)
+
+    def test_the_sensitive_reviewer_role_is_created_and_reconciled_without_writes(self):
+        ids = self.run_profiles()
+
+        prompt = (PROMPTS / "sensitive-reviewer.md").read_text(encoding="utf-8")
+        stored = self.fake.agents["sensitive-reviewer"]
+        self.assertEqual(stored["llm_profile_ref"], LLM_STRONG)
+        self.assertEqual(stored["system_message_suffix"], prompt)
+        self.assertEqual(ids["sensitive-reviewer"], stored["id"])
+        self.assertEqual(self.state.get(STATE_SECTION, "sensitive-reviewer"), stored["id"])
+        self.fake.writes.clear()
+
+        self.assertEqual(self.run_profiles(), ids)
+        self.assertEqual(self.fake.written("/api/agent-profiles/sensitive-reviewer"), [])
 
     def test_a_rerun_changes_nothing_even_without_the_state(self):
         first = self.run_profiles()

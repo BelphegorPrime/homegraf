@@ -289,6 +289,9 @@ class AgentProfilesTest(unittest.TestCase):
                       reviewer)
         self.assertIn("The `WIP: ` prefix of the title and a draft state are never a reason for NOT OK",
                       reviewer)
+        for prompt_name in ("worker.md", "worker-strong.md"):
+            worker = (PROMPTS / prompt_name).read_text(encoding="utf-8")
+            self.assertIn("BEFORE YOU PUSH", worker)
         self.assertEqual(self.fake.agents["default"], default_before)
         self.assertEqual(self.fake.llm["default"], default_llm_before)
         self.assertEqual(self.fake.active_agent, DEFAULT_ID)

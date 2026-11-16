@@ -206,7 +206,7 @@ def test_unreachable_npm_gives_clear_error_and_deletes_nothing(env):
     apply(env)
     hosts, certs = dict(env.npm.hosts), dict(env.npm.certs)
     env.npm.reachable = False
-    with pytest.raises(AdapterError, match="NPM: nicht erreichbar"):
+    with pytest.raises(AdapterError, match="NPM: unreachable"):
         apply(env)
     env.npm.reachable = True
     assert env.npm.hosts == hosts and env.npm.certs == certs
@@ -214,7 +214,7 @@ def test_unreachable_npm_gives_clear_error_and_deletes_nothing(env):
 
 def test_unreachable_upstream_blocks_before_mutation(env):
     env.checker.upstream_ok = False
-    with pytest.raises(IngressError, match="Upstream"):
+    with pytest.raises(IngressError, match="upstream unreachable"):
         apply(env)
     assert env.npm.mutations == 0 and env.inf.issued == 0
 

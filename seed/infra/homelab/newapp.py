@@ -869,12 +869,16 @@ def gather(p: dict | None = None) -> App | None:
             ui.warn(f"--public-*: {ingress_path.relative_to(ROOT)} exists, add proxy.public there by hand")
     elif not ports:
         ui.warn("the compose file publishes no port: no routing (add `ports:` and start again if you want it)")
+        if public_block(p) is not None:
+            ui.warn("--public-*: the compose file publishes no port, so these paths are not exposed")
     elif p.get("routing") if p.get("routing") is not None else ui.yes(
             f"\nStep 3: make it reachable via HTTPS, e.g. https://{app_id}.{settings.domain(ops.ROOT)}?", True):
         if not _ask_routing(app, ports, p):
             return None
         if chosen and app.domain:
             app.routes = template_routes(chosen[0], app, ports)
+    elif public_block(p) is not None:
+        ui.warn("--public-*: no routing, so these paths are not exposed")
 
     required, optional = compose_vars(app.compose)
     preset = p.get("secrets") or {}

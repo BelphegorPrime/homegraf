@@ -328,6 +328,28 @@ def test_public_flags_without_routing_are_refused(agent):
                        "secret_vars": [], "mount": "", "routing": False, "public_full_host": True})
 
 
+def test_public_flags_without_a_published_port_warn(agent, tmp_path, capsys):
+    """No `ports:` means no host and no ingress.yaml, so say that the paths are not exposed instead of dropping them."""
+    compose = tmp_path / "no-ports.yaml"
+    compose.write_text("services:\n  demo:\n    image: x:1\n")
+    app = newapp.gather({"app_id": "demo", "server": "worker-1", "compose_file": str(compose),
+                         "public_paths": ["/hook/abc"]})
+    assert app is not None and app.public is None
+    assert "--public-*: the compose file publishes no port, so these paths are not exposed" in capsys.readouterr().out
+
+
+def test_public_flags_dropped_by_declining_routing_warn(agent, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(newapp.ui, "AUTO", False)
+    compose = tmp_path / "routed.yaml"
+    compose.write_text("services:\n  demo:\n    image: x:1\n    ports: ['8124:80']\n")
+    answers = iter(["n", "n"])   # routing: no; set it up now: no
+    monkeypatch.setattr("builtins.input", lambda _=None: next(answers))
+    app = newapp.gather({"app_id": "demo", "server": "worker-1", "compose_file": str(compose),
+                         "public_paths": ["/hook/abc"]})
+    assert app is None
+    assert "--public-*: no routing, so these paths are not exposed" in capsys.readouterr().out
+
+
 def test_agent_missing_answers_name_the_flag(agent):
     with pytest.raises(SystemExit, match="--image"):
         newapp.gather({"app_id": "demo", "server": "worker-1"})

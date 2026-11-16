@@ -493,9 +493,12 @@ def test_the_agents_first_run_points_at_the_automated_hgboot_path(agent):
 def test_the_agents_first_run_claims_no_bootstrap_run_it_did_not_have(agent):
     """A stack created by this template alone has no profiles and no routes; the note says so and keeps webhook mode."""
     text = _agents(agent).first_run
+    assert "add a model provider key" in text           # a stack without the bootstrap still needs the key
     assert "a stack that no bootstrap ran for has no profiles" in text
     assert "create the agent profiles yourself" in text and "keep LABEL_ROUTES empty" in text
     assert "webhook mode" in text and "register the OpenHands automation webhook" in text
+    assert "once #58 connects the factory reconcilers" in text and "Until #58 lands" in text
+    assert "not typed by hand" not in text
     assert not re.search(r"\b(?:already|has) (?:created|ran|set up|configured)\b", text)
 
 

@@ -46,7 +46,7 @@ const repoWith = (ingress: string, files: Record<string, string> = {}) => {
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
   return dir;
 };
-const ISSUERS = (bundle: string) => `issuers:\n  homelab-private-ca:\n    type: infisical\n    ca_bundle: ${bundle}   # Kette zum Prüfen\n`;
+const ISSUERS = (bundle: string) => `issuers:\n  homelab-private-ca:\n    type: infisical\n    ca_bundle: ${bundle}   # chain to verify\n`;
 
 describe("the CA certificate", () => {
   it("is described by subject, end, fingerprint and whether it is a root", () => {

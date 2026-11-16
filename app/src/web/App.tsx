@@ -130,13 +130,17 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [containers, setContainers] = useState(false);
+  const [publicOnly, setPublicOnly] = useState(false);
   const [focus, setFocus] = useState(defaultOptions.focus);
 
   const graph = graphQ.data;
   // The hardware layer is optional: without a router, switch or access point (no UniFi, no inventory/network.yaml) there is no Network tab.
   const hasNetwork = !graph || graph.nodes.some((n) => ["isp", "router", "switch", "device"].includes(n.type));
   const def = VIEWS.find((v) => v.id === view)!;
-  const sub = useMemo(() => (graph ? buildView(view, graph, { containers, focus }) : { nodes: [], edges: [] }), [graph, view, containers, focus]);
+  const sub = useMemo(
+    () => (graph ? buildView(view, graph, { containers, focus, publicOnly }) : { nodes: [], edges: [] }),
+    [graph, view, containers, focus, publicOnly],
+  );
 
   const go = (id: ViewId) => {
     setView(id);
@@ -244,6 +248,11 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
               {(view === "hosting" || view === "dependencies") && (
                 <label className="check">
                   <input type="checkbox" checked={containers} onChange={(e) => setContainers(e.target.checked)} /> containers
+                </label>
+              )}
+              {view === "request" && (
+                <label className="check">
+                  <input type="checkbox" checked={publicOnly} onChange={(e) => setPublicOnly(e.target.checked)} /> Public only
                 </label>
               )}
               {view === "platform" && graph && (

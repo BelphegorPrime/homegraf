@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS snapshots (
   reason TEXT NOT NULL,
   npm_host TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS presets (
+  name TEXT PRIMARY KEY,
+  cidrs TEXT NOT NULL,
+  source TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
 """
 
 
@@ -149,6 +155,19 @@ class State:
 
     def drop_pending_key(self, op_id: str) -> None:
         self._key_path(op_id).unlink(missing_ok=True)
+
+    # --- Presets (zuletzt bekannter guter Stand) ---------------------------------------------------
+    def get_preset(self, name: str) -> dict | None:
+        row = self.db.execute("SELECT name, cidrs, source, fetched_at FROM presets WHERE name=?", (name,)).fetchone()
+        if not row:
+            return None
+        return {**dict(row), "cidrs": tuple(json.loads(row["cidrs"]))}
+
+    def save_preset(self, name: str, cidrs, source: str) -> None:
+        self.db.execute("INSERT INTO presets (name, cidrs, source, fetched_at) VALUES (?,?,?,?) "
+                        "ON CONFLICT(name) DO UPDATE SET cidrs=excluded.cidrs, source=excluded.source, "
+                        "fetched_at=excluded.fetched_at",
+                        (name, json.dumps(list(cidrs)), source, utcnow().isoformat()))
 
     # --- Snapshots vor Übernahme ------------------------------------------------------------------
     def snapshot(self, resource_id: str, reason: str, npm_host: dict) -> None:

@@ -23,6 +23,10 @@ class AdapterError(IngressError):
         self.ambiguous = ambiguous
 
 
+class PresetError(IngressError):
+    pass
+
+
 class CertificateError(IngressError):
     pass
 

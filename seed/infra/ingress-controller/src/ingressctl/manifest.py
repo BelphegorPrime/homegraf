@@ -65,7 +65,8 @@ class ServiceSpec:
         if d["public"] is not None:
             p = d["public"]
             d["public"] = PublicSpec(paths=tuple(p["paths"]), methods=tuple(p["methods"]),
-                                     allow_cidrs=tuple(p["allow_cidrs"]))
+                                     allow_cidrs=tuple(p["allow_cidrs"]),
+                                     allow_presets=tuple(p.get("allow_presets", ())))
         return cls(**d)
 
 

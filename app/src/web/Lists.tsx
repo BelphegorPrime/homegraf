@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import type { Graph, GraphNode, StatusSnapshot } from "../shared/types";
-import { catalogTiles } from "./views";
+import { catalogTiles, exposures, isFullHost, isPublic } from "./views";
 
 const match = (n: GraphNode, q: string) =>
   q === "" || `${n.label} ${n.id} ${(n.urls ?? []).join(" ")} ${(n.images ?? []).join(" ")}`.toLowerCase().includes(q.toLowerCase());
@@ -24,14 +24,15 @@ export function Catalog({
 }) {
   const [groupBy, setGroupBy] = useState<"machine" | "category">("machine");
   const [withoutUrl, setWithoutUrl] = useState(false);
+  const [publicOnly, setPublicOnly] = useState(false);
   const groups = useMemo(() => {
     const out = new Map<string, GraphNode[]>();
-    for (const t of catalogTiles(graph, groupBy, withoutUrl)) {
+    for (const t of catalogTiles(graph, groupBy, withoutUrl, publicOnly)) {
       if (!match(t.node, query)) continue;
       out.set(t.group, [...(out.get(t.group) ?? []), t.node]);
     }
     return [...out.entries()];
-  }, [graph, groupBy, withoutUrl, query]);
+  }, [graph, groupBy, withoutUrl, publicOnly, query]);
 
   return (
     <div className="list">
@@ -51,6 +52,9 @@ export function Catalog({
         <label className="check">
           <input type="checkbox" checked={withoutUrl} onChange={(e) => setWithoutUrl(e.target.checked)} /> include stacks without URL
         </label>
+        <label className="check">
+          <input type="checkbox" checked={publicOnly} onChange={(e) => setPublicOnly(e.target.checked)} /> Public only
+        </label>
       </div>
       {groups.map(([group, nodes]) => (
         <section key={group}>
@@ -67,6 +71,17 @@ export function Catalog({
                       {st?.updateAvailable && (
                         <Badge variant="outline" className="border-warn text-warn">
                           update
+                        </Badge>
+                      )}
+                      {isPublic(n) && (
+                        <Badge
+                          variant="outline"
+                          className={exposures(n).some(isFullHost) ? "border-warn text-warn" : undefined}
+                          title={`Public: ${exposures(n)
+                            .map((e) => e.domain)
+                            .join(", ")}`}
+                        >
+                          public
                         </Badge>
                       )}
                       <Button variant="outline" size="xs" onClick={() => onSelect(n.id)} aria-label={`Details of ${n.label}`}>

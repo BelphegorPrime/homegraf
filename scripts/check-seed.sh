@@ -7,18 +7,40 @@
 #   KEEP=1 scripts/check-seed.sh     keeps the directory and prints where it is
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
+start=$SECONDS
+step_start=$start
+step_names=()
+step_seconds=()
+pending="copy the seed"
+# Every step is timed; summary prints one line per step, so a slow one is visible without another run.
+step() {
+  step_names+=("$pending")
+  step_seconds+=($((SECONDS - step_start)))
+  step_start=$SECONDS
+  pending=$1
+  printf '\n== %s\n' "$1"
+}
+summary() {
+  step_names+=("$pending")
+  step_seconds+=($((SECONDS - step_start)))
+  printf '\n== timings (seconds)\n'
+  local i
+  for i in "${!step_names[@]}"; do printf '%4d  %s\n' "${step_seconds[$i]}" "${step_names[$i]}"; done
+  printf '%4d  total\n' "$((SECONDS - start))"
+}
 work=$(mktemp -d)
 [ -n "${KEEP:-}" ] || trap 'rm -rf "$work"' EXIT
 repo=$work/repo
 cp -a "$here/seed" "$repo"
 cd "$repo"
 
-step() { printf '\n== %s\n' "$*"; }
-
 # The tools need PyYAML (the homegraf image has python3-yaml); ingressctl's dependencies bring it, with pytest for the tests.
+# PyPI answers transient index errors when the runner is loaded ("could not find a version ... from versions: none"), so retry;
+# the CI job sets PIP_RETRIES/PIP_TIMEOUT, the defaults apply to a local run and never lower what the job sets.
+# pytest-xdist runs the tests in parallel; it is installed here, in the temporary venv, not in the seed.
 step "python $(python3 --version | cut -d' ' -f2) and the dependencies"
 python3 -m venv "$work/venv"
-"$work/venv/bin/pip" install -q -e 'infra/ingress-controller[test]'
+"$work/venv/bin/pip" install -q --retries "${PIP_RETRIES:-5}" --timeout "${PIP_TIMEOUT:-30}" -e 'infra/ingress-controller[test]' pytest-xdist
 py=$work/venv/bin/python
 
 step "placeholders"
@@ -115,7 +137,8 @@ assert not [w for w in g['warnings'] if 'dangling' in w], g['warnings']
 print('graph:', len(g['nodes']), 'nodes, no hardware layer, platform and sample app present')"
 
 step "the tests of the tools"
-"$work/venv/bin/pytest" -q -p no:cacheprovider infra/graph infra/homelab infra/infisical infra/stackctl infra/ingress-controller/tests
+"$work/venv/bin/pytest" -q -n auto -p no:cacheprovider infra/graph infra/homelab infra/infisical infra/stackctl infra/ingress-controller/tests
 
+summary
 echo
 echo "seed ok${KEEP:+ (kept in $repo)}"

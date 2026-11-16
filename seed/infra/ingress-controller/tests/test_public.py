@@ -9,6 +9,9 @@ from ingressctl.public import PublicSpec, parse_public, render_public_config
 LONG_OK = "/" + "a" * 199
 LONG_BAD = "/" + "a" * 200
 
+# Netze wie in presets.PRESETS["github-hooks"]; die Auflösung selbst ist nicht Teil dieser Scheibe.
+GITHUB_HOOKS = ["192.30.252.0/22", "2606:50c0::/32"]
+
 
 def test_defaults_are_head_and_get_without_source_restriction():
     spec = parse_public({"paths": ["/a"]})
@@ -86,7 +89,6 @@ def test_rejects_path(path):
     ({"paths": []}, "paths"),
     ({"paths": ["/a"], "typo": 1}, "typo"),
     ({"paths": ["/a"], "preset": "github-hooks"}, "preset"),
-    ({"paths": ["/a"], "allow_cidrs": {"preset": "github-hooks"}}, "preset"),
 ])
 def test_rejects_bad_structure(raw, match):
     with pytest.raises(ManifestError, match=match):
@@ -146,12 +148,43 @@ def test_accepts_cidrs(raw, expected):
     [1],
     None,
     "10.0.0.0/8",
-    {"preset": "github-hooks"},
     {},
 ])
 def test_rejects_cidrs(value):
     with pytest.raises(ManifestError, match="allow_cidrs|preset"):
         parse_public({"paths": ["/a"], "allow_cidrs": value})
+
+
+@pytest.mark.parametrize("raw,cidrs,presets", [
+    ({"preset": "github-hooks"}, (), ("github-hooks",)),
+    ([{"preset": "github-hooks"}], (), ("github-hooks",)),
+    ([{"preset": "github-hooks"}, "203.0.113.0/24"], ("203.0.113.0/24",), ("github-hooks",)),
+    (["203.0.113.0/24", {"preset": "github-hooks"}], ("203.0.113.0/24",), ("github-hooks",)),
+    ([{"preset": "github-hooks"}, {"preset": "github-hooks"}], (), ("github-hooks",)),
+])
+def test_accepts_cidr_presets(raw, cidrs, presets):
+    spec = parse_public({"paths": ["/a"], "allow_cidrs": raw})
+    assert spec.allow_cidrs == cidrs
+    assert spec.allow_presets == presets
+
+
+@pytest.mark.parametrize("value,match", [
+    ({"preset": "nope"}, "nope"),
+    ({"preset": "github-hooks", "x": 1}, "preset"),
+    ({"preset": 1}, "Preset-Name"),
+    ({"preset": None}, "Preset-Name"),
+    ([{"preset": "nope"}], "nope"),
+    ([{"preset": 1}], "Preset-Name"),
+    ({}, "preset"),
+])
+def test_rejects_bad_presets(value, match):
+    with pytest.raises(ManifestError, match=f"proxy\\.public\\.allow_cidrs: .*{match}"):
+        parse_public({"paths": ["/a"], "allow_cidrs": value})
+
+
+def test_unknown_preset_error_names_the_known_presets():
+    with pytest.raises(ManifestError, match="unbekanntes Preset 'nope' \\(bekannt: github-hooks\\)"):
+        parse_public({"paths": ["/a"], "allow_cidrs": {"preset": "nope"}})
 
 
 def test_golden_example():
@@ -179,6 +212,69 @@ allow 2001:db8::/48;
 deny all;"""
 
 
+def test_golden_with_preset_and_static_network():
+    spec = parse_public({
+        "paths": ["/api/*"],
+        "methods": ["post"],
+        "allow_cidrs": [{"preset": "github-hooks"}, "203.0.113.0/24"],
+    })
+    assert render_public_config(spec, {"github-hooks": GITHUB_HOOKS}) == r"""# managed by ingressctl: public paths only
+if ($uri !~ "^(/api/.*|/\.well-known/acme-challenge/.*)$") { return 404; }
+set $ingressctl_method $request_method;
+if ($uri ~ "^/\.well-known/acme-challenge/.*$") { set $ingressctl_method "-acme-"; }
+if ($ingressctl_method !~ "^(POST|-acme-)$") { return 405; }
+allow 192.30.252.0/22;
+allow 203.0.113.0/24;
+allow 2606:50c0::/32;
+deny all;"""
+
+
+def test_preset_network_overlapping_static_is_rendered_once():
+    spec = parse_public({"paths": ["/a"], "allow_cidrs": ["203.0.113.0/24", {"preset": "github-hooks"}]})
+    text = render_public_config(spec, {"github-hooks": ["203.0.113.0/24", "2606:50c0::/32"]})
+    assert [line for line in text.splitlines() if line.startswith("allow ")] == [
+        "allow 203.0.113.0/24;",
+        "allow 2606:50c0::/32;",
+    ]
+
+
+def test_preset_networks_are_canonicalised():
+    spec = parse_public({"paths": ["/a"], "allow_cidrs": {"preset": "github-hooks"}})
+    text = render_public_config(spec, {"github-hooks": ["2001:0DB8:0:0::/32", "10.0.0.0"]})
+    assert [line for line in text.splitlines() if line.startswith("allow ")] == [
+        "allow 10.0.0.0/32;",
+        "allow 2001:db8::/32;",
+    ]
+
+
+def test_resolved_preset_without_networks_denies_everything():
+    spec = parse_public({"paths": ["/a"], "allow_cidrs": {"preset": "github-hooks"}})
+    assert render_public_config(spec, {"github-hooks": []}).splitlines()[5:] == ["deny all;"]
+
+
+def test_unresolved_preset_raises():
+    spec = parse_public({"paths": ["/a"], "allow_cidrs": {"preset": "github-hooks"}})
+    with pytest.raises(ManifestError, match="proxy\\.public\\.allow_cidrs: preset 'github-hooks' ist nicht aufgelöst"):
+        render_public_config(spec)
+    with pytest.raises(ManifestError, match="preset 'github-hooks' ist nicht aufgelöst"):
+        render_public_config(spec, {"other": ["10.0.0.0/8"]})
+
+
+@pytest.mark.parametrize("cidr", [
+    "1.2.3.0/24; deny",
+    "1.2.3.0/24\n",
+    '1.2.3.0/24"',
+    "not-a-cidr",
+    "1.2.3.4/24",
+    1,
+    None,
+])
+def test_hostile_preset_network_raises(cidr):
+    spec = parse_public({"paths": ["/a"], "allow_cidrs": {"preset": "github-hooks"}})
+    with pytest.raises(ManifestError, match="proxy\\.public\\.allow_cidrs:"):
+        render_public_config(spec, {"github-hooks": [cidr]})
+
+
 def test_render_escapes_every_dot_in_paths():
     text = render_public_config(parse_public({"paths": ["/a.b.c", "/x.y/*"]}))
     assert r"/a\.b\.c" in text
@@ -199,6 +295,20 @@ def test_shuffled_input_renders_identically():
     })
     assert first == second
     assert render_public_config(first) == render_public_config(second)
+
+
+def test_shuffled_presets_render_identically():
+    first = parse_public({
+        "paths": ["/b"],
+        "allow_cidrs": ["2001:db8::/32", {"preset": "github-hooks"}, {"preset": "github-hooks"}],
+    })
+    second = parse_public({
+        "paths": ["/b"],
+        "allow_cidrs": [{"preset": "github-hooks"}, "2001:db8::/32"],
+    })
+    assert first == second
+    assert render_public_config(first, {"github-hooks": GITHUB_HOOKS}) == \
+        render_public_config(second, {"github-hooks": GITHUB_HOOKS})
 
 
 @pytest.mark.parametrize("field,value", [
@@ -224,9 +334,17 @@ def test_hostile_values_are_rejected(field, value):
         parse_public(raw)
 
 
-def _assert_no_injection(spec: PublicSpec) -> None:
-    text = render_public_config(spec)
-    cidr_lines = len(spec.allow_cidrs) + 1 if spec.allow_cidrs else 0
+def _assert_no_injection(spec: PublicSpec, preset_cidrs=None) -> None:
+    text = render_public_config(spec, preset_cidrs)
+    body = text.splitlines()[5:]
+    if spec.allow_cidrs or spec.allow_presets:
+        assert body and body[-1] == "deny all;"
+        allow = body[:-1]
+        assert all(line.startswith("allow ") and line.endswith(";") for line in allow)
+        assert allow == sorted(set(allow))
+    else:
+        assert body == []
+    cidr_lines = len(body)
     assert text.startswith("# managed by ingressctl: public paths only\n")
     assert text.count("{") == 3
     assert text.count("}") == 3
@@ -250,6 +368,23 @@ def _assert_no_nested_if(text: str) -> None:
 ])
 def test_rendered_config_has_no_nested_if(spec):
     _assert_no_nested_if(render_public_config(spec))
+
+
+def test_rendered_preset_config_has_no_nested_if():
+    spec = parse_public({"paths": ["/a"], "allow_cidrs": ["10.0.0.0/8", {"preset": "github-hooks"}]})
+    text = render_public_config(spec, {"github-hooks": GITHUB_HOOKS})
+    assert "allow 192.30.252.0/22;" in text
+    _assert_no_nested_if(text)
+
+
+@pytest.mark.parametrize("preset_cidrs", [
+    {"github-hooks": GITHUB_HOOKS},
+    {"github-hooks": ["10.0.0.0/8"]},
+    {"github-hooks": []},
+])
+def test_preset_render_cannot_inject(preset_cidrs):
+    _assert_no_injection(parse_public({"paths": ["/a"], "methods": ["get", "post"], "allow_cidrs": {"preset": "github-hooks"}}),
+                         preset_cidrs)
 
 
 @pytest.mark.parametrize("path", ["/a", "/a/b", "/a..b", "/a-b_c.d~e", "/files-1_2~3.txt/*", "/.well-known/other"])
@@ -282,16 +417,10 @@ def _server_block(text: str) -> str:
     return f"server {{\n    listen 8080;\n    location / {{\n{body}\n        return 200;\n    }}\n}}\n"
 
 
-@pytest.mark.skipif(not (shutil.which("nginx") or shutil.which("docker")), reason="needs nginx or docker to validate the rendered config")
-def test_rendered_config_is_accepted_by_nginx(tmp_path):
+def _nginx_check(tmp_path, text: str) -> subprocess.CompletedProcess:
     runner = _nginx_runner()
     if runner is None:
         pytest.skip("docker is installed but its daemon does not answer")
-    text = render_public_config(parse_public({
-        "paths": ["/hook/abc", "/files/*"],
-        "methods": ["POST"],
-        "allow_cidrs": ["10.0.0.0/8"],
-    }))
     conf = tmp_path / "default.conf"
     conf.write_text(_server_block(text))
     if runner == "nginx":
@@ -306,5 +435,30 @@ def test_rendered_config_is_accepted_by_nginx(tmp_path):
             "docker", "run", "--rm", "-v", f"{conf}:/etc/nginx/conf.d/default.conf:ro",
             "nginx:alpine", "nginx", "-t",
         ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    return subprocess.run(command, capture_output=True, text=True)
+
+
+@pytest.mark.skipif(not (shutil.which("nginx") or shutil.which("docker")), reason="needs nginx or docker to validate the rendered config")
+def test_rendered_config_is_accepted_by_nginx(tmp_path):
+    text = render_public_config(parse_public({
+        "paths": ["/hook/abc", "/files/*"],
+        "methods": ["POST"],
+        "allow_cidrs": ["10.0.0.0/8"],
+    }))
+    result = _nginx_check(tmp_path, text)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not (shutil.which("nginx") or shutil.which("docker")), reason="needs nginx or docker to validate the rendered config")
+def test_rendered_preset_config_is_accepted_by_nginx(tmp_path):
+    text = render_public_config(
+        parse_public({
+            "paths": ["/hook/abc", "/files/*"],
+            "methods": ["POST"],
+            "allow_cidrs": [{"preset": "github-hooks"}, "203.0.113.0/24"],
+        }),
+        {"github-hooks": GITHUB_HOOKS},
+    )
+    assert "allow 2606:50c0::/32;" in text
+    result = _nginx_check(tmp_path, text)
     assert result.returncode == 0, result.stderr

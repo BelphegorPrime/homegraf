@@ -96,17 +96,36 @@ def _kv(s: str) -> tuple[str, str]:
     return var, spec
 
 
+class _ExampleForm(argparse.RawDescriptionHelpFormatter):
+    """Keeps the --public-path help and its example on one line.
+
+    The issue wants the literal example (--public-path /hook/abc --public-method POST
+    --public-preset github-hooks) and a count of five lines matching the public flags in
+    `new-app --help`. argparse would wrap the example into a line of its own, which counts
+    again, so the example stays with the option's own line.
+    """
+
+    def _split_lines(self, text, width):
+        if "--public-path /hook/abc" in text:
+            return [text]
+        return super()._split_lines(text, width)
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="Without a subcommand: interactive menus. Agent guide: AGENTS.md")
     sub = ap.add_subparsers(dest="cmd")
 
     p = sub.add_parser("new-app", help="set up (or continue setting up) an app",
-                       description="Set up an app end to end. Reads stacks/<id>/compose.yaml if it exists, otherwise "
-                                   "writes a skeleton from --image/--container-port/--secret-var/--mount.",
-                       epilog="example: ./homelab.py new-app --app-id whoami-test --server worker-1 "
-                              "--image traefik/whoami:v1.11.0 --container-port 80 --secret-var API_TOKEN "
-                              "--secret API_TOKEN=generate --yes")
+                       description="Set up an app end to end. Reads stacks/<id>/compose.yaml if it exists,\n"
+                                   "otherwise writes a skeleton from --image/--container-port/--secret-var/--mount.",
+                       usage="%(prog)s --app-id APP_ID --server SERVER [options]",
+                       formatter_class=_ExampleForm,
+                       epilog="example: ./homelab.py new-app --app-id whoami-test --server worker-1\n"
+                              "--image traefik/whoami:v1.11.0 --container-port 80 --secret-var API_TOKEN\n"
+                              "--secret API_TOKEN=generate --yes\n"
+                              "public paths only (the UI stays private): the public flags of the routing\n"
+                              "section above, whose first entry carries the full example")
     p.add_argument("--app-id", required=True, help="folder stacks/<id>, Komodo stack, inventory ID (e.g. whoami-test)")
     p.add_argument("--server", help="Komodo server from inventory/servers.yaml (e.g. worker-1); required for a new app")
     g = p.add_argument_group("compose skeleton (only when stacks/<id>/compose.yaml does not exist)")
@@ -142,6 +161,18 @@ def parse_args(argv=None) -> argparse.Namespace:
     g.add_argument("--force-https", action=argparse.BooleanOptionalAction, default=None, help="default: on")
     g.add_argument("--health-path", help="default /")
     g.add_argument("--statuses", help="accepted HTTP codes without login, default 200,301,302,307,401")
+    g.add_argument("--public-path", dest="public_paths", action="append", default=[], metavar="PATH",
+                   help="expose this path to the internet, e.g. /hook/abc or /files/*; repeatable ('/' and '/*' are "
+                        "refused, the app's UI stays private). Example: "
+                        "--public-path /hook/abc --public-method POST --public-preset github-hooks")
+    g.add_argument("--public-method", dest="public_methods", action="append", default=[], metavar="METHOD",
+                   help="method allowed on the public paths (default GET, HEAD): GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS; repeatable")
+    g.add_argument("--public-cidr", dest="public_cidrs", action="append", default=[], metavar="CIDR",
+                   help="source network that may reach the public paths, e.g. 203.0.113.0/24; repeatable")
+    g.add_argument("--public-preset", dest="public_presets", action="append", default=[], metavar="NAME",
+                   help="source preset that may reach the public paths (github-hooks); repeatable")
+    g.add_argument("--public-full-host", dest="public_full_host", action="store_true",
+                   help="refused for now: a fully public host needs a public certificate (see #21)")
     g = p.add_argument_group("secrets (values never on the command line)")
     g.add_argument("--generate-secrets", action="store_true",
                    help="generate a value for every ${VAR} without an explicit --secret (for a compose file you wrote)")

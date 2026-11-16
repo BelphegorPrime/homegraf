@@ -1,4 +1,4 @@
-"""Lesen von inventory/*.yaml (gemeinsam mit infra/stackctl gepflegt)."""
+"""Reading inventory/*.yaml (maintained together with infra/stackctl)."""
 from __future__ import annotations
 
 import fnmatch
@@ -20,7 +20,7 @@ class NpmInstance:
 
 
 ISSUER_TYPES = ("infisical", "letsencrypt")
-LE_VALIDITY_DAYS = 90  # Let's Encrypt legt die Laufzeit fest
+LE_VALIDITY_DAYS = 90  # Let's Encrypt fixes the lifetime
 
 
 @dataclass
@@ -40,8 +40,8 @@ class Issuer:
     propagation_seconds: int | None = None
 
     def permits(self, domain: str) -> bool:
-        """Glob wie in der Infisical-Policy (`*` = beliebige Zeichen).
-        Die private CA ohne Liste erlaubt alles; Let's Encrypt ohne Liste erlaubt nichts (fail closed).
+        """Glob as in the Infisical policy (`*` = any characters).
+        The private CA without a list permits everything; Let's Encrypt without a list permits nothing (fail closed).
         """
         if not self.allowed_domains:
             return self.type != "letsencrypt"
@@ -76,7 +76,7 @@ class Inventory:
 
 def _load(path: pathlib.Path) -> dict:
     if not path.exists():
-        raise ConfigError(f"{path} fehlt")
+        raise ConfigError(f"{path} is missing")
     return yaml.safe_load(path.read_text()) or {}
 
 
@@ -131,11 +131,11 @@ def load_inventory(root: pathlib.Path) -> Inventory:
     for name, c in (ing.get("issuers") or {}).items():
         typ = c.get("type", "")
         if typ not in ISSUER_TYPES:
-            raise ConfigError(f"Issuer '{name}': type muss 'infisical' oder 'letsencrypt' sein")
+            raise ConfigError(f"Issuer '{name}': type must be 'infisical' or 'letsencrypt'")
         propagation = c.get("propagation_seconds")
         if propagation is not None and (isinstance(propagation, bool) or not isinstance(propagation, int)
                                         or propagation < 0):
-            raise ConfigError(f"Issuer '{name}': propagation_seconds muss eine ganze Zahl >= 0 sein")
+            raise ConfigError(f"Issuer '{name}': propagation_seconds must be an integer >= 0")
         issuers[name] = Issuer(
             name=name, type=typ, api_url=c.get("api_url"), project_id=c.get("project_id"),
             profile_id=c.get("profile_id"), application_id=c.get("application_id"),

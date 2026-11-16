@@ -1,3 +1,3 @@
-"""ingressctl: gleicht ingress.yaml-Manifeste mit Nginx Proxy Manager und einer Infisical-CA ab."""
+"""ingressctl: reconciles ingress.yaml manifests with Nginx Proxy Manager and an Infisical CA."""
 
 __version__ = "0.1.0"

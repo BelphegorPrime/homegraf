@@ -104,7 +104,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                                    "writes a skeleton from --image/--container-port/--secret-var/--mount.",
                        epilog="example: ./homelab.py new-app --app-id whoami-test --server worker-1 "
                               "--image traefik/whoami:v1.11.0 --container-port 80 --secret-var API_TOKEN "
-                              "--secret API_TOKEN=generate --yes")
+                              "--secret API_TOKEN=generate --yes\n"
+                              "public paths only (the UI stays private): ./homelab.py new-app --app-id hooks "
+                              "--server worker-1 --public-path /hook/abc --public-method POST --public-preset github-hooks")
     p.add_argument("--app-id", required=True, help="folder stacks/<id>, Komodo stack, inventory ID (e.g. whoami-test)")
     p.add_argument("--server", help="Komodo server from inventory/servers.yaml (e.g. worker-1); required for a new app")
     g = p.add_argument_group("compose skeleton (only when stacks/<id>/compose.yaml does not exist)")
@@ -140,6 +142,17 @@ def parse_args(argv=None) -> argparse.Namespace:
     g.add_argument("--force-https", action=argparse.BooleanOptionalAction, default=None, help="default: on")
     g.add_argument("--health-path", help="default /")
     g.add_argument("--statuses", help="accepted HTTP codes without login, default 200,301,302,307,401")
+    g.add_argument("--public-path", dest="public_paths", action="append", default=[], metavar="PATH",
+                   help="expose this path to the internet, e.g. /hook/abc or /files/*; repeatable ('/' and '/*' are refused, "
+                        "the app's UI stays private)")
+    g.add_argument("--public-method", dest="public_methods", action="append", default=[], metavar="METHOD",
+                   help="method allowed on the public paths (default GET, HEAD): GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS; repeatable")
+    g.add_argument("--public-cidr", dest="public_cidrs", action="append", default=[], metavar="CIDR",
+                   help="source network that may reach the public paths, e.g. 203.0.113.0/24; repeatable")
+    g.add_argument("--public-preset", dest="public_presets", action="append", default=[], metavar="NAME",
+                   help="source preset that may reach the public paths (github-hooks); repeatable")
+    g.add_argument("--public-full-host", dest="public_full_host", action="store_true",
+                   help="refused for now: a fully public host needs a public certificate (see #21)")
     g = p.add_argument_group("secrets (values never on the command line)")
     g.add_argument("--generate-secrets", action="store_true",
                    help="generate a value for every ${VAR} without an explicit --secret (for a compose file you wrote)")

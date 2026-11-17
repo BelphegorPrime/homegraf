@@ -64,6 +64,7 @@ class FieldContractTests(unittest.TestCase):
         self.assertEqual(cfg.openhands_url, "http://openhands:8000")
         self.assertEqual(cfg.gateway_url, "https://llm.example/v1")
         self.assertEqual((cfg.strong_model, cfg.cheap_model), ("openai/gpt-5", "openai/gpt-5-mini"))
+        self.assertEqual(cfg.free_model, "")
         self.assertEqual(cfg.allowed_repos, ("owner/infrastructure", "owner/other"))
         self.assertEqual(cfg.allowed_senders, ("marcel", "owner", "homegraf-agent"))
         self.assertEqual((cfg.agent_login, cfg.human_login), (DEFAULT_AGENT_LOGIN, "marcel"))
@@ -73,6 +74,16 @@ class FieldContractTests(unittest.TestCase):
         self.assertEqual(cfg.runtime_dir, DEFAULT_RUNTIME_DIR)
         self.assertEqual((cfg.max_concurrent_per_tier, cfg.max_concurrent, cfg.max_runs_per_hour, cfg.max_run_minutes),
                          (2, 4, 30, 120))
+
+    def test_the_free_model_is_optional_and_blank_means_no_free_tier(self):
+        cfg = FactoryConfig.from_env({**ENV, "FORGEHANDS_FREE_MODEL": " openai/gpt-5-free "}, REPOSITORY)
+        self.assertEqual(cfg.free_model, "openai/gpt-5-free")
+        self.assertEqual(FactoryConfig.from_env({**ENV, "FORGEHANDS_FREE_MODEL": "  "}, REPOSITORY).free_model, "")
+
+    def test_the_free_model_must_be_an_identifier_like_the_other_models(self):
+        for value in ("openai/free model", "openai/free\nmodel", "x" * 201):
+            with self.subTest(value=value), self.assertRaisesRegex(FactoryConfigError, "FORGEHANDS_FREE_MODEL"):
+                FactoryConfig.from_env({**ENV, "FORGEHANDS_FREE_MODEL": value}, REPOSITORY)
 
     def test_runtime_limits_and_the_optional_mirror_can_be_overridden(self):
         cfg = FactoryConfig.from_env({**ENV, "FORGEHANDS_RUNTIME_DIR": "/run/factory/", "FORGEHANDS_MAX_CONCURRENT_PER_TIER": "3",

@@ -1,4 +1,4 @@
-"""The factory's two LLM profiles and five agent profiles, reconciled and verified by reading them back.
+"""The factory's LLM profiles and agent profiles, reconciled and verified by reading them back.
 
 Verified against a running OpenHands agent-server (the Agent Canvas backend, agent-server 1.62.0):
 
@@ -17,9 +17,11 @@ Every request authenticates with ``X-Session-API-Key``.  A 201 and a bumped revi
 that a write stuck, so each write is followed by a read and a comparison of the managed fields.  A
 read that still shows other values fails closed, publishes no ids, and is not retried in a loop.
 
-The LLM profile names are the ones of the reference installation: ``smart`` for the strong tier and
-``cheap`` for the free one.  The five agent profiles clone ``default`` when they are missing, but
-``default`` itself is never written or activated.
+The LLM profile names are the ones of the reference installation: ``smart`` for the strong tier,
+``cheap`` for the worker tier and, when ``FORGEHANDS_FREE_MODEL`` is set, ``free`` for the fallback
+worker.  The agent profiles clone ``default`` when they are missing, but ``default`` itself is never
+written or activated.  Without a free model neither the ``free`` LLM profile nor the ``worker-free``
+role exists.
 """
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ STATE_SECTION = "factory_agent_profiles"
 DEFAULT_PROFILE = "default"
 LLM_STRONG = "smart"
 LLM_CHEAP = "cheap"
+LLM_FREE = "free"
 # #25 trims the worker to these two skills; the same pair is the ceiling for every role, so no role
 # inherits the full default catalog (about 35 skills and 58k prompt tokens on a trivial task).
 TRIMMED_SKILLS = ("agent-canvas-environment", "code-review")
@@ -58,6 +61,12 @@ ROLES = (
     Role("reviewer", LLM_STRONG, "reviewer.md"),
     Role("sensitive-reviewer", LLM_STRONG, "sensitive-reviewer.md"),
 )
+ROLE_WORKER_FREE = Role("worker-free", LLM_FREE, "worker.md")
+
+
+def roles_for(cfg) -> tuple[Role, ...]:
+    """The roles to reconcile; ``worker-free`` exists only when a free model is configured."""
+    return (*ROLES, ROLE_WORKER_FREE) if cfg.free_model else ROLES
 
 
 def _condenser_max_size(profile: dict):
@@ -72,6 +81,7 @@ class AgentProfiles:
         self.cfg, self.state, self.http, self.step = cfg, state, http, step
         self.api = cfg.openhands_url.rstrip("/") + "/api"
         self.prompts = pathlib.Path(__file__).with_name("prompts")
+        self.roles = roles_for(cfg)
 
     def run(self) -> dict[str, str]:
         self._require()
@@ -140,8 +150,16 @@ class AgentProfiles:
             raise StepError(f"{what}: OpenHands did not answer with JSON") from None
 
     # -- LLM profiles ---------------------------------------------------------------------------------------------------
+    def _llm_names(self) -> tuple[str, ...]:
+        return (LLM_STRONG, LLM_CHEAP, LLM_FREE) if self.cfg.free_model else (LLM_STRONG, LLM_CHEAP)
+
     def _llm_expected(self, name: str) -> dict:
-        model = self.cfg.strong_model if name == LLM_STRONG else self.cfg.cheap_model
+        if name == LLM_STRONG:
+            model = self.cfg.strong_model
+        elif name == LLM_CHEAP:
+            model = self.cfg.cheap_model
+        else:
+            model = self.cfg.free_model
         return {"model": model, "base_url": self.cfg.gateway_url.rstrip("/"), "api_key": self.cfg.gateway_api_key}
 
     def _stored_llm(self, name: str, *, what: str) -> dict | None:
@@ -163,7 +181,7 @@ class AgentProfiles:
                 and config.get("api_key") == expected["api_key"])
 
     def _reconcile_llm(self) -> None:
-        for name in (LLM_STRONG, LLM_CHEAP):
+        for name in self._llm_names():
             expected = self._llm_expected(name)
             current = self._stored_llm(name, what=f"reading the {name} LLM profile")
             if current is not None and self._llm_matches(current, expected):
@@ -282,14 +300,14 @@ class AgentProfiles:
 
     def _verified_agents(self) -> dict[str, str]:
         listed = self._agent_list(what="reading the agent profiles")
-        prompts = {role.name: self._prompt(role, self.prompts) for role in ROLES}
+        prompts = {role.name: self._prompt(role, self.prompts) for role in self.roles}
         default = None
-        if any(role.name not in listed for role in ROLES):
+        if any(role.name not in listed for role in self.roles):
             default = self._stored_agent(DEFAULT_PROFILE, what="reading the default agent profile to clone")
             if default is None:
                 raise StepError("the default agent profile does not exist, so the missing roles cannot be cloned")
         ids: dict[str, str] = {}
-        for role in ROLES:
+        for role in self.roles:
             verified = self._reconcile_agent(role, prompts[role.name], listed, default)
             ids[role.name] = self._profile_id(role, verified)
         if len(set(ids.values())) != len(ids):

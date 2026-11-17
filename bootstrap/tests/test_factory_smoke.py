@@ -58,6 +58,10 @@ class FakeFactory:
         self.human_closes_epic = False
         self.planner_repeats = False
         self.second_pr = False
+        self.duplicate_run = False
+        self.rounds_exhausted = False
+        self.too_many_rounds = False
+        self.followup_issues: list = []
         self.now = 0.0
 
     # -- clock injection --------------------------------------------------------------------
@@ -71,7 +75,7 @@ class FakeFactory:
         self.repos[name] = {"full_name": name, "description": description, "private": private, "mirror": mirror,
                             "default_branch": "main", "files": {}, "labels": {}, "hooks": {}, "protections": {},
                             "issues": {}, "pulls": {}, "comments": {}, "reviews": {}, "statuses": {},
-                            "dependencies": {}}
+                            "dependencies": {}, "branches": set()}
         return self.repos[name]
 
     def repo(self, name: str = REPO) -> dict:
@@ -99,6 +103,71 @@ class FakeFactory:
         else:
             self._advance(repo, issue, issue["polls"])
 
+    def _followup_step(self, repo: dict, issue: dict) -> None:
+        """The reviewer asks for one change on the same pull request, the worker pushes, then the merge."""
+        number, polls = issue["number"], issue["polls"]
+        if polls == 1 and self.conversation:
+            repo["comments"][number] = [self._conversation()]
+        pull = repo["pulls"].get(number)
+        if polls >= 2 and pull is None:
+            pull = repo["pulls"][number] = {
+                "id": self.next_id(), "number": number, "state": "open", "draft": True,
+                "title": f"WIP: {issue['title']}", "body": f"Closes #{number}",
+                "head": {"ref": f"ai/issue-{number}", "sha": f"sha{number}-1"},
+                "labels": [], "merged": False, "merged_at": None, "created_at": self.stamp(),
+                "user": {"login": self.pr_author}}
+            repo["branches"].add(f"ai/issue-{number}")
+        if pull is None:
+            return
+        if polls >= 3:
+            repo["statuses"][pull["head"]["sha"]] = [
+                {"context": "ci / seed (pull_request)", "state": "success"},
+                {"context": "ci / seed (push)", "state": "success"}]
+        if polls >= 4:
+            if self.rounds_exhausted:
+                issue["labels"].add("ai:blocked")
+                return
+            changes = 4 if self.too_many_rounds else 1
+            if not issue.get("changes_requested"):
+                issue["changes_requested"] = True
+                pull["draft"] = False
+                pull["labels"].append({"name": "ai:changes"})
+                for _ in range(changes):
+                    issue["timeline"].append({"id": self.next_id(), "type": "label",
+                                              "user": {"login": "homegraf-agent"},
+                                              "label": {"name": "ai:changes"}})
+                repo["comments"].setdefault(number, []).append({
+                    "id": self.next_id(), "user": {"login": "homegraf-agent"},
+                    "body": "Please end the line with ` ok` and push to the same branch."})
+            if self.too_many_rounds:
+                return
+        if polls >= 5:
+            pull["head"]["sha"] = f"sha{number}-2"
+        if polls >= 6:
+            pull["labels"] = [label for label in pull["labels"] if label["name"] != "ai:changes"]
+            repo["statuses"][pull["head"]["sha"]] = [
+                {"context": "ci / seed (pull_request)", "state": "success"},
+                {"context": "ci / seed (push)", "state": "success"}]
+        if self.second_pr and polls >= 6:
+            repo["pulls"].setdefault(number + 1000, {
+                "id": self.next_id(), "number": number + 1000, "state": "open", "draft": True,
+                "title": f"WIP: {issue['title']}", "body": f"Closes #{number}",
+                "head": {"ref": f"ai/issue-{number}", "sha": f"sha{number}-second"},
+                "labels": [], "merged": False, "merged_at": None, "created_at": self.stamp(),
+                "user": {"login": self.pr_author}})
+        if polls >= 7 and not pull["labels"]:
+            pull["labels"] = [{"name": "ai:approved"}]
+            issue["timeline"].append({"id": self.next_id(), "type": "label",
+                                      "user": {"login": "homegraf-agent"},
+                                      "label": {"name": "ai:approved"}})
+            repo["reviews"][number] = [{"id": self.next_id(), "state": "APPROVED", "body": "approved"}]
+        if polls >= 8:
+            pull.update({"merged": True, "merged_at": self.stamp(), "state": "closed",
+                         "merged_by": {"login": self.merge_author}})
+            issue["state"] = "closed"
+            issue["timeline"].append({"id": self.next_id(), "type": "close",
+                                      "user": {"login": "homegraf-agent"}})
+
     def _child_step(self, repo: dict, issue: dict) -> None:
         if self.early_start and issue["part"] == "B" and issue["polls"] == 1:
             repo["comments"][issue["number"]] = [self._conversation()]
@@ -108,27 +177,6 @@ class FakeFactory:
             return
         issue["work"] = issue.get("work", 0) + 1
         self._advance(repo, issue, issue["work"])
-
-    def _followup_step(self, repo: dict, issue: dict) -> None:
-        self._advance(repo, issue, issue["polls"])
-        pull = repo["pulls"].get(issue["number"])
-        if pull is None or issue["polls"] != 3:
-            return
-        pull["labels"].append({"name": "ai:changes"})
-        issue["timeline"].append({"type": "label", "user": {"login": "homegraf-agent"},
-                                  "label": {"name": "ai:changes"}})
-        pull["head"]["sha"] = f"sha{issue['number']}b"
-        repo["statuses"][pull["head"]["sha"]] = [
-            {"context": "ci / seed (pull_request)", "state": "success"},
-            {"context": "ci / seed (push)", "state": "success"}]
-        if self.second_pr:
-            other = issue["number"] + 1000
-            repo["pulls"][other] = {
-                "id": self.next_id(), "number": other, "state": "open", "draft": False,
-                "title": f"Follow-up {issue['title']}", "body": "",
-                "head": {"ref": f"ai/issue-{issue['number']}-2", "sha": f"sha{issue['number']}c"},
-                "labels": [], "merged": False, "merged_at": None, "created_at": self.stamp(),
-                "user": {"login": self.pr_author}}
 
     def _epic_step(self, repo: dict, issue: dict) -> None:
         children = [child for child in repo["issues"].values() if child.get("epic") == issue["number"]]
@@ -144,9 +192,9 @@ class FakeFactory:
         issue["state"] = "closed"
         issue["timeline"].append({"type": "close", "user": {"login": actor}})
 
-    def _conversation(self) -> dict:
+    def _conversation(self, conversation_id: str = "abc123") -> dict:
         return {"id": self.next_id(), "user": {"login": "homegraf-agent"},
-                "body": "Working in http://openhands.local:8000/conversations/abc123"
+                "body": f"Working in http://openhands.local:8000/conversations/{conversation_id}"
                         "?access_token=conversation-secret"}
 
     def _advance(self, repo: dict, issue: dict, polls: int) -> None:
@@ -305,8 +353,9 @@ class FakeFactory:
                 return 200, repo["protections"][rule]
             if rest.startswith("branches/"):
                 branch = unquote(rest[len("branches/"):])
-                exists = any(pull["head"]["ref"] == branch for pull in repo["pulls"].values())
-                return (200, {"name": branch}) if exists else (404, {"message": "not found"})
+                if branch not in repo["branches"]:
+                    return 404, {"message": "not found"}
+                return 200, {"name": branch, "commit": {"id": f"sha-{branch.replace('/', '-')}"}}
             if rest.startswith("contents/"):
                 file_path = rest[len("contents/"):]
                 if req.method == "GET":
@@ -339,6 +388,8 @@ class FakeFactory:
                                       for name in labels],
                          "kind": kind}
                 repo["issues"][number] = issue
+                if issue["kind"] == "followup":
+                    self.followup_issues.append(issue)
                 if "ai:plan" in issue["labels"]:
                     self._plan(repo, issue)
                 return 201, self.issue_view(repo, issue)
@@ -370,6 +421,14 @@ class FakeFactory:
                     self._evolve(repo, issue)
                     return 200, self.issue_view(repo, issue)
                 if issue_parts[2] == "comments":
+                    if req.method == "POST":
+                        comment = {"id": self.next_id(), "user": {"login": "owner"}, "body": req.json["body"]}
+                        repo["comments"].setdefault(number, []).append(comment)
+                        if issue["kind"] == "followup":
+                            issue["retriggered"] = issue["polls"]
+                            if self.duplicate_run:
+                                repo["comments"][number].append(self._conversation("def456"))
+                        return 201, comment
                     return 200, repo["comments"].get(number, [])
                 if issue_parts[2] == "timeline":
                     return 200, issue["timeline"]
@@ -1049,28 +1108,71 @@ class EpicRunTests(SmokeTest):
         self.assertNotIn("epic closure", report.render())
 
 
-class FollowupCaseTests(SmokeTest):
-    def test_the_followup_round_passes_on_the_same_pull_request_and_branch(self):
-        report = self.smoke(include_epic=True).run(REPO, REPO)
+class FollowupTests(SmokeTest):
+    """The bounded follow-up: one change round stays on the one pull request and branch, and one
+    duplicate trigger adds no second run."""
+
+    def followup(self) -> dict:
+        return self.fake.followup_issues[0]
+
+    def test_the_followup_round_and_the_duplicate_trigger_pass(self):
+        self.fake.seed()
+        report = self.smoke(include_epic=True, timeout=60).run(REPO, REPO)
         self.assertTrue(report.passed, report.render())
-        self.assertIn("follow-up: passed (same pull request and branch, merged)", report.render())
+        text = report.render()
+        self.assertIn("follow-up: passed (same pull request and branch, merged", text)
+        self.assertIn("duplicate trigger: passed (one run, no second pull request)", text)
+        issue = self.followup()
+        pulls = [pull for pull in self.fake.repos[REPO]["pulls"].values() if pull["number"] == issue["number"]]
+        self.assertEqual(len(pulls), 1, "a follow-up opened a second pull request")
+        self.assertTrue(pulls[0]["merged"])
+        self.assertEqual(pulls[0]["head"]["sha"], f"sha{issue['number']}-2")
+        self.assertEqual({request.path.split("?")[0].split("/")[4] for request in self.writes()
+                          if request.path.startswith("/api/v1/repos/")}, {"owner"})
 
-    def test_a_second_pull_request_fails_the_smoke(self):
-        self.fake.second_pr = True
-        report = self.smoke(include_epic=True).run(REPO, REPO)
-        self.assertFalse(report.passed)
-        self.assertIn("a follow-up opened a second pull request or branch", report.render())
+    def test_exactly_one_retrigger_comment_is_posted(self):
+        self.smoke(include_epic=True, timeout=60).run(REPO, REPO)
+        retriggers = [request for request in self.srv.requests if request.method == "POST"
+                      and request.path.endswith(f"/issues/{self.followup()['number']}/comments")
+                      and request.json["body"].startswith("retrigger ")]
+        self.assertEqual(len(retriggers), 1)
 
-    def test_without_the_flag_no_followup_write_happens(self):
+    def test_each_switch_fails_with_the_right_message(self):
+        cases = [
+            ("duplicate_run", "a duplicate trigger started a concurrent run"),
+            ("second_pr", "a follow-up opened a second pull request or branch"),
+            ("rounds_exhausted", "rounds exhausted (ai:blocked) before the follow-up merged"),
+            ("too_many_rounds", "rounds"),
+        ]
+        self.fake.seed()
+        for switch, message in cases:
+            with self.subTest(switch=switch):
+                self.fake.repos.clear()
+                self.fake.followup_issues.clear()
+                setattr(self.fake, switch, True)
+                try:
+                    report = self.smoke(include_epic=True, timeout=60).run(REPO, REPO)
+                finally:
+                    setattr(self.fake, switch, False)
+                self.assertFalse(report.passed)
+                self.assertIn(message, report.render())
+
+    def test_without_the_flag_no_followup_request_happens(self):
         report = self.smoke().run(REPO, REPO)
         self.assertTrue(report.passed, report.render())
-        self.assertFalse([request for request in self.srv.requests
-                          if "smoke-epic" in request.path or "/branches/" in request.path])
+        self.assertEqual(self.fake.followup_issues, [])
+        self.assertFalse([request for request in self.srv.requests if "/branches/" in request.path])
+        self.assertFalse([request for request in self.srv.requests if request.method == "POST"
+                          and request.path.split("?")[0].endswith("/comments")])
+        self.assertNotIn("follow-up", report.render())
 
-    def test_cleanup_deletes_the_followup_issue(self):
+    def test_cleanup_removes_the_followup_issue(self):
         self.fake.seed()
-        report = self.smoke(include_epic=True).run(REPO, REPO)
+        report = self.smoke(include_epic=True, timeout=60).run(REPO, REPO)
         self.assertTrue(report.passed, report.render())
+        number = self.followup()["number"]
+        deletes = [request.path.split("?")[0] for request in self.srv.requests if request.method == "DELETE"]
+        self.assertIn(f"/api/v1/repos/{REPO}/issues/{number}", deletes)
         self.assertEqual(self.fake.repos[REPO]["issues"], {})
 
 

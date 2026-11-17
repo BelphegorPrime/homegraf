@@ -38,6 +38,7 @@ NAME_PREFIX = "factory-smoke-"
 PROTECTED_FIXTURE = "infra/smoke-guard.sh"
 PROTECTED_GLOB = "infra/**"
 CHECK_CONTEXT = "ci / seed"
+FALLBACK_ROUNDS = 3
 DEFAULT_TIMEOUT = 1800.0
 DEFAULT_INTERVAL = 15.0
 SETTLE_POLLS = 3
@@ -116,7 +117,7 @@ Runs the agent factory end to end in one named scratch repository and reports th
   --confirm-scratch OWNER/REPO the same repository, repeated: the guard against a wrong target
   --keep                       keep the repository and its issues and list them as retained
   --preflight                  read-only: check the target, write nothing and spend no tokens
-  --include-epic               also add the ordered epic and follow-up scenarios; spends extra model tokens
+  --include-epic               also add the ordered-epic and bounded follow-up scenarios (fix round, duplicate trigger, rounds); spends extra model tokens
   --timeout SECONDS            bound on each wait (default 1800)
   --interval SECONDS           poll interval (default 15)
   -h, --help                   show this help
@@ -390,6 +391,7 @@ class Smoke:
         self.api = _Api(cfg, token, http=http)
         self.secrets = (token, getattr(factory, "forgejo_webhook_secret", ""))
         self.run_token = uuid.uuid4().hex[:8]
+        self.rounds = _round_limit()
         self.report = SmokeReport(cfg.repository)
         self.owned_repository = False
         self.owned_issues: list[int] = []
@@ -606,55 +608,129 @@ class Smoke:
         self.report.add("epic order", "passed", "B started after A merged, C independent")
         self.report.add("epic closure", "passed", "closed by the reviewer")
 
+    # -- bounded follow-up ---------------------------------------------------------------------
     def _followup_case(self, plan: Plan) -> None:
-        """One reviewer-requested change on the same pull request and branch, ending merged."""
+        """One reviewer change round on the same pull request and branch, and one duplicate trigger.
+
+        The smoke opens the issue, posts exactly one ``retrigger`` comment while that run is active
+        and otherwise observes only: it never labels the pull request and never forces a round to be
+        used up.
+        """
         repository = plan.repository
-        body = (f"Factory smoke {self.run_token} (follow-up round).\n\n"
-                f"Create `smoke-epic/{self.run_token}-f.txt` with the line `followup {self.run_token}`, "
-                "change nothing else, and do not touch `infra/`.\n\n"
-                "Reply on this issue with the link to your conversation, open a draft pull request that "
-                "closes this issue, and let CI and the reviewer finish.\n\n"
-                f"The reviewer must request exactly one follow-up change on that pull request: the line "
-                f"in `smoke-epic/{self.run_token}-f.txt` must end with ` ok`. Make that change on the same "
-                "branch and the same pull request; never open a second pull request or branch.")
-        number = self._open_issue(repository, "follow-up", body, ready_at_creation=True)
+        number = self._open_issue(repository, "follow-up", self._followup_body(), ready_at_creation=True)
+        observation, sha = self._followup_start(repository, number)
+        self._retrigger(repository, number)
+        self._duplicate_settle(repository, number)
+        observation = self._track_followup(repository, number, sha)
+        escalated = " with the strong tier (reference)" if (
+            "ai:escalate" in observation.labels or "ai:escalate" in observation.pr_labels) else ""
+        self.report.add("follow-up", "passed", "same pull request and branch, merged" + escalated)
+        self.report.add("duplicate trigger", "passed", "one run, no second pull request")
+
+    def _followup_body(self) -> str:
+        return (f"Factory smoke {self.run_token} (follow-up).\n\n"
+                f"Create `smoke-epic/{self.run_token}-f.txt` with the single line "
+                f"`followup {self.run_token}`. Change nothing else and do not touch `infra/`.\n\n"
+                "Reply on this issue with the link to your conversation and open a draft pull request "
+                "that closes this issue. The reviewer must request exactly one follow-up change: the "
+                f"line in `smoke-epic/{self.run_token}-f.txt` has to end with ` ok`. Address that change "
+                "in the same pull request and on the same branch, then let CI and the reviewer finish.")
+
+    def _followup_start(self, repository: str, number: int) -> tuple[Observation, str]:
         deadline = self.clock() + self.timeout
-        shas: set[str] = set()
-        escalated = False
         while True:
             observation = self._observe(repository, number)
             self._identity(observation, number)
-            self._assert_single(repository, number)
-            head = observation.pr.get("head") if observation.pr else None
-            sha = head.get("sha") if isinstance(head, dict) else None
-            if isinstance(sha, str) and sha:
-                shas.add(sha)
-            escalated = escalated or "ai:escalate" in observation.labels or "ai:escalate" in observation.pr_labels
-            if observation.merged and observation.closed:
-                break
-            self._bound(deadline, f"#{number}: follow-up stalled at {observation.reached()}, "
+            pull = self._single_followup(repository, number)
+            if observation.conversation and pull is not None:
+                return observation, str((pull.get("head") or {}).get("sha") or "")
+            self._bound(deadline, f"#{number}: the follow-up left no conversation and pull request")
+            self.sleep(self.interval)
+
+    def _retrigger(self, repository: str, number: int) -> None:
+        """Exactly one duplicate trigger: a second ready event while the follow-up run is active."""
+        self.api.call("POST", f"/repos/{repository}/issues/{number}/comments",
+                      body={"body": f"retrigger {self.run_token}"})
+
+    def _duplicate_settle(self, repository: str, number: int) -> None:
+        """A duplicate trigger must not start a second run, pull request or branch."""
+        deadline = self.clock() + self.timeout
+        settled = 0
+        while True:
+            observation = self._observe(repository, number)
+            self._assert_rounds(observation, number)
+            conversations = self._conversation_ids(repository, number)
+            if len(conversations) > 1:
+                raise SmokeFailure(f"#{number}: a duplicate trigger started a concurrent run")
+            if len(self._issue_pulls(repository, number)) > 1 or not self._branch_exists(repository, number):
+                raise SmokeFailure(f"#{number}: a duplicate trigger started a concurrent run")
+            settled = settled + 1 if conversations else 0
+            if settled >= SETTLE_POLLS:
+                return
+            self._bound(deadline, f"#{number}: the duplicate trigger did not settle")
+            self.sleep(self.interval)
+
+    def _track_followup(self, repository: str, number: int, sha: str) -> Observation:
+        deadline = self.clock() + self.timeout
+        while True:
+            observation = self._observe(repository, number)
+            self._identity(observation, number)
+            self._single_followup(repository, number)
+            self._assert_rounds(observation, number)
+            if observation.merged and str((observation.pr or {}).get("state") or "") == "closed":
+                head = str((observation.pr or {}).get("head", {}).get("sha") or "")
+                if head == sha:
+                    raise SmokeFailure(f"#{number}: the follow-up merged without a new commit on the branch")
+                if not observation.ci or not observation.review:
+                    raise SmokeFailure(f"#{number}: the follow-up merged without a green commit and a review "
+                                       f"({observation.chain()})")
+                return observation
+            if observation.pr and str(observation.pr.get("state") or "") == "closed":
+                raise SmokeFailure(f"#{number}: the follow-up pull request was closed without a merge "
+                                   f"({observation.chain()})")
+            self._bound(deadline, f"#{number}: the follow-up stalled at {observation.reached()}, "
                                   f"reached {observation.chain()}")
             self.sleep(self.interval)
-        if len(shas) < 2:
-            raise SmokeFailure(f"#{number}: the head sha never changed, no follow-up round happened")
-        suffix = " escalated" if escalated else ""
-        self.report.add("follow-up", "passed", "same pull request and branch, merged" + suffix)
 
-    def _assert_single(self, repository: str, number: int) -> None:
-        """The follow-up round stays on the one pull request and the one branch of the issue."""
+    def _assert_rounds(self, observation: Observation, number: int) -> None:
+        """The rounds are bounded: a block before the merge, or more change rounds than the limit."""
+        if "ai:blocked" in observation.labels or "ai:blocked" in observation.pr_labels:
+            raise SmokeFailure(f"#{number}: rounds exhausted (ai:blocked) before the follow-up merged")
+        changes = len(observation.label_actors.get("ai:changes") or ())
+        if changes > self.rounds:
+            raise SmokeFailure(f"#{number}: {changes} ai:changes rounds exceed the limit of {self.rounds} rounds")
+
+    def _issue_pulls(self, repository: str, number: int) -> list[dict]:
         pulls = self.api.json("GET", f"/repos/{repository}/pulls?state=all&limit={PAGE_SIZE}")
-        refs = [str((pull.get("head") or {}).get("ref") or "")
-                for pull in pulls or [] if isinstance(pull, dict)]
-        expected = f"ai/issue-{number}"
-        matching = [ref for ref in refs if ref.endswith(f"issue-{number}")]
-        extra = [ref for ref in refs if ref.startswith(expected + "-")]
-        if len(matching) > 1 or extra or any(ref != matching[0] for ref in matching):
+        reference, suffix = re.compile(rf"#{number}\b"), f"issue-{number}"
+        return [pull for pull in pulls or [] if isinstance(pull, dict)
+                and (reference.search(str(pull.get("body") or ""))
+                     or str((pull.get("head") or {}).get("ref") or "").endswith(suffix)
+                     or str((pull.get("head") or {}).get("ref") or "").startswith(f"ai/{suffix}-"))]
+
+    def _branch_exists(self, repository: str, number: int) -> bool:
+        branch = quote(f"ai/issue-{number}", safe="")
+        return self.api.json("GET", f"/repos/{repository}/branches/{branch}", allow=(404,)) is not None
+
+    def _single_followup(self, repository: str, number: int) -> dict | None:
+        """The issue's one pull request on its one branch; a duplicate raises a failure naming it."""
+        pulls = self._issue_pulls(repository, number)
+        if len(pulls) > 1 or (pulls and not self._branch_exists(repository, number)):
             raise SmokeFailure(f"#{number}: a follow-up opened a second pull request or branch")
-        if not matching:
-            return
-        path = f"/repos/{repository}/branches/{quote(expected, safe='')}"
-        if self.api.call("GET", path, allow=(404,)).status != 200:
-            raise SmokeFailure(f"#{number}: a follow-up opened a second pull request or branch")
+        return pulls[0] if pulls else None
+
+    def _conversation_ids(self, repository: str, number: int) -> set:
+        """The distinct conversation ids the agent reported on the issue: a second id is a second run."""
+        ids = set()
+        for comment in self.api.paged(f"/repos/{repository}/issues/{number}/comments"):
+            if not isinstance(comment, dict):
+                continue
+            user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
+            body = str(comment.get("body") or "")
+            match = re.search(r"/conversations/([^/?#\s)\]]+)", body)
+            if user.get("login") == self.factory.agent_login and "conversation" in body.lower() and match:
+                ids.add(match.group(1))
+        return ids
 
     def _assert_not_started(self, number: int, blocker: int) -> None:
         """ForgeHands starts a child only when its dependencies closed; a start before that is a leak."""
@@ -925,6 +1001,14 @@ def _marked(info: dict) -> bool:
 
 def _covered(path: str, globs) -> bool:
     return any(fnmatch.fnmatchcase(path, glob) for glob in globs)
+
+
+def _round_limit(env=None) -> int:
+    """The factory's own MAX_ROUNDS, read from its configuration and never changed here."""
+    try:
+        return int(factory_step._max_rounds(os.environ if env is None else env))
+    except StepError:
+        return FALLBACK_ROUNDS
 
 
 def _first_url(text: str) -> str:

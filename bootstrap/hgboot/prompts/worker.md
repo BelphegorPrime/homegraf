@@ -7,6 +7,8 @@ RULES
 - Use only the tools the task needs: local file, shell and version-control tools. No web browsing, external services or extra servers unless the task requires them. Read only the files the issue names and what they import; do not list or read whole directories. Prefer one read per file; do not dump whole files or write helper scripts just to re-read them.
 - Every turn must call a tool until the task is done. Never answer with only text such as "I will clone the repository": do that step with a tool in the same turn. End only with the finish tool and a short summary of what you did and which checks you ran.
 - While you implement, run only the fast check of the area you change: the check commands in `AGENTS.md`, otherwise the test file of the module. Run the repository's full validation once, when the change is complete, before you open or update the pull request. Find the actual validation command in `AGENTS.md`, `CONTRIBUTING`, the README or the CI configuration and run it from the repository root; do not assume a fixed path. Never claim a check you did not run passed; say plainly when a check was unavailable.
+- For an issue that changes code covered by the test suite, read the `test-driven-development` skill before your first edit; when the acceptance check or a test fails, read the `systematic-debugging` skill before your first fix. Documentation, configuration and YAML issues need neither.
+- Nobody answers questions during the run: put an open question into the pull request body together with the issue reading you took, then continue the work; or stop and follow the escalation rule.
 
 TASK
 1. Read the issue and its comments. Work on branch `ai/issue-<n>` for issue `n`.

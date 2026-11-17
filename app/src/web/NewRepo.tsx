@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import type { RepoInfo, RepoJobSnapshot, RepoProfileInfo } from "../shared/types";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { RepoProfileInfo } from "../shared/types";
-import { rememberUser, startJob, useRepoProfiles } from "./api";
+import { rememberUser, startJob, useRepoProfiles, useRepos } from "./api";
 import { CredentialFields, useCredentials, type Credentials } from "./Credentials";
 import { PageHeader, Section } from "./Page";
 
@@ -66,6 +68,68 @@ export function repoBody(f: RepoFields): RepoBody {
   return body;
 }
 
+/** The job as `NewRepo` follows it: its output so far, and its result once it is through. */
+export interface RepoJob {
+  log: string;
+  done?: RepoJobSnapshot;
+}
+
+const linkable = (url: string) => url.startsWith("http://") || url.startsWith("https://");
+
+/** The repository a job created, by its name or the `owner/`-prefixed name Forgejo may list. */
+export function repoForJob(repos: RepoInfo[], name: string): RepoInfo | undefined {
+  return repos.find((repo) => repo.name === name || repo.name.endsWith(`/${name}`));
+}
+
+/** A finished repository job: its badge and log, then the result and the wiring step it still needs. */
+export function RepoProgress({ job, repo }: { job: RepoJob; repo?: RepoInfo }) {
+  const done = job.done;
+  const state = done?.state === "failed" ? "failed" : done?.state === "done" ? "done" : "running";
+  const badge = {
+    running: { text: "creating", cls: "border-warn text-warn" },
+    failed: { text: "stopped", cls: "border-down text-down" },
+    done: { text: "created", cls: "border-ok text-ok" },
+  }[state];
+  const allowed = repo?.factory.allowed;
+  return (
+    <div className="job">
+      <Badge variant="outline" className={badge.cls}>
+        {badge.text}
+      </Badge>
+      <pre>{job.log}</pre>
+      {state === "failed" && (
+        <p className="warning">The repository was not created: the command stopped with exit code {done?.exitCode ?? "unknown"}. The form can be sent again.</p>
+      )}
+      {state === "done" && (
+        <>
+          <p>
+            {repo && linkable(repo.url) ? (
+              <>
+                Repository{" "}
+                <a href={repo.url} target="_blank" rel="noreferrer">
+                  {repo.name}
+                </a>{" "}
+                is created.
+              </>
+            ) : (
+              "The repository is created."
+            )}
+          </p>
+          <p className="muted">The first tickets for the repository are written by the operator; the factory only works issues that exist.</p>
+          {allowed === false && (
+            <p className="warning">
+              ForgeHands' allowed repositories still need a pull request, made by the <code>--wire</code> option of the operator command (
+              <code>new-repo ... --wire</code>): it adds the repository to <code>ALLOWED_REPOS</code> and <code>MERGE_POLICY</code> of the stack that runs
+              ForgeHands, as a pull request; nothing is deployed.
+            </p>
+          )}
+          {allowed === "unknown" && <p className="muted">Whether ForgeHands may work this repository could not be read.</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
 /** The form itself, without state: profiles come from the server, the messages from `validateRepo`. */
 export function NewRepoView({
   profiles,
@@ -76,6 +140,7 @@ export function NewRepoView({
   onChange,
   onSubmit,
   credentials,
+  busy,
 }: {
   profiles: RepoProfileInfo[];
   error?: string | null;
@@ -85,6 +150,7 @@ export function NewRepoView({
   onChange: <K extends keyof RepoFields>(field: K, value: RepoFields[K]) => void;
   onSubmit: () => void;
   credentials?: Credentials;
+  busy?: boolean;
 }) {
   const selected = profiles.find((p) => p.name === fields.profile);
   return (
@@ -161,7 +227,7 @@ export function NewRepoView({
 
       <div className="flex flex-wrap items-center gap-2">
         {credentials && <CredentialFields c={credentials} />}
-        <Button type="submit" disabled={!!credentials && !credentials.ready}>
+        <Button type="submit" disabled={busy || (!!credentials && !credentials.ready)}>
           Create repository
         </Button>
       </div>
@@ -169,18 +235,38 @@ export function NewRepoView({
   );
 }
 
-/** Create a repository from a profile: the form, validated here, sent as one job. */
+/** Create a repository from a profile: the form, validated here, sent as one job and followed to its result. */
 export function NewRepo({ onBack }: { onBack?: () => void }) {
   const profiles = useRepoProfiles();
+  const repos = useRepos();
   const cred = useCredentials();
+  const client = useQueryClient();
   const [draft, setDraft] = useState<RepoFields>({ name: "", profile: "", description: "", visibility: "private", branch: "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [failure, setFailure] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [job, setJob] = useState<RepoJob | null>(null);
+  const [sending, setSending] = useState(false);
+  const source = useRef<EventSource | null>(null);
+  useEffect(() => () => source.current?.close(), []);
   const list = profiles.data ?? [];
   // Until the person chooses one, the first profile of the server is the one the form shows and sends.
   const fields: RepoFields = { ...draft, profile: draft.profile || (list[0]?.name ?? "") };
   const change = <K extends keyof RepoFields>(field: K, value: RepoFields[K]) => setDraft((f) => ({ ...f, [field]: value }));
+  const busy = sending || (!!job && !job.done);
+  const created = job?.done?.state === "done" ? repoForJob(repos.data?.repos ?? [], job.done.repository) : undefined;
+
+  function follow(jobId: string) {
+    source.current?.close();
+    setJob({ log: "" });
+    const es = new EventSource(`/api/repos/jobs/${jobId}/events`);
+    source.current = es;
+    es.addEventListener("log", (ev) => setJob((j) => ({ ...j, log: (j?.log ?? "") + JSON.parse((ev as MessageEvent).data) })));
+    es.addEventListener("done", (ev) => {
+      setJob((j) => ({ log: j?.log ?? "", done: JSON.parse((ev as MessageEvent).data) }));
+      es.close();
+      void client.invalidateQueries({ queryKey: ["repos"] });
+    });
+  }
 
   async function submit() {
     const problems = validateRepo(fields);
@@ -189,18 +275,23 @@ export function NewRepo({ onBack }: { onBack?: () => void }) {
     setFailure(null);
     const session = cred.session();
     cred.spent(); // typed again for every action
+    setSending(true);
     try {
       const id = await startJob("/api/repos", repoBody(fields), session);
       if (!session.sso) rememberUser(session.name);
-      setJobId(id);
+      follow(id);
     } catch (e) {
       setFailure(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
     }
   }
 
   return (
     <div className="list">
-      <PageHeader title="New repository">{"Creates a repository from a profile; the wiring of the factory follows on its own."}</PageHeader>
+      <PageHeader title="New repository">
+        {"Creates a repository from a profile and follows the job; the factory wiring that still needs a pull request is shown after it."}
+      </PageHeader>
       <Section
         title="Details"
         action={
@@ -220,9 +311,10 @@ export function NewRepo({ onBack }: { onBack?: () => void }) {
           onChange={change}
           onSubmit={() => void submit()}
           credentials={cred}
+          busy={busy}
         />
         {failure && <p className="warning">{failure}</p>}
-        {jobId && <p className="muted">Job {jobId} started.</p>}
+        {job && <RepoProgress job={job} repo={created} />}
       </Section>
     </div>
   );

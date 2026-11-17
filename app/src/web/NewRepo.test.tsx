@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { RepoProfileInfo } from "../shared/types";
-import { NewRepoView, repoBody, validateRepo, type RepoFields } from "./NewRepo";
+import type { RepoFactoryStatus, RepoInfo, RepoJobSnapshot, RepoProfileInfo } from "../shared/types";
+import { NewRepoView, RepoProgress, repoBody, repoForJob, validateRepo, type RepoFields } from "./NewRepo";
 
 const profiles: RepoProfileInfo[] = [
   { name: "service", description: "A deployed service with a compose file", validate_command: "homelab.py check --profile service", files: ["compose.yaml"] },
@@ -19,6 +19,28 @@ const fields = (over: Partial<RepoFields> = {}): RepoFields => ({
 
 const render = (props: Partial<Parameters<typeof NewRepoView>[0]> = {}) =>
   renderToStaticMarkup(<NewRepoView profiles={profiles} fields={fields()} errors={{}} onChange={() => undefined} onSubmit={() => undefined} {...props} />);
+
+const factory = (over: Partial<RepoFactoryStatus> = {}): RepoFactoryStatus => ({ webhook: true, labels: true, agentAccess: true, allowed: true, ...over });
+
+const repo = (over: Partial<RepoInfo> = {}): RepoInfo => ({
+  name: "example-repo",
+  private: true,
+  default_branch: "main",
+  updated: "2026-03-04T05:06:07Z",
+  url: "http://forgejo.lab.example/owner/example-repo",
+  factory: factory(),
+  ...over,
+});
+
+const snapshot = (over: Partial<RepoJobSnapshot> = {}): RepoJobSnapshot => ({
+  id: "job-1",
+  repository: "example-repo",
+  state: "done",
+  log: "repository created\n",
+  ...over,
+});
+
+const progress = (job: Parameters<typeof RepoProgress>[0]["job"], r?: RepoInfo) => renderToStaticMarkup(<RepoProgress job={job} repo={r} />);
 
 describe("validateRepo", () => {
   it("accepts a filled form", () => {
@@ -107,5 +129,81 @@ describe("NewRepoView", () => {
     const html = render();
     expect(html.indexOf("private")).toBeLessThan(html.indexOf("public"));
     expect(html).toContain('placeholder="main"');
+  });
+
+  it("disables the submit button while the job runs", () => {
+    expect(render({ busy: true })).toMatch(/<button[^>]* disabled=""[^>]*>Create repository/);
+    expect(render()).not.toMatch(/<button[^>]* disabled=""[^>]*>Create repository/);
+  });
+
+  it("shows a 409 from the server as the form error", () => {
+    const html = render({ error: "another repository is being created, wait for it to finish" });
+    expect(html).toContain("warning");
+    expect(html).toContain("another repository is being created, wait for it to finish");
+  });
+});
+
+describe("repoForJob", () => {
+  it("finds the repository by its name or its owner-prefixed name", () => {
+    expect(repoForJob([repo()], "example-repo")?.name).toBe("example-repo");
+    expect(repoForJob([repo({ name: "owner/example-repo" })], "example-repo")?.name).toBe("owner/example-repo");
+    expect(repoForJob([repo({ name: "owner/other" })], "example-repo")).toBeUndefined();
+  });
+});
+
+describe("RepoProgress", () => {
+  it("shows the log and a creating badge while the job runs", () => {
+    const html = progress({ log: "writing files\n" });
+    expect(html).toContain("creating");
+    expect(html).toContain("writing files");
+    expect(html).toContain("<pre>");
+    expect(html).not.toContain("created");
+    expect(html).not.toContain("stopped");
+  });
+
+  it("shows a stopped badge, the log and the exit code when the job failed", () => {
+    const html = progress({ log: "boom\n", done: snapshot({ state: "failed", exitCode: 2, log: "boom\n" }) });
+    expect(html).toContain("stopped");
+    expect(html).toContain("boom");
+    expect(html).toContain("exit code 2");
+    expect(html).toContain("warning");
+    expect(html).toContain("sent again");
+  });
+
+  it("links the created repository and reminds that the operator writes the first tickets", () => {
+    const html = progress({ log: "done\n", done: snapshot() }, repo());
+    expect(html).toContain("created");
+    expect(html).toContain('href="http://forgejo.lab.example/owner/example-repo"');
+    expect(html).toContain("first tickets");
+    expect(html).toContain("written by the operator");
+    expect(html).toContain("issues that exist");
+  });
+
+  it("shows no link when the repository has no http(s) url", () => {
+    const html = progress({ log: "done\n", done: snapshot() }, repo({ url: "" }));
+    expect(html).toContain("created");
+    expect(html).toContain("The repository is created.");
+    expect(html).not.toContain("href=");
+  });
+
+  it("shows the --wire next step only when the allowed list lacks the repository", () => {
+    const missing = progress({ log: "done\n", done: snapshot() }, repo({ factory: factory({ allowed: false }) }));
+    expect(missing).toContain("--wire");
+    expect(missing).toContain("new-repo ... --wire");
+    expect(missing).toContain("ALLOWED_REPOS");
+    expect(missing).toContain("MERGE_POLICY");
+    expect(missing).toContain("pull request");
+    expect(missing).toContain("nothing is deployed");
+
+    expect(progress({ log: "done\n", done: snapshot() }, repo())).not.toContain("--wire");
+    const unknown = progress({ log: "done\n", done: snapshot() }, repo({ factory: factory({ allowed: "unknown" }) }));
+    expect(unknown).not.toContain("--wire");
+    expect(unknown).toContain("could not be read");
+  });
+
+  it("escapes the log", () => {
+    const html = progress({ log: "<script>alert('x')</script>\n" });
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
   });
 });

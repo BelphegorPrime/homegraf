@@ -131,6 +131,7 @@ widens the allowlist, the merge policy, the token scopes or any other global per
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _SCRATCH_NAME = re.compile(r"^factory-smoke-[a-z0-9][a-z0-9-]*$")
+_SMOKE_FILE = re.compile(r"smoke-epic/[A-Za-z0-9._-]+\.txt")
 
 
 class UsageError(Exception):
@@ -445,8 +446,8 @@ class Smoke:
         warning = ("this run creates issues that start agent runs: every run spends model tokens. "
                    "It uses the operator's existing token and widens no allowlist, policy or permission.")
         if self.include_epic:
-            warning += (" The epic scenarios create one epic with three children plus a follow-up issue and "
-                        "spend several times the tokens of the base smoke.")
+            warning += (" The epic scenario creates one epic and three children and "
+                        "spends several times the tokens of the base smoke.")
         warn(STEP, warning)
         try:
             self._ensure_repository(plan)
@@ -553,13 +554,78 @@ class Smoke:
                         "approved, green, open, without WIP: " + observation.chain())
 
     def _epic_cases(self, plan: Plan) -> None:
-        self.report.add("epic scenarios", "skipped", "not implemented yet")
+        self._epic_plan_case(plan)
 
-    def _open_issue(self, repository: str, slug: str, body: str, *, ready_at_creation: bool) -> int:
+    def _epic_plan_case(self, plan: Plan) -> None:
+        """One epic planned by the planner into three children with an exact dependency graph."""
+        repository = plan.repository
+        epic = self._open_issue(repository, "epic", self._epic_body(), ready_at_creation=True, label="ai:plan")
+        deadline = self.clock() + self.timeout
+        children: dict[int, str] = {}
+        previous: frozenset | None = None
+        settled = 0
+        while True:
+            children = self._epic_children(repository, epic)
+            current = frozenset(self._dependencies(repository, epic))
+            settled = settled + 1 if len(children) >= 3 and current == previous else 0
+            previous = current
+            if settled >= SETTLE_POLLS:
+                break
+            self._bound(deadline, f"#{epic}: the planner left {len(children)} children and "
+                                  f"{len(current)} epic dependencies sitting")
+            self.sleep(self.interval)
+        if len(children) != 3:
+            raise SmokeFailure(f"#{epic}: duplicate children: {len(children)} carry "
+                               f"'Part of #{epic}', expected exactly three")
+        depends_on = {epic: set(previous or ())}
+        for number in children:
+            depends_on[number] = self._dependencies(repository, number)
+        problems = check_epic_graph(epic, children, depends_on)
+        if problems:
+            raise SmokeFailure(f"#{epic}: " + "; ".join(problems))
+        summaries = [comment for comment in self.api.paged(f"/repos/{repository}/issues/{epic}/comments")
+                     if isinstance(comment, dict)
+                     and (comment.get("user") or {}).get("login") == self.factory.agent_login]
+        if len(summaries) != 1:
+            raise SmokeFailure(f"#{epic}: the planner left {len(summaries)} comments, expected one summary")
+        self.report.add("epic graph", "passed", "3 children, epic depends on all, B after A, C independent")
+
+    def _epic_body(self) -> str:
+        return (f"Factory smoke {self.run_token} (epic planning).\n\n"
+                f"Plan exactly three child issues and stop. Every child body must contain the line "
+                f"`Part of #<number of this issue>`, must be created without any label, and must name "
+                f"one file under `smoke-epic/` (never `infra/`):\n\n"
+                f"- A creates `smoke-epic/{self.run_token}-a.txt` with one line of text.\n"
+                f"- B appends a line to `smoke-epic/{self.run_token}-a.txt`, so it needs A's file.\n"
+                f"- C creates `smoke-epic/{self.run_token}-c.txt` independently.\n\n"
+                f"Record the dependencies with the dependencies endpoint: B after A, C on nothing, this "
+                f"epic on A, B and C. Finish with exactly one comment on this issue listing the three "
+                f"children, and do not poll or wait for them.")
+
+    def _epic_children(self, repository: str, epic: int) -> dict[int, str]:
+        children: dict[int, str] = {}
+        for issue in self.api.paged(f"/repos/{repository}/issues?state=all&type=issues&q={self.run_token}"):
+            number = issue.get("number") if isinstance(issue, dict) else None
+            body = str(issue.get("body") or "") if isinstance(issue, dict) else ""
+            if not isinstance(number, int) or number == epic or f"Part of #{epic}" not in body:
+                continue
+            children[number] = body
+            if number not in self.owned_issues:
+                self.owned_issues.append(number)
+        return children
+
+    def _dependencies(self, repository: str, number: int) -> set[int]:
+        entries = self.api.json("GET", f"/repos/{repository}/issues/{number}/dependencies")
+        return {entry["number"] for entry in entries or []
+                if isinstance(entry, dict) and isinstance(entry.get("number"), int)}
+
+    def _open_issue(self, repository: str, slug: str, body: str, *, ready_at_creation: bool,
+                    label: str = "") -> int:
         title = f"Factory smoke: {slug} [{self.run_token}]"
         payload = {"title": title, "body": body}
-        if ready_at_creation:
-            payload["labels"] = self._label_ids(repository, ("ai:ready",))
+        names = ((label,) if label else ()) + (("ai:ready",) if ready_at_creation else ())
+        if names:
+            payload["labels"] = self._label_ids(repository, names)
         issue = self.api.json("POST", f"/repos/{repository}/issues", body=payload)
         number = issue.get("number") if isinstance(issue, dict) else None
         if not isinstance(number, int):
@@ -744,6 +810,66 @@ def _conversation(observation: Observation) -> str:
     if not observation.conversation:
         return ""
     return ", conversation on " + _clean_urls(observation.conversation)
+
+
+def check_epic_graph(epic: int, children: dict[int, str], depends_on: dict[int, set[int]]) -> list[str]:
+    """Problems of the planned graph: A, then B, C alone, and the epic waiting for all three.
+
+    ``children`` maps an issue number to its body, ``depends_on`` maps the epic and every child to the
+    numbers it depends on.  The children are told apart by the ``smoke-epic/`` file their body names: A
+    creates the ``-a.txt`` file, B appends to it and C owns the ``-c.txt`` file.  An empty list means
+    the graph is the planned one.
+    """
+
+    problems: list[str] = []
+    if len(children) != 3:
+        problems.append(f"duplicate children: {len(children)} children, expected three")
+    roles: dict[str, list[int]] = {"A": [], "B": [], "C": []}
+    for number in sorted(children):
+        body = str(children[number] or "")
+        lower = body.lower()
+        if f"part of #{epic}" not in lower:
+            problems.append(f"#{number}: the body does not say 'Part of #{epic}'")
+        files = _SMOKE_FILE.findall(body)
+        if any(name.endswith("-c.txt") for name in files):
+            roles["C"].append(number)
+        elif any(name.endswith("-a.txt") for name in files):
+            roles["B" if "append" in lower else "A"].append(number)
+        else:
+            problems.append(f"#{number}: the body names no file under smoke-epic/")
+    for role in "ABC":
+        if len(roles[role]) > 1:
+            problems.append("duplicate children: " + ", ".join(f"#{number}" for number in roles[role])
+                            + f" all take the {role} part")
+    a, b, c = (roles[role][0] if len(roles[role]) == 1 else None for role in "ABC")
+    deps = {number: set(depends_on.get(number) or ()) for number in children}
+    epic_deps = set(depends_on.get(epic) or ())
+    for number in sorted(children):
+        if number not in epic_deps:
+            problems.append(f"#{epic}: no dependency on #{number}")
+    for number in sorted(epic_deps - set(children)):
+        problems.append(f"#{epic}: depends on #{number}, which is not a child")
+    for number in sorted(children):
+        for dependency in sorted(deps[number]):
+            if dependency == epic:
+                problems.append(f"#{number}: depends on the epic #{epic}")
+            elif dependency not in children:
+                problems.append(f"#{number}: depends on #{dependency}, which is not a child")
+    if a is not None:
+        for dependency in sorted(deps[a] & set(children)):
+            problems.append(f"#{a}: depends on #{dependency}, but A starts the chain")
+    if b is not None:
+        if a is not None and a not in deps[b]:
+            problems.append(f"#{b}: no dependency on #{a}, so B does not wait for A")
+        for dependency in sorted(deps[b] & set(children)):
+            if dependency != a:
+                problems.append(f"#{b}: depends on #{dependency}, but B waits only for #{a}")
+    if c is not None:
+        for dependency in sorted(deps[c] & set(children)):
+            problems.append(f"#{c}: depends on #{dependency}, but C is independent")
+    if None in (a, b, c):
+        problems.append("cannot tell A, B and C apart by their smoke-epic file names")
+    return problems
 
 
 def command(argv: list[str], env=os.environ) -> int:

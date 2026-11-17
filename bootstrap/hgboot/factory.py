@@ -29,10 +29,11 @@ REPOSITORIES_KEY = "repositories"
 LOGIN_KEY = "login"
 MAX_RUNTIME_BYTES = 64 * 1024
 ROUTE_LABELS = (
-    "ai:plan", "ai:ready", "ai:escalate", "ai:review",
-    "ai:changes", "ci:failure", "ci:success", "epic:done",
+    "ai:plan", "ai:ready", "ai:ready-free", "ai:escalate", "ai:review",
+    "ai:changes", "ai:changes-free", "ci:failure", "ci:failure-free",
+    "ci:success", "epic:done", "pr:conflict", "sensitive:review",
 )
-ROUTE_ROLES = ("planner", "worker", "worker-strong", "reviewer")
+ROUTE_ROLES = ("planner", "worker", "worker-strong", "reviewer", "sensitive-reviewer")
 FORGEHANDS_ENDPOINT = "http://forgehands:8080/webhooks/forgejo"
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _LOGIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$")
@@ -134,6 +135,7 @@ def run(factory, cfg, state, env=os.environ, *, http=request, sleep=time.sleep,
 
         stage = "routes"
         routes = _routes(ids)
+        table = json.loads(routes)
         stages.append(Stage(stage, "configured"))
 
         stage = "runtime handoff"
@@ -141,8 +143,8 @@ def run(factory, cfg, state, env=os.environ, *, http=request, sleep=time.sleep,
         runtime_file = _write_runtime(factory.runtime_dir, True, runtime_env)
         stages.append(Stage(stage, "published"))
         log(STEP, f"direct mode is ready: {runtime_file}")
-        return FactoryReport(login, factory.allowed_repos, len(ROUTE_ROLES), len(ROUTE_LABELS),
-                             runner, mirror_status, runtime_file, tuple(stages))
+        return FactoryReport(login, factory.allowed_repos, len({route["profile"] for route in table.values()}),
+                             len(table), runner, mirror_status, runtime_file, tuple(stages))
     except Exception as exc:
         _invalidate(factory.runtime_dir)
         if isinstance(exc, (StepError, Unreachable, TimeoutError, ValueError, OSError)):
@@ -335,13 +337,16 @@ def _verified_roles(ids) -> None:
 
 
 def _routes(ids) -> str:
+    """Publish every route `label_routes()` builds: ForgeHands 0.4.2 refuses to start when a target is missing."""
     routes = json.loads(agents.label_routes(ids))
-    for label in list(routes):
-        if label not in ROUTE_LABELS:
-            del routes[label]
-    missing = [label for label in ROUTE_LABELS if label not in routes]
+    missing = [label for label in ROUTE_LABELS if label not in routes and label not in agents.FREE_ROUTE_LABELS]
     if missing:
         raise StepError(f"the route table has no entry for {', '.join(missing)}")
+    for label, route in routes.items():
+        for key in ("fallback_to", "escalate_to"):
+            target = route.get(key, "")
+            if target and target not in routes:
+                raise StepError(f"{label}: {key} names {target}, which the route table does not publish")
     return json.dumps(routes, separators=(",", ":"), sort_keys=True)
 
 

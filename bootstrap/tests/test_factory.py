@@ -19,7 +19,7 @@ from hgboot.steps import StepError
 
 from .fakes import Server
 from .helpers import PASSWORD, config
-from .test_agent_profiles import BACKEND_KEY, CHEAP_MODEL, GATEWAY_KEY, STRONG_MODEL, FakeOpenHands
+from .test_agent_profiles import BACKEND_KEY, CHEAP_MODEL, FREE_MODEL, GATEWAY_KEY, STRONG_MODEL, FakeOpenHands
 
 REPOSITORY = "owner/infrastructure"
 HUMAN = "owner"
@@ -27,7 +27,17 @@ AGENT = "homegraf-agent"
 OPERATOR_TOKEN = "operator-token-abc"
 GITHUB_REPO = "owner/mirror"
 WEBHOOK_SECRET = "webhook-secret-0123456789abcdef"
-ROUTE_KEYS = {"ai:plan", "ai:ready", "ai:escalate", "ai:review", "ai:changes", "ci:failure", "ci:success", "epic:done"}
+ROUTE_KEYS = {"ai:plan", "ai:ready", "ai:escalate", "ai:review", "ai:changes", "ci:failure", "ci:success",
+              "epic:done", "pr:conflict", "sensitive:review"}
+FREE_ROUTE_KEYS = ROUTE_KEYS | {"ai:ready-free", "ai:changes-free", "ci:failure-free"}
+ROUTE_IDS = {
+    "planner": "11111111-1111-1111-1111-111111111111",
+    "worker": "22222222-2222-2222-2222-222222222222",
+    "worker-strong": "33333333-3333-3333-3333-333333333333",
+    "reviewer": "44444444-4444-4444-4444-444444444444",
+    "sensitive-reviewer": "55555555-5555-5555-5555-555555555555",
+    "worker-free": "66666666-6666-6666-6666-666666666666",
+}
 AGENT_EVENTS = {"issues", "pull_request_label", "action_run_failure", "action_run_success", "push"}
 
 
@@ -280,11 +290,12 @@ class FactoryTest(unittest.TestCase):
             "FORGEHANDS_TIER_WEEKLY_BUDGETS": '{"worker":25}',
         }
 
-    def run_factory(self, cfg=None):
-        cfg = cfg or FactoryConfig.from_env(self.env, REPOSITORY)
+    def run_factory(self, cfg=None, env=None):
+        env = env or self.env
+        cfg = cfg or FactoryConfig.from_env(env, REPOSITORY)
         with mock.patch.dict(os.environ, {"HGBOOT_QUIET": "1"}), contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()):
-            return factory.run(cfg, self.cfg, self.state, self.env,
+            return factory.run(cfg, self.cfg, self.state, env,
                                sleep=lambda _: None, mirror_attempts=3)
 
     def runtime(self):
@@ -337,21 +348,22 @@ class FactoryTest(unittest.TestCase):
         self.assertEqual(self.openhands.writes, [])
         self.assertFalse(self.runtime_dir.exists())
 
-    def test_a_fresh_run_verifies_four_ids_eight_routes_and_publishes_ready(self):
+    def test_a_fresh_run_verifies_five_ids_ten_routes_and_publishes_ready(self):
         report = self.run_factory()
         runtime = self.runtime()
         document = json.loads(runtime.read_text())
         env = document["env"]
         roles = self.openhands.agents
-        self.assertEqual(report.profiles, 4)
-        self.assertEqual(report.routes, 8)
+        self.assertEqual(report.profiles, 5)
+        self.assertEqual(report.routes, 10)
         self.assertTrue(document["ready"])
         self.assertEqual(set(json.loads(env["LABEL_ROUTES"])), ROUTE_KEYS)
-        self.assertEqual(len({json.loads(env["LABEL_ROUTES"])[label]["profile"] for label in ROUTE_KEYS}), 4)
+        self.assertEqual(len({json.loads(env["LABEL_ROUTES"])[label]["profile"] for label in ROUTE_KEYS}), 5)
         self.assertEqual({role: roles[role]["id"] for role in factory.ROUTE_ROLES},
                          {role: json.loads(env["LABEL_ROUTES"])[LABEL]["profile"]
                           for role, LABEL in (("planner", "ai:plan"), ("worker", "ai:ready"),
-                                              ("worker-strong", "ai:escalate"), ("reviewer", "ai:review"))})
+                                              ("worker-strong", "ai:escalate"), ("reviewer", "ai:review"),
+                                              ("sensitive-reviewer", "sensitive:review"))})
         self.assertEqual(stat.S_IMODE(runtime.stat().st_mode), 0o600)
         self.assertEqual(env["FORGEJO_TOKEN"], self.state.get(factory.SECTION, factory.TOKEN_KEY))
         self.assertNotEqual(env["FORGEJO_TOKEN"], OPERATOR_TOKEN)
@@ -373,6 +385,36 @@ class FactoryTest(unittest.TestCase):
         self.assertIn(AGENT, summary)
         for secret in (BACKEND_KEY, GATEWAY_KEY, WEBHOOK_SECRET, OPERATOR_TOKEN, env["FORGEJO_TOKEN"]):
             self.assertNotIn(secret, summary)
+
+    def test_routes_publishes_the_full_table_with_a_worker_free_id(self):
+        routes = json.loads(factory._routes(ROUTE_IDS))
+        self.assertEqual(set(routes), FREE_ROUTE_KEYS)
+        targets = {route[key] for route in routes.values() for key in ("fallback_to", "escalate_to")
+                   if key in route}
+        self.assertTrue(targets)
+        self.assertEqual(targets - set(routes), set())
+        self.assertEqual(routes["sensitive:review"],
+                         {"profile": ROUTE_IDS["sensitive-reviewer"], "tier": "smart", "max_iterations": 60,
+                          "on": "sensitive_review"})
+        self.assertEqual(routes["pr:conflict"],
+                         {"profile": ROUTE_IDS["worker-strong"], "tier": "smart", "max_iterations": 120,
+                          "on": "conflict"})
+
+    def test_routes_without_a_worker_free_id_keep_no_fallback(self):
+        ids = {name: profile_id for name, profile_id in ROUTE_IDS.items() if name != "worker-free"}
+        routes = json.loads(factory._routes(ids))
+        self.assertEqual(set(routes), ROUTE_KEYS)
+        self.assertEqual([label for label, route in routes.items() if "fallback_to" in route], [])
+
+    def test_a_free_model_publishes_the_fallback_routes_and_matching_counts(self):
+        report = self.run_factory(env={**self.env, "FORGEHANDS_FREE_MODEL": FREE_MODEL})
+        routes = json.loads(json.loads(self.runtime().read_text())["env"]["LABEL_ROUTES"])
+        self.assertEqual((report.profiles, report.routes), (6, 13))
+        self.assertEqual(set(routes), FREE_ROUTE_KEYS)
+        for label, route in routes.items():
+            for key in ("fallback_to", "escalate_to"):
+                if key in route:
+                    self.assertIn(route[key], routes, f"{label}: {key}")
 
     def test_a_second_run_writes_nothing_and_keeps_the_runtime_bytes_and_mtime(self):
         self.run_factory()

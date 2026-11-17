@@ -40,19 +40,7 @@ cd "$repo"
 # pytest-xdist runs the tests in parallel; it is installed here, in the temporary venv, not in the seed.
 step "python $(python3 --version | cut -d' ' -f2) and the dependencies"
 python3 -m venv "$work/venv"
-# pip retries a refused connection, not a download that stalls mid-body; a second install starts from the wheels it has.
-for attempt in 1 2; do
-  if "$work/venv/bin/pip" install -q --retries "${PIP_RETRIES:-5}" --timeout "${PIP_TIMEOUT:-30}" \
-    -e 'infra/ingress-controller[test]' pytest-xdist; then
-    break
-  fi
-  if [ "$attempt" -eq 2 ]; then
-    echo "pip install failed after $attempt attempts" >&2
-    exit 1
-  fi
-  echo "pip install failed (attempt $attempt), retrying" >&2
-  sleep 5
-done
+"$work/venv/bin/pip" install -q --retries "${PIP_RETRIES:-5}" --timeout "${PIP_TIMEOUT:-30}" -e 'infra/ingress-controller[test]' pytest-xdist
 py=$work/venv/bin/python
 
 step "placeholders"

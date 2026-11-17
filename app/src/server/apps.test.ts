@@ -70,6 +70,35 @@ describe("new-app arguments", () => {
     expect(args).not.toContain("--domain");
   });
 
+  it("maps public exposure to flags after the routing flags", () => {
+    const args = newAppArgs(
+      parse({
+        appId: "hooks",
+        server: "aws",
+        image: "x:1",
+        containerPort: 80,
+        public: { paths: ["/hook/abc", "/files/*"], methods: ["POST"], cidrs: ["203.0.113.0/24", "2001:db8::/32"], presets: ["github-hooks"] },
+      }),
+    );
+    expect(args.slice(args.indexOf("--public-path"))).toEqual([
+      "--public-path",
+      "/hook/abc",
+      "--public-path",
+      "/files/*",
+      "--public-method",
+      "POST",
+      "--public-cidr",
+      "203.0.113.0/24",
+      "--public-cidr",
+      "2001:db8::/32",
+      "--public-preset",
+      "github-hooks",
+    ]);
+    expect(args.indexOf("--no-websockets")).toBeLessThan(args.indexOf("--public-path"));
+    expect(newAppArgs(parse({ appId: "worker", server: "aws", image: "x:1", containerPort: 80 })).filter((a) => a.startsWith("--public"))).toEqual([]);
+    expect(newAppArgs(parse({ appId: "worker", server: "aws", publicFullHost: true, confirmPublicFullHost: true })).at(-1)).toBe("--public-full-host");
+  });
+
   it("the copy-paste command adds --yes and quotes what needs it", () => {
     expect(shellCommand(["new-app", "--app-id", "a b"])).toBe("./homelab.py new-app --app-id 'a b' --yes");
   });
@@ -83,8 +112,49 @@ describe("input validation", () => {
     [{ appId: "ok-id", server: "aws", secretVars: ["A B"] }],
     [{ appId: "ok-id", server: "aws", containerPort: 70000 }],
     [{ appId: "ok-id", server: "aws", mount: "data" }],
+    [{ appId: "ok-id", server: "aws", routing: false, public: { paths: ["/hook"] } }],
+    [{ appId: "ok-id", server: "aws", routing: false, publicFullHost: true }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/hook"] }, publicFullHost: true }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/hook"], methods: ["TRACE"] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/hook"], presets: ["gitlab-hooks"] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/hook"], cidrs: ["203.0.113.0/33"] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/hook"], cidrs: ["2001:db8::/129"] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/hook"], cidrs: ["203.0.113.1"] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/hook"], cidrs: ["/24"] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/hook"], cidrs: ["203.0.113.0/024"] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["hook"] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/ho*ok"] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: [] } }],
+    [{ appId: "ok-id", server: "aws", public: { paths: ["/hook"], extra: true } }],
+    [{ appId: "ok-id", server: "aws", publicFullHost: false }],
   ])("rejects %j", (input) => {
     expect(planInput.safeParse(input).success).toBe(false);
+  });
+
+  it.each([[["/"]], [["/*"]], [["/hook", "/"]], [["/hook", "/*"]]])("refuses %j as public paths", (paths) => {
+    const result = planInput.safeParse({ appId: "ok-id", server: "aws", public: { paths } });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain("'/' would expose the whole host; list the paths to expose");
+  });
+
+  it("accepts paths, every allowed method, CIDRs and presets the tool knows", () => {
+    const methods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;
+    const parsed = parse({
+      appId: "ok-id",
+      server: "aws",
+      public: {
+        paths: ["/hook/abc", "/files/*"],
+        methods: [...methods],
+        cidrs: ["203.0.113.0/24", "2001:db8::/32", "10.0.0.1/32"],
+        presets: ["github-hooks"],
+      },
+    });
+    expect(parsed.public).toEqual({
+      paths: ["/hook/abc", "/files/*"],
+      methods: [...methods],
+      cidrs: ["203.0.113.0/24", "2001:db8::/32", "10.0.0.1/32"],
+      presets: ["github-hooks"],
+    });
   });
 });
 

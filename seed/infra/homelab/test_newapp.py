@@ -90,6 +90,8 @@ def ingressctl_repo(tmp_path, monkeypatch):
         "npm_instances:\n  main: {server: proxy-1, api_url: 'http://npm.test/api', tls_address: 10.0.0.30, tls_port: 443}\n"
         "issuers:\n  homelab-private-ca: {type: infisical, api_url: 'http://infisical.test', project_id: p, profile_id: f, application_id: a,\n"
         "    max_validity_days: 90, ca_bundle: ca.pem, allowed_domains: ['*.lab.example']}\n"
+        "  letsencrypt: {type: letsencrypt, email: ingressctl@lab.example, allowed_domains: ['*.pub.example'],\n"
+        "    dns_challenge: false, dns_provider: null, propagation_seconds: null}\n"
         "controller: {default_npm_instance: main, allowed_repos: [owner/infrastructure]}\n")
     monkeypatch.setattr(newapp, "ROOT", tmp_path)
     monkeypatch.setattr(newapp.ops, "ROOT", tmp_path)
@@ -127,10 +129,15 @@ def test_public_paths_land_on_the_app_service_and_ingressctl_accepts_them(ingres
     app = _app(public=public, routes=[{"service": "openhands", "domain": "openhands.lab.example", "port": 8000,
                                        "websockets": True, "health_path": "/health", "statuses": [200]}])
     newapp.write_files(app)
-    doc = yaml.safe_load((ingressctl_repo / "stacks/demo/ingress.yaml").read_text())
+    path = ingressctl_repo / "stacks/demo/ingress.yaml"
+    doc = yaml.safe_load(path.read_text())
     assert doc["services"][0]["proxy"]["public"] == public
     assert "public" not in doc["services"][1]["proxy"]
-    specs = parse_manifest(ingressctl_repo, ingressctl_repo / "stacks/demo/ingress.yaml", load_inventory(ingressctl_repo))
+    # proxy.public needs a Let's Encrypt issuer; the wizard writes the homelab CA for the private hosts.
+    doc["services"][0]["proxy"]["domains"] = ["demo.pub.example"]
+    doc["services"][0]["certificate"] = {"issuer_ref": "letsencrypt", "renew_before_days": 30}
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    specs = parse_manifest(ingressctl_repo, path, load_inventory(ingressctl_repo))
     assert [s.public for s in specs] == [specs[0].public, None]
     assert specs[0].public.paths == ("/hook/abc",)
     assert specs[0].public.methods == ("POST",)

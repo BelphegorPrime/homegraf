@@ -10,6 +10,7 @@ import type {
   PendingRemoval,
   RemovableApp,
   RepoInfo,
+  RepoProfileInfo,
   RootCaInfo,
   SsoSession,
   StatusSnapshot,
@@ -116,6 +117,9 @@ export const useHosts = () => useQuery({ queryKey: ["hosts"], queryFn: () => get
 /** The owner's repositories with their factory status (an error while Forgejo or its settings are not usable). */
 export const useRepos = () =>
   useQuery({ queryKey: ["repos"], queryFn: () => getJson<{ repos: RepoInfo[] }>("/api/repos"), retry: false, refetchInterval: 60_000 });
+
+/** The profiles a new repository can start with (an error while the repository tool or its settings are not usable). */
+export const useRepoProfiles = () => useQuery({ queryKey: ["repo-profiles"], queryFn: () => getJson<RepoProfileInfo[]>("/api/repo-profiles"), retry: false });
 
 /** POST as `user`; resolves with the job to follow, or throws the server's message. */
 export async function startJob(path: string, body: unknown, session: Session): Promise<string> {

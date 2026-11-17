@@ -49,6 +49,7 @@ x-factory-env: &factory-env
       FORGEHANDS_FORGEJO_WEBHOOK_SECRET: ${FORGEHANDS_FORGEJO_WEBHOOK_SECRET:-}
       FORGEHANDS_AGENT_LOGIN: ${FORGEHANDS_AGENT_LOGIN:-homegraf-agent}
       FORGEHANDS_HUMAN_LOGIN: ${FORGEHANDS_HUMAN_LOGIN:-}
+      FORGEJO_MAILER_ENABLED: ${FORGEJO_MAILER_ENABLED:-}
       FORGEHANDS_ALLOWED_REPOS: ${FORGEHANDS_ALLOWED_REPOS:-}
       FORGEHANDS_ALLOWED_SENDERS: ${FORGEHANDS_ALLOWED_SENDERS:-}
       FORGEHANDS_AGENT_SECRETS: ${FORGEHANDS_AGENT_SECRETS:-}
@@ -153,6 +154,13 @@ services:
       FORGEJO__service__DISABLE_REGISTRATION: "true"
       # The webhook to Komodo (push -> update-all) goes to a container in the same network, which Forgejo refuses by default.
       FORGEJO__webhook__ALLOWED_HOST_LIST: private
+      FORGEJO__mailer__ENABLED: ${FORGEJO_MAILER_ENABLED:-false}
+      FORGEJO__mailer__PROTOCOL: ${FORGEJO_MAILER_PROTOCOL:-}
+      FORGEJO__mailer__SMTP_ADDR: ${FORGEJO_MAILER_SMTP_ADDR:-}
+      FORGEJO__mailer__SMTP_PORT: ${FORGEJO_MAILER_SMTP_PORT:-}
+      FORGEJO__mailer__USER: ${FORGEJO_MAILER_USER:-}
+      FORGEJO__mailer__PASSWD: ${FORGEJO_MAILER_PASSWD:-}
+      FORGEJO__mailer__FROM: ${FORGEJO_MAILER_FROM:-}
     volumes:
       - forgejo-data:/data
     ports:

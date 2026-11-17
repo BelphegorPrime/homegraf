@@ -8,6 +8,10 @@
   "configMigration": true,
   "timezone": "Europe/Berlin",
   "schedule": ["before 6am on monday"],
+  "vulnerabilityAlerts": {
+    "schedule": ["at any time"],
+    "labels": ["renovate", "security"]
+  },
   "automerge": false,
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
@@ -21,6 +25,12 @@
       "description": "Major updates are never grouped",
       "matchUpdateTypes": ["major"],
       "groupName": null
+    },
+    {
+      "description": "Database major updates need the migration procedure",
+      "matchUpdateTypes": ["major"],
+      "matchPackageNames": ["/(^|/)(postgres|postgresql|mariadb|mysql|mongo|mongodb|redis|valkey)$/"],
+      "addLabels": ["db-major"]
     }
   ]
 }

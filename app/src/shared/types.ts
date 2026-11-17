@@ -354,6 +354,8 @@ export interface RepoInfo {
   default_branch: string;
   /** Forgejo's `updated_at`. */
   updated: string;
+  /** Forgejo's `html_url` of the repository; empty when Forgejo gave none or not an http(s) address. */
+  url: string;
   factory: RepoFactoryStatus;
 }
 

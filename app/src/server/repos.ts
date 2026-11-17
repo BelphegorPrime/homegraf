@@ -226,6 +226,7 @@ export function repoLister(settings: RepoSettings, f: typeof fetch = fetch) {
           private: r.private === true,
           default_branch: typeof r.default_branch === "string" ? r.default_branch : "",
           updated: typeof r.updated_at === "string" ? r.updated_at : "",
+          url: typeof r.html_url === "string" && (r.html_url.startsWith("http://") || r.html_url.startsWith("https://")) ? r.html_url : "",
           factory: { webhook, labels: labelStatus, agentAccess: access, allowed: allowed(name) },
         };
       }),

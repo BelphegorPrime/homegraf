@@ -30,6 +30,8 @@ interface RepoState {
   private?: boolean;
   default_branch?: string;
   updated_at?: string;
+  /** `null` leaves `html_url` out of the answer; anything else overrides the default. */
+  html_url?: string | null;
   labels?: Answer;
   hooks?: Answer;
   permission?: Answer;
@@ -111,6 +113,7 @@ async function forgejo(initial: Partial<ForgejoState> = {}) {
         private: r.private ?? true,
         default_branch: r.default_branch ?? "main",
         updated_at: r.updated_at ?? "2026-01-01T00:00:00Z",
+        ...(r.html_url === null ? {} : { html_url: r.html_url ?? `http://forgejo.lab.example/${state.owner}/${r.name}` }),
       }));
       return send({ status: 200, body: items });
     }
@@ -268,6 +271,7 @@ describe("listing repositories with the factory status", () => {
           private: true,
           default_branch: "main",
           updated: "2026-01-01T00:00:00Z",
+          url: "http://forgejo.lab.example/owner/wired",
           factory: { webhook: true, labels: true, agentAccess: true, allowed: true },
         },
         {
@@ -275,6 +279,7 @@ describe("listing repositories with the factory status", () => {
           private: true,
           default_branch: "main",
           updated: "2026-01-01T00:00:00Z",
+          url: "http://forgejo.lab.example/owner/bare",
           factory: { webhook: false, labels: false, agentAccess: false, allowed: false },
         },
         {
@@ -282,6 +287,7 @@ describe("listing repositories with the factory status", () => {
           private: true,
           default_branch: "main",
           updated: "2026-01-01T00:00:00Z",
+          url: "http://forgejo.lab.example/owner/hidden",
           factory: { webhook: "unknown", labels: "unknown", agentAccess: "unknown", allowed: false },
         },
       ],
@@ -290,6 +296,21 @@ describe("listing repositories with the factory status", () => {
     expect(f.requests.length).toBeGreaterThan(0);
     expect(f.requests.every((r) => r.authorization === `token ${TOKEN}`)).toBe(true);
     for (const r of f.requests) expect(r.path).not.toContain(TOKEN);
+  });
+
+  it("gives a repository its html_url only when it is an http(s) address", async () => {
+    const f = await forgejo({
+      repos: [
+        { name: "scripted", html_url: "javascript:alert(1)" },
+        { name: "plain", html_url: null },
+      ],
+    });
+    const app = await build({ settings: f.settings() });
+    const body = (await (await app.request("/api/repos")).json()) as { repos: { name: string; url: string }[] };
+    expect(body.repos).toMatchObject([
+      { name: "scripted", url: "" },
+      { name: "plain", url: "" },
+    ]);
   });
 
   it("needs every factory label, one at a time", async () => {

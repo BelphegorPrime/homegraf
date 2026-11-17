@@ -135,9 +135,12 @@ describe("finishing a removal", () => {
   });
 
   it("waits for the merge", async () => {
+    // The finish endpoint reads the pull state on every request, so one removal covers all three states.
+    const pulls: Record<string, "open" | "merged" | "closed" | "unknown"> = { [PR]: "open" };
+    const { post, calls } = await started(pulls);
+    const before = calls.length;
     for (const state of ["open", "closed", "unknown"] as const) {
-      const { post, calls } = await started({ [PR]: state });
-      const before = calls.length;
+      pulls[PR] = state;
       const res = await post("/api/apps/remove/finish", { appId: "demo" }, alice);
       expect(res.status).toBe(409);
       expect(calls).toHaveLength(before);

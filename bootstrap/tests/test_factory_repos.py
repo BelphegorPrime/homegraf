@@ -273,6 +273,27 @@ class RepositoryReconcilerTests(unittest.TestCase):
         self.assertEqual(hooks[0]["events"], list(EXPANDED_EVENTS))
         self.assertEqual(hooks[0]["events"].count("push"), 1)
 
+    def test_a_hook_with_the_five_old_events_is_replaced_by_one_with_pull_request(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.reconciler().run()
+        hook = next(h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT)
+        old_id = hook["id"]
+        hook["events"] = ["issues", "pull_request_label", "action_run_failure", "action_run_success", "push"]
+        self.srv.requests.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.reconciler().run()
+        self.assertIn(("DELETE", f"/api/v1/repos/{REPO}/hooks/{old_id}"), self.writes())
+        hooks = [h for h in self.fake.hooks[REPO] if h["config"]["url"] == ENDPOINT]
+        self.assertEqual(len(hooks), 1)
+        self.assertNotEqual(hooks[0]["id"], old_id)
+        self.assertIn("pull_request", hooks[0]["events"])
+        self.assertEqual(hooks[0]["events"], list(EXPANDED_EVENTS))
+        self.assertEqual(self.fake._view_hook(hooks[0])["events"], list(EXPANDED_EVENTS))
+        self.srv.requests.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.reconciler().run()
+        self.assertEqual(self.writes(), [])
+
     def test_pagination_finds_every_label_and_hook(self):
         for i in range(5):
             self.fake.labels[REPO].append({"id": 200 + i, "name": f"keep-{i}", "color": "cccccc", "description": ""})

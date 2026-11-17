@@ -171,7 +171,7 @@ and the rewrite `*.<domain> -> <host address>`. Pitfalls:
 | `infisical` + `infisical-db` + `infisical-redis` | secrets of the stacks, later the certificate authority | 8079 | set up by the bootstrap |
 | `proxy` (Nginx Proxy Manager) | `http://<name>.<domain>` to the containers | 80, 443, admin 81 | set up by the bootstrap |
 | `openhands` (Agent Canvas), **only with the profile `agents`** | Canvas, Agent Server and Automation Server in one image; runs an agent on an issue | 8000 (`PORT_OPENHANDS`) | `LOCAL_BACKEND_API_KEY` from `.env`; data in the volume `openhands-data`; the model provider key is entered in Canvas, not in `.env` (see *Agents: from an issue to a draft pull request*) |
-| `forgehands`, **only with the profile `agents`** | a Forgejo webhook becomes a signed call to OpenHands' automation webhook; with `FORGEHANDS_OPENHANDS_API_URL` and `LABEL_ROUTES` (profile ids) a Forgejo label starts the matching agent profile instead | 8080 (`PORT_FORGEHANDS`) | webhook mode by default; direct mode is opt-in, pinned `v0.2.5`; state (ledger, deliveries) in the volume `forgehands-data`, runs in `forgehands-workspace` |
+| `forgehands`, **only with the profile `agents`** | a Forgejo webhook becomes a signed call to OpenHands' automation webhook; with `FORGEHANDS_OPENHANDS_API_URL` and `LABEL_ROUTES` (profile ids) a Forgejo label starts the matching agent profile instead | 8080 (`PORT_FORGEHANDS`) | webhook mode by default; direct mode is opt-in, pinned `v0.4.2`; state (ledger, deliveries) in the volume `forgehands-data`, runs in `forgehands-workspace` |
 | `technitium` (Technitium DNS Server), **only with `DNS_MODE=technitium`** | answers for the domain: the wildcard to this host; an API token for the tools | 53 on the LAN address, console 8053 (user `admin`, not the e-mail address) | the profile `technitium`; set up by the bootstrap |
 | `dns` (AdGuard Home), **only with `DNS_MODE=adguard`** | answers for the domain: the wildcard to this host | 53 on the LAN address, setup 3300, admin 8053 | the profile `dns`; set up by the bootstrap |
 | `bootstrap` | one-shot: configures the services against each other | | image `ghcr.io/belphegorprime/homegraf-bootstrap`; keeps its state in the volume `bootstrap-state` |
@@ -185,7 +185,7 @@ Off by default. `setup.sh` asks (or `OPTIONAL_SERVICES="renovate backup status" 
 | Profile | What | Notes |
 | --- | --- | --- |
 | `status` | Uptime Kuma at `status.<domain>` | the bootstrap adds the proxy host and ingressctl gives it a certificate; the first visit asks for a Kuma account |
-| `agents` | `openhands` (Agent Canvas) and `forgehands`: label an issue `ai:ready` in an allowed repository and the agent works on it; with direct mode (opt-in) any of `ai:plan`, `ai:ready`, `ai:escalate`, `ai:review` starts its agent profile with its limits | `setup.sh` writes the secrets and `FORGEHANDS_ALLOWED_REPOS`, and the bootstrap proxies `openhands.<domain>`. **The rest is manual**: add the model provider key, create the four agent profiles and the webhooks (see *Agents: from an issue to a draft pull request*). Both containers have a healthcheck |
+| `agents` | `openhands` (Agent Canvas) and `forgehands`: label an issue `ai:ready` in an allowed repository and the agent works on it; with direct mode (opt-in) any of `ai:plan`, `ai:ready`, `ai:escalate`, `ai:review` starts its agent profile with its limits | `setup.sh` writes the secrets and `FORGEHANDS_ALLOWED_REPOS`, and the bootstrap proxies `openhands.<domain>`. **The rest is manual**: add the model provider key, create the agent profiles and the webhooks (see *Agents: from an issue to a draft pull request*). Both containers have a healthcheck |
 
 | `backup` | a dump of Forgejo's and Infisical's PostgreSQL and Komodo's MongoDB once a day, seven days kept, in `data/backups` | `BACKUP_INTERVAL` (seconds) and `BACKUP_KEEP_DAYS`; **on this host**, copy them elsewhere; `scripts/restore.sh` puts them back (see Restoring from the backups). Not in the dumps: the volumes with files (the repositories' git data, Komodo's keys, the proxy's data) |
 | `runner` | a Forgejo Actions runner, label `docker` | jobs run in a Docker daemon of their own (`runner-dind`, docker-in-docker: **privileged**, but a job cannot reach this host's Docker socket); the runner registers with a secret in `.env` (`RUNNER_SECRET`), no token to copy |
@@ -217,22 +217,22 @@ from the ids; the commented lines in `.env` show the shape) are:
 
 | Label | Agent profile | Tier | `max_iterations` |
 | --- | --- | --- | --- |
-| `ai:plan` | `planner` | `planner` | 80 |
-| `ai:ready` | `worker` | `worker` | 120 |
-| `ai:escalate` | `worker-strong` | `worker-strong` | 120 |
-| `ai:review` | `reviewer` | `reviewer` | 60 |
+| `ai:plan` | `planner` | `smart` | 80 |
+| `ai:ready` | `worker` | `cheap` | 120 |
+| `ai:escalate` | `worker-strong` | `smart` | 120 |
+| `ai:review` | `reviewer` | `smart` | 60 |
 
 The profile column names the profile; the route carries its id. A route may also set `max_budget` (per run) and `max_concurrent` (that
 tier). `hgboot.agents.label_routes()` refuses a profile without an id, but no bootstrap step calls it yet: the agents step does not create
-the profiles. The profiles are the tiers of the agents stack: `planner`, `worker`, `worker-strong` and `reviewer`, with a strong and a
-cheap LLM profile; create them in Canvas before labelling.
+the profiles. The table above is the shape the commented lines in `.env` show; `hgboot.agents.ROUTES` lists the routes the bootstrap writes
+once it has the profile ids, and [agents.md](agents.md#limits) describes them: the `free` fallback routes, the escalation of the last round,
+the conflict round and the security review. Create the profiles in Canvas before labelling.
 
-Label semantics (ForgeHands 0.2.5 and newer; the stack pins `v0.2.5`):
+Label semantics (ForgeHands 0.4.2; the stack pins `v0.4.2`):
 
 - Forgejo reports a label added to an existing issue as an `issues` event with action `label_updated` and the *current* labels, not the
   added one. ForgeHands remembers the labels last seen per issue and starts a run for a trigger label that is **new**. So `ai:escalate`
   next to `ai:ready` starts the stronger worker, removing and re-adding a label runs the issue again, and an unrelated label does nothing.
-  Older versions started nothing for a label added to an existing issue.
 - The ledger `jobs.json` (`repo#issue:label` -> conversation, queue, hourly count, timeout, retries) is in `forgehands-data`; a label on
   an issue with an active run starts no second run. Run one label twice: one run.
 
@@ -251,7 +251,9 @@ Label semantics (ForgeHands 0.2.5 and newer; the stack pins `v0.2.5`):
 | `FORGEHANDS_MAX_CONCURRENT` | 4 | queue of the whole stack |
 | `FORGEHANDS_MAX_RUNS_PER_HOUR` | 30 | hourly cap |
 | `FORGEHANDS_MAX_RUN_MINUTES` | 120 | a run that takes longer is stopped |
-| `TIER_WEEKLY_BUDGETS` | unset | optional cost cap per tier; it only works when the LLM gateway reports a price, so leave it unset otherwise |
+
+Cost is steered in the LLM gateway (model choice, budgets, keys) and by `FORGEHANDS_MAX_RUNS_PER_HOUR`; a route can add `max_budget` for one
+run. ForgeHands only knows a price when the gateway reports one; [agents.md](agents.md#limits) has the limits.
 
 `WORKSPACE_DIR` (`/workspace`, volume `forgehands-workspace`) and `JOBS_FILE` (`/app/data/jobs.json`) are fixed in the compose file; the
 ForgeHands container stays read-only and drops every capability. A started conversation is marked untrusted: the issue text goes into
@@ -271,7 +273,7 @@ Automatic (from `setup.sh` and Compose):
 Manual, once:
 
 1. Start only the agent runtime: `docker compose up -d openhands`. Open Canvas at `http://<host>:${PORT_OPENHANDS}` and add a model provider
-   key there (it stays in the `openhands-data` volume, not in `.env`). Create the LLM profiles (strong, cheap) and the four agent profiles
+   key there (it stays in the `openhands-data` volume, not in `.env`). Create the LLM profiles (strong, cheap) and the agent profiles
    of the table. Unset or empty `OPENHANDS_LOCAL_BACKEND_API_KEY` leaves Canvas open to anyone who can reach the port: keep the port on the
    LAN or put it behind the proxy.
 2. In Forgejo, `Settings -> Webhooks -> Add webhook -> Forgejo` in each repository the agents work in: target

@@ -7,11 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CredentialFields, useCredentials } from "./Credentials";
-import { authHeaders, rememberUser } from "./api";
+import { authHeaders, rememberUser, signedIn, useAuth } from "./api";
 import { mergeFormChange } from "./composeMerge";
 import { CreationProgress } from "./CreationProgress";
+import { PUBLIC_METHODS, SOURCE_PRESETS, parsePaths, pathProblem, toPublicInput, type PublicMethod, type SourcePreset } from "./publicExposure";
 import { TemplatePicker } from "./TemplatePicker";
 import { unchosenPaths } from "./templates";
+import type { Me } from "./Users";
 import {
   EnvEditor,
   envObject,
@@ -58,6 +60,13 @@ export function NewApp({ graph }: { graph: Graph }) {
     forceHttps: true,
     healthPath: "",
     statuses: "",
+    publicOn: false,
+    publicPaths: "",
+    publicMethods: ["GET", "HEAD"] as PublicMethod[],
+    publicSource: "any" as SourcePreset,
+    publicCidrs: "",
+    publicFullHost: false,
+    confirmPublicFullHost: false,
   });
   const [addons, setAddons] = useState<string[]>([]);
   const [volumes, setVolumes] = useState<VolumeRow[]>([]);
@@ -104,6 +113,18 @@ export function NewApp({ graph }: { graph: Graph }) {
   const blocks = useQuery({ queryKey: ["addons"], queryFn: () => fetch("/api/addons").then((r) => (r.ok ? r.json() : []) as Promise<AddonInfo[]>) });
   const client = useQueryClient();
   const cred = useCredentials();
+  const auth = useAuth();
+  // A fully public host is only offered to those who may expose one; the server checks it again.
+  const me = useQuery({
+    queryKey: ["me", auth.session?.name],
+    enabled: !!auth.session,
+    retry: false,
+    queryFn: () => {
+      if (!auth.session) throw new Error("not signed in");
+      return signedIn<Me>(auth.session, "GET", "/api/me");
+    },
+  });
+  const canExpose = me.data?.permissions.includes("hosts:expose") ?? false;
   const [job, setJob] = useState<{ log: string; done?: JobSnapshot } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const source = useRef<EventSource | null>(null);
@@ -135,11 +156,25 @@ export function NewApp({ graph }: { graph: Graph }) {
     env: envObject(env),
   };
   const webHost = ports.some((p) => String(p.host) === webPort) ? Number(webPort) : ports[0]?.host;
+  const publicPaths = parsePaths(f.publicPaths);
+  const publicProblem = f.publicOn ? pathProblem(publicPaths) : undefined;
+  // An empty method list would expose every method: the form sends only a list with at least one.
+  const publicReady = !f.publicOn || (publicProblem === undefined && f.publicMethods.length > 0);
+  const fullHostReady = !f.publicFullHost || (canExpose && f.confirmPublicFullHost);
+  const publicOk = publicReady && fullHostReady;
+  const togglePublicMethod = (m: PublicMethod) =>
+    setF((p) => ({ ...p, publicMethods: p.publicMethods.includes(m) ? p.publicMethods.filter((x) => x !== m) : [...p.publicMethods, m] }));
   // compose: undefined = the file as shown (what gets created), null = none (let the tool generate it from the form).
   const payload = (withSecrets = false, compose_: string | null | undefined = undefined) => ({
     appId: f.appId,
     server: f.server,
     routing: f.routing,
+    public:
+      f.routing && f.publicOn && publicReady
+        ? toPublicInput({ paths: f.publicPaths, methods: f.publicMethods, source: f.publicSource, cidrs: f.publicCidrs })
+        : undefined,
+    publicFullHost: f.routing && canExpose && f.publicFullHost ? true : undefined,
+    confirmPublicFullHost: f.routing && canExpose && f.publicFullHost ? f.confirmPublicFullHost : undefined,
     // The container fields only matter while the tool generates the file from them.
     ...(existing
       ? {}
@@ -646,8 +681,84 @@ export function NewApp({ graph }: { graph: Graph }) {
             </div>
           )}
 
+          {f.routing && (
+            <div className="checks">
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={f.publicOn}
+                  disabled={f.publicFullHost}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setF((p) => ({ ...p, publicOn: on, ...(on ? { publicFullHost: false, confirmPublicFullHost: false } : {}) }));
+                  }}
+                />{" "}
+                Expose publicly (selected paths only)
+              </label>
+              {canExpose && (
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={f.publicFullHost}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setF((p) => ({ ...p, publicFullHost: on, ...(on ? { publicOn: false } : { confirmPublicFullHost: false }) }));
+                    }}
+                  />{" "}
+                  Make the whole host public (no path restriction)
+                </label>
+              )}
+            </div>
+          )}
+          {f.routing && f.publicOn && (
+            <div className="public">
+              <label className="field">
+                <span>Public paths</span>
+                <Textarea
+                  value={f.publicPaths}
+                  placeholder="/hook/abc, /files/*"
+                  aria-invalid={!!publicProblem}
+                  onChange={(e) => set("publicPaths", e.target.value)}
+                />
+                <small className={publicProblem ? "error" : "muted"}>{publicProblem ?? "one path per line or separated by commas"}</small>
+              </label>
+              <div className="checks" role="group" aria-label="Methods">
+                {PUBLIC_METHODS.map((m) => (
+                  <label key={m} className="check">
+                    <input type="checkbox" checked={f.publicMethods.includes(m)} onChange={() => togglePublicMethod(m)} /> {m}
+                  </label>
+                ))}
+              </div>
+              {f.publicMethods.length === 0 && <small className="error">choose at least one method</small>}
+              <label className="field">
+                <span>Source</span>
+                <Select
+                  value={f.publicSource}
+                  onValueChange={(v) => set("publicSource", v as SourcePreset)}
+                  options={SOURCE_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
+                />
+              </label>
+              {f.publicSource === "custom" && (
+                <label className="field">
+                  <span>Networks</span>
+                  <Textarea value={f.publicCidrs} placeholder="203.0.113.0/24" onChange={(e) => set("publicCidrs", e.target.value)} />
+                  <small className="muted">IPv4 or IPv6 networks, one per line or separated by commas</small>
+                </label>
+              )}
+              <p className="warning">Only these paths are reachable from the internet; the app's UI is not exposed.</p>
+            </div>
+          )}
+          {f.routing && canExpose && f.publicFullHost && (
+            <div className="checks">
+              <label className="check">
+                <input type="checkbox" checked={f.confirmPublicFullHost} onChange={(e) => set("confirmPublicFullHost", e.target.checked)} /> I understand that
+                the whole app, including its login page, is reachable from the internet
+              </label>
+            </div>
+          )}
+
           <div className="actions">
-            <Button type="submit" disabled={busy || !f.appId || !f.server}>
+            <Button type="submit" disabled={busy || !f.appId || !f.server || !publicOk}>
               {busy ? "Planning…" : "Show plan"}
             </Button>
             <span className="muted">A dry run: nothing is created, changed or pushed.</span>
@@ -795,7 +906,7 @@ export function NewApp({ graph }: { graph: Graph }) {
                   </p>
                   <div className="actions">
                     <CredentialFields c={cred} className="contents" />
-                    <Button type="submit" disabled={!cred.ready || (!!job && !job.done)}>
+                    <Button type="submit" disabled={!cred.ready || (!!job && !job.done) || !publicOk}>
                       Create pull request
                     </Button>
                   </div>

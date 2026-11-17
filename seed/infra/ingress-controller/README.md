@@ -64,15 +64,53 @@ proxy:
     allow_cidrs: [203.0.113.0/24, 2001:db8:1::/48]
 ```
 
-`paths` is required; `methods` and `allow_cidrs` have defaults. `validate` rejects unknown fields. `allow_cidrs` also accepts `{preset: github-hooks}`; the manifest parses it, but `plan` and `apply` do not resolve presets yet (#20).
+`paths` is required; `methods` and `allow_cidrs` have defaults. `validate` rejects unknown fields. `allow_cidrs` holds networks and/or preset references; a single `{preset: <name>}` is accepted too and means a one-entry list:
+
+```yaml
+allow_cidrs: [{preset: github-hooks}, 203.0.113.0/24]
+```
 
 | Field | Meaning |
 | --- | --- |
 | `paths` | Required, non-empty. An entry is an exact path unless it ends in `/*`, which makes it a prefix: `/hook/abc` does not match `/hook/abcd`; `/files/*` matches `/files/`, `/files/x` and `/files/x/y`, but not `/files`. Case-sensitive; the query string is not part of the path. Rejected: `/`, `/*`, `//`, a `.` or `..` segment, a `*` that is not a trailing `/*`, characters outside `A-Za-z0-9._~-/` (so no space, `%`, `;`, `{`, `}`, quote, `$`, `#`), more than 200 characters. |
 | `methods` | Methods allowed on every listed path, default `GET`, `HEAD`, case-insensitive. One of `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`; an empty list is rejected. There are no per-path methods. |
-| `allow_cidrs` | Optional IPv4/IPv6 networks, strict (`10.0.0.0/8`, not `10.1.2.3/8`). When set, every source outside the list is denied. |
+| `allow_cidrs` | Optional IPv4/IPv6 networks and/or `{preset: <name>}` entries. Networks are strict (`10.0.0.0/8`, not `10.1.2.3/8`); a preset name has to be one of the [source-IP presets](#source-ip-presets). When set, every source outside the resolved list is denied. |
 
 The block becomes the host's NPM advanced config. NPM inserts advanced config at server level, in front of its own `location /`; ingressctl writes no `location`, writes only server-level directives, and starts the block with `# managed by ingressctl: public paths only`.
+
+### Source-IP presets
+
+`allow_cidrs` can reference a sender's published ranges by name instead of copying them:
+
+| Preset | Source | Content |
+| --- | --- | --- |
+| `github-hooks` | the `hooks` member of [https://api.github.com/meta](https://api.github.com/meta) | GitHub's webhook source addresses, IPv4 and IPv6 |
+
+`PRESETS` in `presets.py` is the authority; `validate` rejects a name outside it and the error lists the known names. A preset entry may be mixed with literal networks (see the example above), repeated (resolved once), or the only entry — a single `{preset: github-hooks}` and a one-element list are equivalent.
+
+**When they resolve.** `validate` stays offline: it checks only the manifest syntax and the preset name, so it needs neither credentials nor network. `plan`, `apply` and `renew` fetch every preset named by the manifests they act on once per run:
+
+| Command | Fetches | Writes the `presets` state table | Output |
+| --- | --- | --- | --- |
+| `plan` | yes | never | the advanced-config diff and the change or stale note |
+| `apply` | yes | the fetched list when it differs from the stored copy or no copy exists | the JSON result per service |
+| `renew` | yes | same as `apply` | the JSON result per service |
+
+The `presets` table holds `name`, `cidrs`, `source` and `fetched_at`; the stored list is what a later failed fetch falls back to.
+
+**Refresh.** The `ingress-sync` Komodo procedure created by the bootstrap runs `ingressctl apply --root /repo --all` at second 0 of minutes 7, 22, 37 and 52 of every hour (UTC) — every 15 minutes, independent of `update-all`. Each run makes one unauthenticated request per preset; GitHub allows 60 unauthenticated requests per hour and source IP, so four per preset stay well inside. A changed GitHub list reaches NPM within about 15 minutes: the next run renders the new networks, sees the live advanced config differ, and PUTs the host. An unchanged list changes nothing.
+
+**What a fetched list must look like.** The rules are in `presets.py` and apply to the whole response:
+
+- the body is a JSON object and the preset's key (`hooks` for `github-hooks`) is a list of 1 to 1000 entries;
+- every entry is a string and a strict IPv4 or IPv6 network — host bits set (`203.0.113.5/24`) is an error, not silently masked;
+- only global networks: private, loopback, link-local, reserved and similar ranges are rejected;
+- IPv4 prefixes shorter than `/8` and IPv6 prefixes shorter than `/16` are rejected as too broad;
+- one bad entry rejects the complete list, nothing is taken partially; duplicates are removed and the result is sorted, so the rendered block is stable.
+
+**When a fetch fails.** With no stored copy, the preset does not resolve: every host that names it gets a BLOCKER naming the preset and the fetch error, `plan` exits 1, and `apply` stops before it creates or changes that host — **fail closed**, a failed fetch never widens `allow_cidrs`. With a stored copy, the last good list stays in force and `plan` prints `preset <name>: fetch failed (<error>); using last good copy from <fetched_at>` (the log records a `preset`/`stale` event). The stored list does not expire; only a valid, different fetched list replaces it.
+
+**What is in force.** `ingressctl plan --root . --stack <id>` prints the blocker, or the advanced-config diff with the resolved `allow`/`deny` lines when they differ from the live host; `= no change` means the live block already matches the fetched list. NPM shows the same lines under the host's *Advanced* tab. `validate` cannot show them: it never fetches.
 
 ### What it protects
 
@@ -101,10 +139,31 @@ The order is visible from outside: a source outside `allow_cidrs` gets 404 on an
 
 - **NPM's own `location /`.** Advanced config is server level: NPM renders it before its `location /` and before the locations you add by hand. ingressctl cannot disable or guard that location, it only puts the checks in front of it, and only directives that are valid at server level are used. A hand-made `location` that sets its own `allow`/`deny` replaces the address check for itself.
 - **The ACME exemption.** `/.well-known/acme-challenge/` passes the path and the method check. With the private CA, NPM adds no ACME location for the host, so such a request is proxied to the service like any other. `allow_cidrs` still applies: with it set, a source outside the list gets 403 on the challenge too, and HTTP-01 from the internet fails, so `validate` rejects `allow_cidrs` together with HTTP-01 (see [Let's Encrypt (public hosts)](#lets-encrypt-public-hosts)). A Let's Encrypt certificate makes NPM add its own `location ^~ /.well-known/acme-challenge/` with `allow all`, and that overrides the server-level `deny all`: the challenge path is then open to every source, whatever `allow_cidrs` says.
-- **The address nginx sees.** NPM trusts `X-Real-IP` from RFC 1918 addresses and from its generated CDN ranges (`set_real_ip_from`, `real_ip_header X-Real-IP`, `real_ip_recursive on`), and `allow_cidrs` compares the result. Behind a CDN or a tunnel that arrives from a trusted address, the tunnel has to set the client address; if it does not, every request looks like the tunnel and is denied. The other way round, a sender that reaches NPM from a trusted network chooses the address with that header — `allow_cidrs` is a coarse filter for known senders, not a security boundary.
+- **The address nginx sees.** NPM trusts `X-Real-IP` from RFC 1918 addresses and from its generated CDN ranges (`set_real_ip_from`, `real_ip_header X-Real-IP`, `real_ip_recursive on`), and `allow_cidrs` compares the result. Behind a CDN or a tunnel that arrives from a trusted address, the tunnel has to set the client address; if it does not, every request looks like the tunnel and is denied. The other way round, a sender that reaches NPM from a trusted network chooses the address with that header — `allow_cidrs` is a coarse filter for known senders, not a security boundary. The configuration for a CDN or tunnel is in [Real client IP](#real-client-ip-cdn-tunnel).
 - **`$uri` is not the raw request.** The path check uses `$uri`: percent-decoded, `.` and `..` resolved, `//` collapsed, query string dropped. `/hook/%70rovider`, `/hook/./provider`, `/hook/x/../provider` and `/hook//provider` all match `/hook/provider`. NPM forwards `$request_uri` to the service — the raw spelling — so the app receives a different string than the one the allowlist matched. Verify the signature over the request target the app actually receives, not over a path the framework re-encodes or re-decodes.
 - **The redirect comes first.** With `force_https`, NPM's 301 to https sits before the block, so on port 80 an outsider gets 301, not 404 or 403. Check over https.
 - **A trailing slash is another path.** `/hook/provider` and `/hook/provider/` are different paths; `/*` covers the subtree below a path, not the path itself.
+
+### Real client IP (CDN, tunnel)
+
+`allow` and `deny` compare the address nginx sees in `$remote_addr` when the check runs. NPM rewrites `$remote_addr` from a header only when the connection comes from one of its trusted ranges (`set_real_ip_from`: RFC 1918 plus its generated CDN ranges) and then reads `X-Real-IP` (`real_ip_header`, `real_ip_recursive on`). A CDN or a tunnel breaks that assumption: the TCP connection comes from the CDN edge or the tunnel connector, and the client address is only in a header.
+
+Without a real-IP setup, `allow_cidrs` sees the proxy address for every client. If the proxy is not listed, everyone is denied; if it is listed, everyone is allowed — listing a CDN never restricts the clients behind it.
+
+To let the allowlist see the client, tell nginx which proxy to trust and which header it sets. In NPM, put this into `/data/nginx/custom/server_proxy.conf`, which NPM includes at server level in every proxy host:
+
+```nginx
+# the CDN / tunnel connector's range, never 0.0.0.0/0
+set_real_ip_from 198.51.100.0/24;
+real_ip_header X-Forwarded-For;     # Cloudflare: CF-Connecting-IP
+real_ip_recursive on;
+```
+
+`set_real_ip_from` must list only the proxy that connects to NPM: the tunnel connector's address or the CDN's published ranges. With `0.0.0.0/0`, or any range that contains clients, a client can send the header itself and pick the address the allowlist checks; `real_ip_recursive on` walks the header from the right and stops at the first address outside the trusted ranges, so a too-wide list is exactly what makes the result spoofable. List every proxy in the path, not only the CDN.
+
+A host's own advanced config is not the place while `public:` is declared: ingressctl owns that field and the next `apply` removes hand-added lines (see [Taking it back](#taking-it-back)). The `custom` file is outside the managed block, so `apply` leaves it alone; it applies to all proxy hosts, also those without `public:`. A host without `public:` may take the same lines in its advanced config instead.
+
+ingressctl does not write these lines. It writes only its managed block (path and method checks, `allow`/`deny`); real-IP handling is NPM/nginx configuration, and on a host with `public:` only the `custom` files survive an `apply`. The ACME/HTTP-01 limitation stays as described in [HTTP-01 and DNS-01](#http-01-and-dns-01): `validate` still rejects `allow_cidrs` together with HTTP-01, and a correct client address does not make Let's Encrypt's validation requests pass the allowlist.
 
 ### Before you expose a host
 
@@ -112,7 +171,7 @@ The order is visible from outside: a source outside `allow_cidrs` gets 404 on an
 - [ ] `healthcheck.path` answers with one of `accepted_statuses`; `apply` refuses the host otherwise.
 - [ ] the service verifies the sender's signature itself, in constant time, over the raw body, with a timestamp or event id against replays; the secret is in Infisical, not in git.
 - [ ] `paths` are minimal and exact where possible, `methods` minimal, no token in a path.
-- [ ] `allow_cidrs` holds the sender's published ranges, if it publishes any.
+- [ ] `allow_cidrs` holds the sender's published ranges or a preset, if it publishes any.
 - [ ] `force_https: true`; then `ingressctl validate --root .` (no credentials), `ingressctl plan --root . --stack <id>`, and `apply` last.
 - [ ] after `apply`: hit, miss and wrong method from outside, and the 403 if `allow_cidrs` is set.
 

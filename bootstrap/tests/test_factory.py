@@ -290,6 +290,42 @@ class FactoryTest(unittest.TestCase):
     def runtime(self):
         return self.runtime_dir / factory.RUNTIME_FILE
 
+    def run_factory_with_stderr(self, env=None):
+        env = env or self.env
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"HGBOOT_QUIET": ""}), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(err):
+            report = factory.run(FactoryConfig.from_env(env, REPOSITORY), self.cfg, self.state, env,
+                                 sleep=lambda _: None, mirror_attempts=3)
+        return report, err.getvalue()
+
+    def test_mailer_warning_is_silent_for_the_enabled_values(self):
+        for value in ("true", "TRUE", " 1 ", "yes"):
+            with self.subTest(value=value):
+                self.assertIsNone(factory.mailer_warning({**self.env, "FORGEJO_MAILER_ENABLED": value}))
+
+    def test_mailer_warning_names_the_human_when_it_cannot_see_an_enabled_mailer(self):
+        unset = {name: value for name, value in self.env.items() if name != "FORGEJO_MAILER_ENABLED"}
+        for env in (unset, {**self.env, "FORGEJO_MAILER_ENABLED": "false"}):
+            with self.subTest(env=env.get("FORGEJO_MAILER_ENABLED")):
+                message = factory.mailer_warning(env)
+                self.assertIn(HUMAN, message)
+                self.assertIn("FORGEJO_MAILER_ENABLED", message)
+
+    def test_a_run_without_a_mailer_warns_on_stderr_and_still_publishes(self):
+        report, err = self.run_factory_with_stderr()
+        self.assertTrue(self.runtime().exists())
+        self.assertEqual(report.stages[-1].status, "published")
+        self.assertNotIn("failed", {stage.status for stage in report.stages})
+        self.assertIn("mailer looks unconfigured", err)
+        self.assertIn(f"mention of {HUMAN}", err)
+
+    def test_a_run_with_an_enabled_mailer_does_not_warn(self):
+        report, err = self.run_factory_with_stderr({**self.env, "FORGEJO_MAILER_ENABLED": "true"})
+        self.assertEqual(report.stages[-1].status, "published")
+        self.assertNotIn("mailer", err)
+        self.assertNotIn("FORGEJO_MAILER_ENABLED", err)
+
     def writes(self):
         return [r for r in self.server.requests if r.method in ("POST", "PUT", "PATCH", "DELETE")]
 

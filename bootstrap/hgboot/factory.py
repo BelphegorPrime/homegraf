@@ -104,6 +104,9 @@ def run(factory, cfg, state, env=os.environ, *, http=request, sleep=time.sleep,
         _validate_contract(factory, env)
         _validate_runtime_dir(factory.runtime_dir)
         mirror = _preflight(factory, cfg, state, operator_token, http, mirror_attempts, sleep)
+        warning = mailer_warning(env, getattr(factory, "human_login", ""))
+        if warning:
+            warn(STEP, warning)
 
         stage = "agent user"
         token, login = _ensure_agent(factory, cfg, store, operator_token, http)
@@ -145,6 +148,16 @@ def run(factory, cfg, state, env=os.environ, *, http=request, sleep=time.sleep,
         if isinstance(exc, (StepError, Unreachable, TimeoutError, ValueError, OSError)):
             raise StepError(f"factory: {stage} blocked: {_sanitize(str(exc), factory, state, env)}") from None
         raise
+
+
+def mailer_warning(env, human_login="") -> str | None:
+    """A mailer that Forgejo does not have turns the mention handover into a silent no-op; warn, never fail."""
+    enabled = env.get("FORGEJO_MAILER_ENABLED", "").strip().lower()
+    if enabled in ("true", "1", "yes"):
+        return None
+    login = (human_login or env.get("FORGEHANDS_HUMAN_LOGIN") or "").strip() or "the human"
+    return (f"Forgejo mailer looks unconfigured (FORGEJO_MAILER_ENABLED is not true): a mention of {login} "
+            "will not be mailed. If you configure [mailer] in app.ini instead, ignore this.")
 
 
 def _operator_token(state) -> str:

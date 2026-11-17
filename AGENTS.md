@@ -83,3 +83,11 @@ bash scripts/check-seed.sh
 - Build artifacts (`*.egg-info`, `__pycache__`) never go into a commit.
 - Answer every operator comment; a pull request is not done while one is unanswered.
 - A test skipped for a missing tool is "not verified", not "passed".
+
+## Working unattended
+
+Nobody answers questions during the run. If the ticket leaves a decision open, write the open question and the reading of the ticket you took into the pull request body, then carry on.
+
+For code covered by a test suite, write the failing test first (skill `test-driven-development`). For a failing check, find the cause before changing anything (skill `systematic-debugging`).
+
+Documentation, configuration and YAML need no test: run the repository's validation command only.

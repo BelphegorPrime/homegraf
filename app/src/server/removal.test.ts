@@ -134,6 +134,7 @@ describe("finishing a removal", () => {
     expect(await (await app.request("/api/removals")).json()).toMatchObject({ removals: [{ appId: "demo", pr: "open", pullRequestUrl: PR }] });
   });
 
+  // Three full start flows, each hashing the test users, so this test needs more than the default timeout on a busy runner.
   it("waits for the merge", async () => {
     for (const state of ["open", "closed", "unknown"] as const) {
       const { post, calls } = await started({ [PR]: state });
@@ -142,7 +143,7 @@ describe("finishing a removal", () => {
       expect(res.status).toBe(409);
       expect(calls).toHaveLength(before);
     }
-  });
+  }, 20_000);
 
   it("knows nothing about an app that is not waiting, and needs the permission too", async () => {
     const { post } = await started({ [PR]: "merged" });

@@ -19,6 +19,9 @@ Field contract (environment -> attribute, reused names first)::
                                                                           contains both logins below
     FORGEHANDS_AGENT_LOGIN                     agent_login                homegraf-agent
     FORGEHANDS_HUMAN_LOGIN                     human_login                required, not the agent
+    FORGEHANDS_SECURITY_REVIEWERS              security_reviewers         optional, comma separated;
+                                                                          required with two_keys
+    FORGEHANDS_SECURITY_TOKEN                  security_token             optional; required with two_keys
     FORGEHANDS_FORGEJO_AGENT_TOKEN             forgejo_agent_token        optional; supplied by #72
     FORGEHANDS_FORGEJO_WEBHOOK_SECRET          forgejo_webhook_secret     required
     FORGEHANDS_MIRROR_URL                      mirror_url                 optional
@@ -30,9 +33,12 @@ Field contract (environment -> attribute, reused names first)::
     FORGEHANDS_MAX_RUN_MINUTES                 max_run_minutes            120
     FORGEHANDS_MERGE_POLICY                    merge_policy               JSON, see below
 
-``FORGEHANDS_MERGE_POLICY`` is a JSON object ``repository -> {"deny": [globs]}``.  A repository
-without an entry stays manual (``repository_merge_policy()`` returns ``None``); an explicit
-``{}`` stays empty.  Only when the variable is unset does a fresh opt-in get
+``FORGEHANDS_MERGE_POLICY`` is a JSON object ``repository -> {"deny": [globs]}``, optionally with
+``reasons`` (a deny pattern -> why that path needs a human) and ``two_keys`` (deny globs that may
+merge with an independent security review).  A ``two_keys`` pattern has to be covered by a deny
+pattern, and two keys need ``FORGEHANDS_SECURITY_REVIEWERS`` and ``FORGEHANDS_SECURITY_TOKEN``.
+A repository without an entry stays manual (``repository_merge_policy()`` returns ``None``); an
+explicit ``{}`` stays empty.  Only when the variable is unset does a fresh opt-in get
 ``DEFAULT_MERGE_DENY`` for its own repository.  Operator policy is never replaced by the
 default and is never read from a repository file.
 
@@ -41,8 +47,8 @@ its token during the bootstrap, and the runtime writer (#58) publishes it.  A fr
 ``FORGEHANDS_FORGEJO_AGENT_TOKEN`` empty and this parser accepts that; ``FORGEJO_TOKEN`` is never
 a fallback, because it holds the operator's token.
 
-Secrets (the backend key, gateway key, agent token, webhook secret and mirror token) are
-excluded from ``repr()``; validation errors name the variable, never its value.
+Secrets (the backend key, gateway key, agent token, webhook secret, mirror token and security
+token) are excluded from ``repr()``; validation errors name the variable, never its value.
 """
 from __future__ import annotations
 
@@ -88,6 +94,9 @@ class FactoryConfigError(ConfigError):
     """The factory was opted in with input that would make an unattended run unsafe."""
 
 
+MergeRule = dict[str, tuple[str, ...] | dict[str, str]]
+
+
 @dataclass
 class FactoryConfig:
     enabled: bool
@@ -103,6 +112,8 @@ class FactoryConfig:
     allowed_senders: tuple[str, ...] = ()
     agent_login: str = ""
     human_login: str = ""
+    security_reviewers: tuple[str, ...] = ()
+    security_token: str = field(default="", repr=False)
     forgejo_agent_token: str = field(default="", repr=False)
     forgejo_webhook_secret: str = field(default="", repr=False)
     mirror_url: str = ""
@@ -112,9 +123,9 @@ class FactoryConfig:
     max_concurrent: int = 4
     max_runs_per_hour: int = 30
     max_run_minutes: int = 120
-    merge_policy: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=dict)
+    merge_policy: dict[str, MergeRule] = field(default_factory=dict)
 
-    def repository_merge_policy(self, repository: str) -> dict[str, tuple[str, ...]] | None:
+    def repository_merge_policy(self, repository: str) -> MergeRule | None:
         """The deny rule of one repository; None means merges there stay manual."""
         return self.merge_policy.get(repository)
 
@@ -155,6 +166,13 @@ class FactoryConfig:
             raise FactoryConfigError("FORGEHANDS_ALLOWED_SENDERS must contain the login of FORGEHANDS_AGENT_LOGIN")
         if human_login not in allowed_senders:
             raise FactoryConfigError("FORGEHANDS_ALLOWED_SENDERS must contain the login of FORGEHANDS_HUMAN_LOGIN")
+        security_reviewers = _security_reviewers(env)
+        security_token = _secret(env, "FORGEHANDS_SECURITY_TOKEN", required=False)
+        if any(reviewer.casefold() == agent_login.casefold() for reviewer in security_reviewers):
+            raise FactoryConfigError(
+                "FORGEHANDS_SECURITY_REVIEWERS must not contain the login of FORGEHANDS_AGENT_LOGIN")
+        merge_policy = _merge_policy(env, repository)
+        _two_keys(merge_policy, security_reviewers, security_token)
         return cls(
             enabled=True,
             repository=repository,
@@ -169,6 +187,8 @@ class FactoryConfig:
             allowed_senders=allowed_senders,
             agent_login=agent_login,
             human_login=human_login,
+            security_reviewers=security_reviewers,
+            security_token=security_token,
             forgejo_agent_token=agent_token,
             forgejo_webhook_secret=_secret(env, "FORGEHANDS_FORGEJO_WEBHOOK_SECRET"),
             mirror_url=mirror_url,
@@ -178,7 +198,7 @@ class FactoryConfig:
             max_concurrent=max_concurrent,
             max_runs_per_hour=_limit(env, "FORGEHANDS_MAX_RUNS_PER_HOUR", 30, MAX_RUNS_PER_HOUR),
             max_run_minutes=_limit(env, "FORGEHANDS_MAX_RUN_MINUTES", 120, MAX_RUN_MINUTES),
-            merge_policy=_merge_policy(env, repository),
+            merge_policy=merge_policy,
         )
 
 
@@ -264,8 +284,10 @@ def _repository(value: str, name: str) -> str:
     return value
 
 
-def _list(env, name: str, item, label: str) -> tuple[str, ...]:
-    raw = _required(env, name)
+def _list(env, name: str, item, label: str, *, required: bool = True) -> tuple[str, ...]:
+    raw = _required(env, name) if required else _present(env, name)
+    if not raw:
+        return ()
     values = []
     for part in raw.split(","):
         value = part.strip()
@@ -289,6 +311,15 @@ def _senders(env, name: str) -> tuple[str, ...]:
     return _list(env, name, sender, "user names")
 
 
+def _security_reviewers(env) -> tuple[str, ...]:
+    """The logins whose security review counts as the second key; the same login rule as senders."""
+    def reviewer(value, field_name):
+        if not _SENDER.fullmatch(value):
+            raise FactoryConfigError(f"{field_name} must be a comma-separated list of Forgejo user names")
+        return value
+    return _list(env, "FORGEHANDS_SECURITY_REVIEWERS", reviewer, "user names", required=False)
+
+
 def _login(env, name: str, *, default: str = "") -> str:
     value = _present(env, name) or default
     if not value:
@@ -307,7 +338,7 @@ def _glob(value, repository: str) -> str:
     return value
 
 
-def _merge_policy(env, repository: str) -> dict[str, dict[str, tuple[str, ...]]]:
+def _merge_policy(env, repository: str) -> dict[str, MergeRule]:
     raw = _present(env, "FORGEHANDS_MERGE_POLICY")
     if not raw:
         return {repository: {"deny": DEFAULT_MERGE_DENY}}
@@ -329,8 +360,16 @@ def _merge_policy(env, repository: str) -> dict[str, dict[str, tuple[str, ...]]]
     policy = {}
     for name, rule in document.items():
         name = _repository(name, "FORGEHANDS_MERGE_POLICY repository")
-        if not isinstance(rule, dict) or set(rule) != {"deny"}:
-            raise FactoryConfigError(f"FORGEHANDS_MERGE_POLICY entry for {name} must be exactly {{deny: [globs]}}")
+        if not isinstance(rule, dict) or set(rule) - {"deny", "reasons", "two_keys"}:
+            raise FactoryConfigError(
+                f"FORGEHANDS_MERGE_POLICY entry for {name} must be {{deny: [globs]}}"
+                " with optional reasons and two_keys")
+        if "deny" not in rule:
+            if rule.get("two_keys"):
+                raise FactoryConfigError(f"FORGEHANDS_MERGE_POLICY two_keys of {name} needs a deny list")
+            raise FactoryConfigError(
+                f"FORGEHANDS_MERGE_POLICY entry for {name} must be {{deny: [globs]}}"
+                " with optional reasons and two_keys")
         if not isinstance(rule["deny"], list):
             raise FactoryConfigError(f"FORGEHANDS_MERGE_POLICY deny of {name} must be a list of globs")
         denied = []
@@ -338,5 +377,67 @@ def _merge_policy(env, repository: str) -> dict[str, dict[str, tuple[str, ...]]]
             value = _glob(value, name)
             if value not in denied:
                 denied.append(value)
-        policy[name] = {"deny": tuple(denied)}
+        entry: MergeRule = {"deny": tuple(denied)}
+        reasons = rule.get("reasons", {})
+        if (not isinstance(reasons, dict)
+                or any(not isinstance(pattern, str) or pattern not in denied
+                       or not isinstance(reason, str) or not reason.strip()
+                       for pattern, reason in reasons.items())):
+            raise FactoryConfigError(
+                f"FORGEHANDS_MERGE_POLICY reasons of {name} must map deny patterns to a text")
+        if reasons:
+            entry["reasons"] = {pattern: reasons[pattern].strip() for pattern in denied if pattern in reasons}
+        two_keys = rule.get("two_keys", [])
+        if not isinstance(two_keys, list):
+            raise FactoryConfigError(f"FORGEHANDS_MERGE_POLICY two_keys of {name} must be a list of globs")
+        patterns = []
+        for value in two_keys:
+            value = _glob(value, name)
+            if value not in patterns:
+                patterns.append(value)
+        if patterns and not denied:
+            raise FactoryConfigError(f"FORGEHANDS_MERGE_POLICY two_keys of {name} needs a deny list")
+        for pattern in patterns:
+            literal = re.sub(r"\*+", "x", pattern).replace("?", "x")
+            if not any(_glob_matches(glob, literal) for glob in denied):
+                raise FactoryConfigError(
+                    f"FORGEHANDS_MERGE_POLICY two_keys pattern {pattern} of {name}"
+                    " is not covered by a deny pattern")
+        if patterns:
+            entry["two_keys"] = tuple(patterns)
+        policy[name] = entry
     return policy
+
+
+def _glob_matches(pattern: str, path: str) -> bool:
+    """ForgeHands' glob: ``*`` stays in a folder, ``**`` crosses folders, ``?`` is one character."""
+    source = []
+    i = 0
+    while i < len(pattern):
+        char = pattern[i]
+        if char == "*":
+            if pattern[i + 1:i + 2] == "*":
+                i += 1
+                if pattern[i + 1:i + 2] == "/":
+                    i += 1
+                    source.append("(?:.*/)?")
+                else:
+                    source.append(".*")
+            else:
+                source.append("[^/]*")
+        elif char == "?":
+            source.append("[^/]")
+        else:
+            source.append(re.escape(char))
+        i += 1
+    return re.fullmatch("".join(source), path) is not None
+
+
+def _two_keys(policy: dict[str, MergeRule], security_reviewers: tuple[str, ...], security_token: str) -> None:
+    """ForgeHands refuses to start a two_keys policy without an independent reviewer and its token."""
+    if not any("two_keys" in rule for rule in policy.values()):
+        return
+    missing = [name for name, present in (("FORGEHANDS_SECURITY_REVIEWERS", security_reviewers),
+                                          ("FORGEHANDS_SECURITY_TOKEN", security_token)) if not present]
+    if missing:
+        raise FactoryConfigError("FORGEHANDS_MERGE_POLICY two_keys needs " + " and ".join(missing))

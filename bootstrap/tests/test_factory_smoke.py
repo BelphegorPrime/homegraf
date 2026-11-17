@@ -58,6 +58,9 @@ class FakeFactory:
         self.human_closes_epic = False
         self.planner_repeats = False
         self.second_pr = False
+        self.second_pr_on_retrigger = False
+        self.duplicate_run = False
+        self.conversations = 0
         self.now = 0.0
 
     # -- clock injection --------------------------------------------------------------------
@@ -122,13 +125,18 @@ class FakeFactory:
             {"context": "ci / seed (pull_request)", "state": "success"},
             {"context": "ci / seed (push)", "state": "success"}]
         if self.second_pr:
-            other = issue["number"] + 1000
-            repo["pulls"][other] = {
-                "id": self.next_id(), "number": other, "state": "open", "draft": False,
-                "title": f"Follow-up {issue['title']}", "body": "",
-                "head": {"ref": f"ai/issue-{issue['number']}-2", "sha": f"sha{issue['number']}c"},
-                "labels": [], "merged": False, "merged_at": None, "created_at": self.stamp(),
-                "user": {"login": self.pr_author}}
+            self._second_pull(repo, issue)
+
+    def _second_pull(self, repo: dict, issue: dict) -> None:
+        other = issue["number"] + 1000
+        if other in repo["pulls"]:
+            return
+        repo["pulls"][other] = {
+            "id": self.next_id(), "number": other, "state": "open", "draft": False,
+            "title": f"Follow-up {issue['title']}", "body": "",
+            "head": {"ref": f"ai/issue-{issue['number']}-2", "sha": f"sha{issue['number']}c"},
+            "labels": [], "merged": False, "merged_at": None, "created_at": self.stamp(),
+            "user": {"login": self.pr_author}}
 
     def _epic_step(self, repo: dict, issue: dict) -> None:
         children = [child for child in repo["issues"].values() if child.get("epic") == issue["number"]]
@@ -145,8 +153,10 @@ class FakeFactory:
         issue["timeline"].append({"type": "close", "user": {"login": actor}})
 
     def _conversation(self) -> dict:
+        self.conversations += 1
+        suffix = "" if self.conversations == 1 else f"-{self.conversations}"
         return {"id": self.next_id(), "user": {"login": "homegraf-agent"},
-                "body": "Working in http://openhands.local:8000/conversations/abc123"
+                "body": f"Working in http://openhands.local:8000/conversations/abc123{suffix}"
                         "?access_token=conversation-secret"}
 
     def _advance(self, repo: dict, issue: dict, polls: int) -> None:
@@ -370,6 +380,15 @@ class FakeFactory:
                     self._evolve(repo, issue)
                     return 200, self.issue_view(repo, issue)
                 if issue_parts[2] == "comments":
+                    if req.method == "POST":
+                        comment = {"id": self.next_id(), "user": {"login": "owner"}, "body": req.json["body"]}
+                        repo["comments"].setdefault(number, []).append(comment)
+                        if "retrigger" in comment["body"] and issue["kind"] == "followup":
+                            if self.duplicate_run:
+                                repo["comments"][number].append(self._conversation())
+                            if self.second_pr_on_retrigger:
+                                self._second_pull(repo, issue)
+                        return 201, comment
                     return 200, repo["comments"].get(number, [])
                 if issue_parts[2] == "timeline":
                     return 200, issue["timeline"]
@@ -1072,6 +1091,53 @@ class FollowupCaseTests(SmokeTest):
         report = self.smoke(include_epic=True).run(REPO, REPO)
         self.assertTrue(report.passed, report.render())
         self.assertEqual(self.fake.repos[REPO]["issues"], {})
+
+    def _retriggers(self):
+        return [request for request in self.srv.requests
+                if request.method == "POST" and request.path.split("?")[0].endswith("/comments")]
+
+    def test_the_duplicate_trigger_posts_one_retrigger_comment(self):
+        smoke = self.smoke(include_epic=True)
+        report = smoke.run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        posts = self._retriggers()
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0].json, {"body": f"retrigger {smoke.run_token}"})
+        self.assertTrue(posts[0].path.split("?")[0].startswith(f"/api/v1/repos/{REPO}/issues/"))
+        self.assertIn("duplicate trigger: passed (one run, no second pull request)", report.render())
+
+    def test_a_duplicate_trigger_that_starts_a_second_run_fails_the_smoke(self):
+        self.fake.duplicate_run = True
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("a duplicate trigger started a concurrent run", report.render())
+
+    def test_a_second_pull_request_before_the_retrigger_keeps_the_followup_message(self):
+        self.fake.second_pr = True
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("a follow-up opened a second pull request or branch", report.render())
+        self.assertNotIn("a duplicate trigger started a concurrent run", report.render())
+
+    def test_a_second_pull_request_after_the_retrigger_fails_as_a_duplicate_trigger(self):
+        self.fake.second_pr_on_retrigger = True
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("a duplicate trigger started a concurrent run", report.render())
+
+    def test_the_duplicate_trigger_writes_only_inside_the_scratch_repository(self):
+        self.fake.seed()
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        allowed = (f"/api/v1/repos/{REPO}", "/api/v1/user/repos", "/api/v1/orgs")
+        for request in self.writes():
+            path = request.path.split("?")[0]
+            self.assertTrue(path.startswith(allowed), f"a write left the scratch repository: {path}")
+
+    def test_without_the_flag_no_retrigger_comment_is_posted(self):
+        report = self.smoke().run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(self._retriggers(), [])
 
 
 class CheckEpicGraphTests(unittest.TestCase):

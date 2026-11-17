@@ -55,6 +55,7 @@ import { GraphView } from "./GraphView";
 import { Certificates } from "./Certificates";
 import { Catalog, StatusList } from "./Lists";
 import { NewApp } from "./NewApp";
+import { NewRepo } from "./NewRepo";
 import { RemoveApp } from "./RemoveApp";
 import { Repositories } from "./Repositories";
 import { Stacks } from "./Stacks";
@@ -135,6 +136,7 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
   const [containers, setContainers] = useState(false);
   const [publicOnly, setPublicOnly] = useState(false);
   const [focus, setFocus] = useState(defaultOptions.focus);
+  const [creatingRepo, setCreatingRepo] = useState(false);
 
   const graph = graphQ.data;
   // The hardware layer is optional: without a router, switch or access point (no UniFi, no inventory/network.yaml) there is no Network tab.
@@ -148,11 +150,9 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
   const go = (id: ViewId) => {
     setView(id);
     setSelected(null);
+    setCreatingRepo(false);
     history.replaceState(null, "", `#${id}`);
   };
-
-  // Slice 7 adds the "new-repo" view; until it exists the New repository button stays hidden.
-  const newRepoView = VIEWS.find((v) => (v.id as string) === "new-repo")?.id;
 
   return (
     <TooltipProvider>
@@ -285,7 +285,7 @@ function Main({ session, signOut }: { session: Session; signOut: () => Promise<v
               {graph && view === "new" && <NewApp graph={graph} />}
               {view === "remove" && <RemoveApp />}
               {view === "stacks" && <Stacks session={session} />}
-              {view === "repos" && <Repositories onNew={newRepoView ? () => go(newRepoView) : undefined} />}
+              {view === "repos" && (creatingRepo ? <NewRepo onBack={() => setCreatingRepo(false)} /> : <Repositories onNew={() => setCreatingRepo(true)} />)}
               {view === "users" && <Users session={session} />}
               {graph && def.kind === "graph" && <GraphView sub={sub} status={status} query={query} selected={selected} onSelect={setSelected} />}
             </div>

@@ -254,6 +254,7 @@ export function NewRepo({ onBack }: { onBack?: () => void }) {
   const change = <K extends keyof RepoFields>(field: K, value: RepoFields[K]) => setDraft((f) => ({ ...f, [field]: value }));
   const busy = sending || (!!job && !job.done);
   const created = job?.done?.state === "done" ? repoForJob(repos.data?.repos ?? [], job.done.repository) : undefined;
+  const problem = failure ?? (profiles.isError ? profiles.error.message : undefined);
 
   function follow(jobId: string) {
     source.current?.close();
@@ -304,7 +305,7 @@ export function NewRepo({ onBack }: { onBack?: () => void }) {
       >
         <NewRepoView
           profiles={list}
-          error={profiles.isError ? profiles.error.message : undefined}
+          error={problem}
           loading={profiles.isPending}
           fields={fields}
           errors={errors}
@@ -313,7 +314,6 @@ export function NewRepo({ onBack }: { onBack?: () => void }) {
           credentials={cred}
           busy={busy}
         />
-        {failure && <p className="warning">{failure}</p>}
         {job && <RepoProgress job={job} repo={created} />}
       </Section>
     </div>

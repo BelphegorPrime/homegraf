@@ -9,6 +9,8 @@ The factory loop below (rounds, the review on a green commit and `MERGE_POLICY`)
 arrived in 0.2.8 and the merge policy in 0.2.10. With an older image the four trigger labels still start their agent profiles, and the round,
 review and merge steps do nothing. Check the image tag in `compose.yaml`.
 
+To create the repository the agents work in, and to allow it in ForgeHands, see [new-repo.md](new-repo.md).
+
 ## Seeing and controlling runs
 
 ForgeHands tags every conversation it starts with `source=forgehands` and `issue=<n>`. `GET /api/conversations/search` lists conversations,

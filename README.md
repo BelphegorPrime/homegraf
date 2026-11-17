@@ -39,6 +39,9 @@ Everything is behind a login page: nobody sees the map, the status or any API ro
 
 The platform stacks (secrets store, proxy, homegraf itself, Komodo's own) are never offered for removal, redeploy or secrets.
 
+Creating a repository for the factory is an operator action: [docs/new-repo.md](docs/new-repo.md) covers the command,
+the profiles and the pull request that allows the repository in ForgeHands.
+
 ## Run the image
 
 ```bash

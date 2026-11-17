@@ -11,10 +11,12 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
 from unittest import mock
+from urllib.parse import parse_qs
 
 from hgboot import factory_smoke, main as hgmain
 from hgboot.factory_config import FactoryConfig
@@ -46,6 +48,11 @@ class FakeFactory:
         self.pr_author = "homegraf-agent"
         self.merge_author = "homegraf-agent"
         self.approval_actor = "homegraf-agent"
+        self.planner_stuck = False
+        self.wrong_graph = False
+        self.spurious_dependency = False
+        self.epic_missing_child = False
+        self.duplicate_children = False
         self.now = 0.0
 
     # -- clock injection --------------------------------------------------------------------
@@ -58,7 +65,8 @@ class FakeFactory:
     def seed(self, name: str = REPO, description: str = MARKER, private: bool = True, mirror: bool = False):
         self.repos[name] = {"full_name": name, "description": description, "private": private, "mirror": mirror,
                             "default_branch": "main", "files": {}, "labels": {}, "hooks": {}, "protections": {},
-                            "issues": {}, "pulls": {}, "comments": {}, "reviews": {}, "statuses": {}}
+                            "issues": {}, "pulls": {}, "comments": {}, "reviews": {}, "statuses": {},
+                            "dependencies": {}}
         return self.repos[name]
 
     def repo(self, name: str = REPO) -> dict:
@@ -111,7 +119,8 @@ class FakeFactory:
             issue["timeline"].append({"type": "close", "user": {"login": "homegraf-agent"}})
 
     def issue_view(self, repo: dict, issue: dict) -> dict:
-        return {"number": issue["number"], "title": issue["title"], "body": issue["body"], "state": issue["state"],
+        return {"id": issue["number"], "number": issue["number"], "title": issue["title"],
+                "body": issue["body"], "state": issue["state"],
                 "labels": [{"name": name} for name in sorted(issue["labels"])]}
 
     def pull_view(self, repo: dict, pull: dict) -> dict:
@@ -121,6 +130,41 @@ class FakeFactory:
         if pull.get("merged_by"):
             view["merged_by"] = pull["merged_by"]
         return view
+
+    # -- the planner's part ------------------------------------------------------------------
+    def _plan(self, repo: dict, epic: dict) -> None:
+        if self.planner_stuck:
+            return
+        token = re.search(r"\[([0-9a-f]{8})\]", epic["title"]).group(1)
+        children = [
+            self._child(repo, epic, token, "A", f"Create `smoke-epic/{token}-a.txt` with one line."),
+            self._child(repo, epic, token, "B",
+                        f"Append a line to `smoke-epic/{token}-a.txt`; it needs A's file."),
+            self._child(repo, epic, token, "C", f"Create `smoke-epic/{token}-c.txt` with one line."),
+        ]
+        if self.duplicate_children:
+            self._child(repo, epic, token, "A", f"Create `smoke-epic/{token}-a.txt` with another line.")
+        a, b, c = (child["number"] for child in children)
+        graph = {epic["number"]: {a, b, c}, a: set(), b: {a}, c: set()}
+        if self.epic_missing_child:
+            graph[epic["number"]] = {a, b}
+        if self.wrong_graph:
+            graph[b] = set()
+        if self.spurious_dependency:
+            graph[c] = {a}
+        repo["dependencies"].update(graph)
+        listed = ", ".join(f"#{child['number']}" for child in children)
+        repo["comments"][epic["number"]] = [{
+            "id": self.next_id(), "user": {"login": "homegraf-agent"},
+            "body": f"Planned three children: {listed}."}]
+
+    def _child(self, repo: dict, epic: dict, token: str, part: str, task: str) -> dict:
+        number = len(repo["issues"]) + 1
+        issue = {"number": number, "title": f"Factory smoke: epic child {part} [{token}]",
+                 "body": f"Part of #{epic['number']}\n\n{task}", "state": "open", "labels": set(),
+                 "polls": 0, "timeline": [], "kind": "child"}
+        repo["issues"][number] = issue
+        return issue
 
     # -- HTTP --------------------------------------------------------------------------------
     def __call__(self, req):
@@ -196,12 +240,19 @@ class FakeFactory:
                 if req.method == "GET":
                     if file_path not in repo["files"]:
                         return 404, {"message": "not found"}
-                    import base64
                     return 200, {"content": base64.b64encode(repo["files"][file_path].encode()).decode(),
                                  "sha": "sha-" + file_path.replace("/", "-")}
-                import base64
                 repo["files"][file_path] = base64.b64decode(req.json["content"]).decode()
                 return 201, {"content": {"path": file_path}}
+            if rest == "issues" and req.method == "GET":
+                params = parse_qs(query)
+                term = (params.get("q") or [""])[0].lower()
+                limit = min(int((params.get("limit") or ["50"])[0]), 50)
+                page = int((params.get("page") or ["1"])[0])
+                matching = [self.issue_view(repo, issue) for issue in repo["issues"].values()
+                            if term in (issue["title"] + "\n" + issue["body"]).lower()]
+                start = (page - 1) * limit
+                return 200, matching[start:start + limit]
             if rest == "issues" and req.method == "POST":
                 number = len(repo["issues"]) + 1
                 by_id = {label["id"]: label["name"] for label in repo["labels"].values()}
@@ -212,6 +263,8 @@ class FakeFactory:
                          "kind": "protected" if "protected" in req.json["title"] else
                                  ("later" if "added later" in req.json["body"] else "normal")}
                 repo["issues"][number] = issue
+                if "ai:plan" in issue["labels"]:
+                    self._plan(repo, issue)
                 return 201, self.issue_view(repo, issue)
             if rest.startswith("issues/"):
                 issue_parts = rest.split("/")
@@ -219,9 +272,24 @@ class FakeFactory:
                 issue = repo["issues"].get(number)
                 if issue is None:
                     return 404, {"message": "not found"}
+                if len(issue_parts) == 3 and issue_parts[2] == "dependencies":
+                    if req.method == "POST":
+                        target = req.json.get("index") if isinstance(req.json, dict) else None
+                        if not isinstance(target, int) or target not in repo["issues"]:
+                            return 404, {"message": "dependency issue does not exist"}
+                        repo["dependencies"].setdefault(number, set()).add(target)
+                        return 201, self.issue_view(repo, repo["issues"][target])
+                    if req.method == "GET":
+                        return 200, [self.issue_view(repo, repo["issues"][other])
+                                     for other in sorted(repo["dependencies"].get(number, set()))
+                                     if other in repo["issues"]]
+                    return 405, {"message": "method not allowed"}
                 if len(issue_parts) == 2:
                     if req.method == "DELETE":
                         repo["issues"].pop(number, None)
+                        repo["dependencies"].pop(number, None)
+                        for other in repo["dependencies"].values():
+                            other.discard(number)
                         return 204, None
                     self._evolve(repo, issue)
                     return 200, self.issue_view(repo, issue)
@@ -690,21 +758,174 @@ class IncludeEpicFlagTests(SmokeTest):
         report = self.smoke(include_epic=True).run(REPO, REPO)
         self.assertTrue(report.passed, report.render())
         self.assertEqual(len(messages), 1)
-        self.assertIn("one epic with three children plus a follow-up issue", messages[0])
+        self.assertIn("one epic and three children", messages[0])
         self.assertIn("several times the tokens", messages[0])
         self.assertTrue(self.writes())
-        self.assertIn("epic scenarios: skipped (not implemented yet)", report.render())
+        self.assertIn("epic graph: passed (3 children, epic depends on all, B after A, C independent)",
+                      report.render())
 
     def test_without_the_flag_the_report_has_no_epic_stage(self):
         report = self.smoke().run(REPO, REPO)
         self.assertTrue(report.passed, report.render())
         self.assertNotIn("epic scenarios", report.render())
 
+    def test_without_the_flag_no_epic_issue_and_no_dependency_read_happen(self):
+        self.fake.seed()
+        report = self.smoke(keep=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertNotIn("epic graph", report.render())
+        self.assertEqual(len(self.fake.repos[REPO]["issues"]), 3)
+        self.assertEqual(self.fake.repos[REPO]["dependencies"], {})
+        self.assertFalse([request for request in self.srv.requests if "dependencies" in request.path])
+
     def test_preflight_with_the_flag_writes_nothing_and_says_what_would_be_added(self):
         report = self.smoke(preflight_only=True, include_epic=True).run(REPO, REPO)
         self.assertTrue(report.passed)
         self.assertEqual(self.writes(), [])
         self.assertIn("epic scenarios would be added", report.render())
+
+
+class EpicGraphTests(SmokeTest):
+    def test_the_planned_epic_passes_with_the_exact_graph(self):
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertIn("epic graph: passed (3 children, epic depends on all, B after A, C independent)",
+                      report.render())
+
+    def test_the_epic_is_opened_with_the_plan_label_and_ready_at_creation(self):
+        self.fake.seed()
+        report = self.smoke(include_epic=True, keep=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        epics = [issue for issue in self.fake.repos[REPO]["issues"].values() if "ai:plan" in issue["labels"]]
+        self.assertEqual(len(epics), 1)
+        self.assertIn("ai:ready", epics[0]["labels"])
+
+    def test_a_b_that_does_not_wait_for_a_fails_the_smoke(self):
+        self.fake.wrong_graph = True
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("B does not wait for A", report.render())
+
+    def test_c_depending_on_a_fails_the_smoke(self):
+        self.fake.spurious_dependency = True
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("C is independent", report.render())
+
+    def test_an_epic_missing_a_child_dependency_fails_the_smoke(self):
+        self.fake.epic_missing_child = True
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("no dependency on #", report.render())
+
+    def test_a_planner_that_leaves_no_children_times_out(self):
+        self.fake.planner_stuck = True
+        report = self.smoke(include_epic=True, timeout=60).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("planner left 0 children", report.render())
+        self.assertIn("waited 60 s", report.render())
+
+    def test_a_fourth_child_fails_as_duplicate_children(self):
+        self.fake.duplicate_children = True
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("duplicate children", report.render())
+
+    def test_each_switch_fails_with_the_right_exception_and_message(self):
+        cases = [
+            ("wrong_graph", SmokeFailure, "B does not wait for A"),
+            ("spurious_dependency", SmokeFailure, "C is independent"),
+            ("epic_missing_child", SmokeFailure, "no dependency on #"),
+            ("duplicate_children", SmokeFailure, "duplicate children"),
+            ("planner_stuck", SmokeTimeout, "planner left 0 children"),
+        ]
+        self.fake.seed()
+        for switch, exception, message in cases:
+            with self.subTest(switch=switch):
+                self.fake.repos.clear()
+                setattr(self.fake, switch, True)
+                self.addCleanup(setattr, self.fake, switch, False)
+                smoke = self.smoke(include_epic=True, timeout=60)
+                plan = smoke.preflight(REPO, REPO)
+                smoke._ensure_repository(plan)
+                smoke._configure(plan)
+                with self.assertRaises(exception) as caught:
+                    smoke._epic_plan_case(plan)
+                self.assertIn(message, str(caught.exception))
+
+    def test_cleanup_deletes_the_epic_and_its_children(self):
+        self.fake.seed()
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(self.fake.repos[REPO]["issues"], {})
+        self.assertEqual(self.fake.repos[REPO]["dependencies"], {})
+        deletes = [request.path.split("?")[0] for request in self.srv.requests if request.method == "DELETE"]
+        self.assertEqual(len(deletes), 7)
+        self.assertTrue(all("/issues/" in path for path in deletes))
+
+
+class CheckEpicGraphTests(unittest.TestCase):
+    """The pure check: one case per problem, plus the clean graph."""
+
+    EPIC = 1
+
+    def graph(self):
+        children = {
+            2: f"Part of #{self.EPIC}\n\nCreate `smoke-epic/ab-a.txt` with one line.",
+            3: f"Part of #{self.EPIC}\n\nAppend a line to `smoke-epic/ab-a.txt`; it needs A's file.",
+            4: f"Part of #{self.EPIC}\n\nCreate `smoke-epic/ab-c.txt` independently.",
+        }
+        depends_on = {self.EPIC: {2, 3, 4}, 2: set(), 3: {2}, 4: set()}
+        return children, depends_on
+
+    def check(self, children, depends_on):
+        return factory_smoke.check_epic_graph(self.EPIC, children, depends_on)
+
+    def test_the_planned_graph_has_no_problems(self):
+        children, depends_on = self.graph()
+        self.assertEqual(self.check(children, depends_on), [])
+
+    def test_a_child_body_without_the_epic_reference_is_a_problem(self):
+        children, depends_on = self.graph()
+        children[4] = "Create `smoke-epic/ab-c.txt` independently."
+        self.assertIn("#4: the body does not say 'Part of #1'", self.check(children, depends_on))
+
+    def test_an_epic_that_misses_a_child_dependency_is_a_problem(self):
+        children, depends_on = self.graph()
+        depends_on[self.EPIC] = {2, 3}
+        self.assertIn("#1: no dependency on #4", self.check(children, depends_on))
+
+    def test_b_without_its_dependency_on_a_is_a_problem(self):
+        children, depends_on = self.graph()
+        depends_on[3] = set()
+        self.assertIn("#3: no dependency on #2, so B does not wait for A", self.check(children, depends_on))
+
+    def test_c_with_any_dependency_is_a_problem(self):
+        children, depends_on = self.graph()
+        depends_on[4] = {2}
+        self.assertIn("#4: depends on #2, but C is independent", self.check(children, depends_on))
+
+    def test_a_child_that_depends_on_the_epic_is_a_problem(self):
+        children, depends_on = self.graph()
+        depends_on[2] = {self.EPIC}
+        self.assertIn("#2: depends on the epic #1", self.check(children, depends_on))
+
+    def test_any_other_dependency_among_children_is_a_problem(self):
+        children, depends_on = self.graph()
+        depends_on[2] = {4}
+        depends_on[3] = {2, 4}
+        problems = self.check(children, depends_on)
+        self.assertIn("#2: depends on #4, but A starts the chain", problems)
+        self.assertIn("#3: depends on #4, but B waits only for #2", problems)
+
+    def test_two_children_with_the_same_file_name_are_duplicates(self):
+        children, depends_on = self.graph()
+        children[5] = "Part of #1\n\nCreate `smoke-epic/ab-a.txt` with another line."
+        depends_on[self.EPIC] = {2, 3, 4, 5}
+        depends_on[5] = set()
+        problems = self.check(children, depends_on)
+        self.assertIn("duplicate children", problems[0])
+        self.assertIn("duplicate children: #2, #5 all take the A part", problems)
 
 
 class WiringTests(SmokeTest):

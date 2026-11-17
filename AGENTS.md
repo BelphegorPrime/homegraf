@@ -12,7 +12,7 @@ Read this first. Paths are from the repository root unless a command says otherw
 
 ## Map: where things are
 
-- App server: `app/src/server/{app,index,apps,stacks,repos,tools,auth}.ts`; tests beside them (`*.test.ts`).
+- App server: `app/src/server/{app,index,apps,repos,tools,auth}.ts`; tests beside them (`*.test.ts`).
 - App web: `app/src/web/{main.tsx,App.tsx,api.ts,useJob.ts,views.ts}`; tests beside them.
 - Shared types: `app/src/shared/types.ts`, the server/client contract.
 - Wizard: `seed/homelab.py` entry, `seed/infra/homelab/{newapp,ui,serviceopts,hostopts,templates}.py`, compose fragments in `seed/infra/homelab/templates/`.
@@ -20,7 +20,7 @@ Read this first. Paths are from the repository root unless a command says otherw
 - Graph builder: `seed/infra/graph/{build,npm_snapshot,unifi}.py`.
 - Stackctl: `seed/infra/stackctl/stackctl.py`, the change detector for a push.
 - Infisical tools: `seed/infra/infisical/{secret,stack_secrets,bootstrap,provisioner}.py`.
-- Bootstrap steps: `bootstrap/hgboot/*.py` (driver `steps.py`, entry `main.py`); agent-facing prompt files in `bootstrap/hgboot/prompts/` (planner, reviewer, worker).
+- Bootstrap steps: `bootstrap/hgboot/*.py` (driver `steps.py`, entry `main.py`); agent-facing prompt files in `bootstrap/hgboot/prompts/` (`planner.md`, `reviewer.md`, `sensitive-reviewer.md`, `worker.md`, `worker-strong.md`).
 
 ## Fast checks per area
 
@@ -32,13 +32,14 @@ Bootstrap (standard library only, no install):
 (cd bootstrap && python3 -W error::ResourceWarning -m unittest tests.test_agents -v)
 ```
 
-Seed tools (pytest, from the tool's own directory so local imports and fixtures resolve):
+Seed tools (pytest, from the tool's own directory so local imports and fixtures resolve). A fresh clone has neither pytest nor PyYAML; install both once, outside the repository:
 
 ```sh
-(cd seed/infra/stackctl && python3 -m pytest -q test_stackctl.py)
-(cd seed/infra/homelab && python3 -m pytest -q test_stacklist.py)
-(cd seed/infra/graph && python3 -m pytest -q test_build.py)
-(cd seed/infra/ingress-controller && PYTHONPATH=src python3 -m pytest -q tests/test_manifest.py)
+python3 -m venv /tmp/hg-venv && /tmp/hg-venv/bin/pip install -q -e 'seed/infra/ingress-controller[test]'
+(cd seed/infra/stackctl && /tmp/hg-venv/bin/python -m pytest -q test_stackctl.py)
+(cd seed/infra/homelab && /tmp/hg-venv/bin/python -m pytest -q test_stacklist.py)
+(cd seed/infra/graph && /tmp/hg-venv/bin/python -m pytest -q test_build.py)
+(cd seed/infra/ingress-controller && PYTHONPATH=src /tmp/hg-venv/bin/python -m pytest -q tests/test_manifest.py)
 ```
 
 App (after `npm ci` in `app/` once):

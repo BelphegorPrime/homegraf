@@ -19,6 +19,9 @@ import json
 
 FALLBACK_PROFILE = "worker-free"
 ROUND_KINDS = ("pull_request", "ci_failure", "conflict")
+# The AGENT_SECRETS entry that carries the security reviewer's own forge token; the route names it,
+# never the value, and ForgeHands hands it to the security review conversations only.
+SECURITY_TOKEN_SECRET = "FORGEJO_SECURITY_TOKEN"
 
 
 @dataclass(frozen=True)
@@ -83,8 +86,12 @@ def _validate(routes: dict[str, dict]) -> None:
             raise ValueError(f"{label}: escalate_to must name another route")
 
 
-def label_routes(profile_ids: dict[str, str]) -> str:
-    """The LABEL_ROUTES value built from the profile ids; an id for every profile the routes use is required, a name would fail every run."""
+def label_routes(profile_ids: dict[str, str], security_token: str = "") -> str:
+    """The LABEL_ROUTES value built from the profile ids; an id for every profile the routes use is required, a name would fail every run.
+
+    A configured ``security_token`` makes the security review route name its own secret, so that the
+    reviewer writes the second key as a forge user the worker's token cannot sign as.
+    """
     for name, profile_id in profile_ids.items():
         if not isinstance(name, str) or not name.strip():
             raise ValueError("an agent profile name is blank")
@@ -105,6 +112,8 @@ def label_routes(profile_ids: dict[str, str]) -> str:
             entry["fallback_to"] = route.fallback_to
         if route.escalate_to:
             entry["escalate_to"] = route.escalate_to
+        if security_token and route.on == "sensitive_review":
+            entry["forgejo_token_secret"] = SECURITY_TOKEN_SECRET
         routes[label] = entry
     _validate(routes)
     return json.dumps(routes, separators=(",", ":"))

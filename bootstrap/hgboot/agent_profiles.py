@@ -39,9 +39,11 @@ DEFAULT_PROFILE = "default"
 LLM_STRONG = "smart"
 LLM_CHEAP = "cheap"
 LLM_FREE = "free"
-# #25 trims the worker to these two skills; the same pair is the ceiling for every role, so no role
-# inherits the full default catalog (about 35 skills and 58k prompt tokens on a trivial task).
-TRIMMED_SKILLS = ("agent-canvas-environment", "code-review")
+# Every role allows the same three public skills, so no role inherits the full default catalog (about
+# 35 skills and 58k prompt tokens on a trivial task). The user skills are hidden per role instead.
+PUBLIC_SKILLS = ("agent-canvas-environment", "code-review", "security")
+# The two user skills of the reference installation: workers run them, every other role hides them.
+WORKER_SKILLS = ("systematic-debugging", "test-driven-development")
 # Condense after 100 events, as the live installation does, to keep the context of every step smaller.
 CONDENSER_MAX_SIZE = 100
 REASON_MAX = 200
@@ -52,16 +54,18 @@ class Role:
     name: str
     llm: str
     prompt: str
+    public_skills: tuple[str, ...]
+    disabled_skills: tuple[str, ...]
 
 
 ROLES = (
-    Role("planner", LLM_STRONG, "planner.md"),
-    Role("worker", LLM_CHEAP, "worker.md"),
-    Role("worker-strong", LLM_STRONG, "worker-strong.md"),
-    Role("reviewer", LLM_STRONG, "reviewer.md"),
-    Role("sensitive-reviewer", LLM_STRONG, "sensitive-reviewer.md"),
+    Role("planner", LLM_STRONG, "planner.md", PUBLIC_SKILLS, WORKER_SKILLS),
+    Role("worker", LLM_CHEAP, "worker.md", PUBLIC_SKILLS, ()),
+    Role("worker-strong", LLM_STRONG, "worker-strong.md", PUBLIC_SKILLS, ()),
+    Role("reviewer", LLM_STRONG, "reviewer.md", PUBLIC_SKILLS, WORKER_SKILLS),
+    Role("sensitive-reviewer", LLM_STRONG, "sensitive-reviewer.md", PUBLIC_SKILLS, WORKER_SKILLS),
 )
-ROLE_WORKER_FREE = Role("worker-free", LLM_FREE, "worker.md")
+ROLE_WORKER_FREE = Role("worker-free", LLM_FREE, "worker.md", PUBLIC_SKILLS, ())
 
 
 def roles_for(cfg) -> tuple[Role, ...]:
@@ -227,7 +231,8 @@ class AgentProfiles:
         profile["name"] = role.name
         profile["llm_profile_ref"] = role.llm
         profile["system_message_suffix"] = prompt
-        profile["public_skills"] = list(TRIMMED_SKILLS)
+        profile["public_skills"] = list(role.public_skills)
+        profile["disabled_skills"] = list(role.disabled_skills)
         profile["mcp_server_refs"] = []
         condenser = base.get("condenser")
         if isinstance(condenser, dict):
@@ -242,6 +247,7 @@ class AgentProfiles:
                 and profile.get("llm_profile_ref") == desired["llm_profile_ref"]
                 and profile.get("system_message_suffix") == desired["system_message_suffix"]
                 and profile.get("public_skills") == desired["public_skills"]
+                and profile.get("disabled_skills") == desired["disabled_skills"]
                 and profile.get("mcp_server_refs") == []
                 and _condenser_max_size(profile) == _condenser_max_size(desired))
 

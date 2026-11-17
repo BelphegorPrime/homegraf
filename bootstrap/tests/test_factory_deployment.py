@@ -262,6 +262,12 @@ class ComposeContractTests(unittest.TestCase):
         version = re.search(r"forgehands:(v[0-9.]+)\}", image).group(1)
         self.assertGreaterEqual(tuple(int(part) for part in version[1:].split(".")), (0, 2, 15))
 
+    def test_forgehands_release_knows_the_human_login(self):
+        image = next(line.strip() for line in self.forgehands if line.strip().startswith("image:"))
+        match = re.search(r"forgehands:v(\d+)\.(\d+)\.(\d+)\}", image)
+        self.assertIsNotNone(match, image)
+        self.assertGreaterEqual(tuple(int(part) for part in match.groups()), (0, 2, 19))
+
     def test_the_launcher_starts_the_original_image_command(self):
         joined = "\n".join(self.forgehands)
         self.assertIn('entrypoint: ["node", "/factory/forgehands-entrypoint.mjs"]', joined)

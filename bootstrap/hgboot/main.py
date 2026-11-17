@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import sys
 
-from . import factory, handoff, seed
+from . import factory, factory_smoke, handoff, seed
 from .adguard import AdGuard
 from .config import Config, ConfigError
 from .factory_config import FactoryConfig
@@ -151,7 +151,10 @@ def main(argv: list[str] | None = None) -> int:
         return agent_compose_cmd(argv[1:])
     if argv[:1] == ["add-host"]:
         return add_host_cmd(argv[1:])
+    if argv[:1] == ["factory-smoke"]:
+        return factory_smoke.command(argv[1:])
     if argv and argv[0] != "run":
-        print("usage: python -m hgboot [run | certificates | show infisical-password | agent-compose NAME | add-host NAME ADDRESS]", file=sys.stderr)
+        print("usage: python -m hgboot [run | certificates | show infisical-password | agent-compose NAME | add-host NAME ADDRESS | "
+              "factory-smoke --repo OWNER/REPO --confirm-scratch OWNER/REPO [--keep] [--preflight]]", file=sys.stderr)
         return 2
     return run()

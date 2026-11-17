@@ -53,6 +53,10 @@ class FakeFactory:
         self.spurious_dependency = False
         self.epic_missing_child = False
         self.duplicate_children = False
+        self.early_start = False
+        self.no_epic_closure = False
+        self.human_closes_epic = False
+        self.planner_repeats = False
         self.now = 0.0
 
     # -- clock injection --------------------------------------------------------------------
@@ -76,23 +80,61 @@ class FakeFactory:
         self.next_number += 1
         return 1000 + self.next_number
 
+    def stamp(self) -> str:
+        seconds = int(self.now)
+        return f"2026-01-01T00:{seconds // 60:02d}:{seconds % 60:02d}Z"
+
     # -- the factory's part ------------------------------------------------------------------
     def _evolve(self, repo: dict, issue: dict) -> None:
         issue["polls"] += 1
-        polls = issue["polls"]
-        number = issue["number"]
         if self.stall:
             return
+        if issue["kind"] == "epic":
+            self._epic_step(repo, issue)
+        elif issue["kind"] == "child":
+            self._child_step(repo, issue)
+        else:
+            self._advance(repo, issue, issue["polls"])
+
+    def _child_step(self, repo: dict, issue: dict) -> None:
+        if self.early_start and issue["part"] == "B" and issue["polls"] == 1:
+            repo["comments"][issue["number"]] = [self._conversation()]
+            return
+        blocker = issue.get("blocked_by")
+        if blocker is not None and repo["issues"][blocker]["state"] == "open":
+            return
+        issue["work"] = issue.get("work", 0) + 1
+        self._advance(repo, issue, issue["work"])
+
+    def _epic_step(self, repo: dict, issue: dict) -> None:
+        children = [child for child in repo["issues"].values() if child.get("epic") == issue["number"]]
+        if not children or any(child["state"] != "closed" for child in children):
+            return
+        if self.planner_repeats and len(repo["comments"].get(issue["number"], [])) < 2:
+            repo["comments"][issue["number"]].append({
+                "id": self.next_id(), "user": {"login": "homegraf-agent"},
+                "body": "Planned the children again: they are all closed now."})
+        if self.no_epic_closure:
+            return
+        actor = "owner" if self.human_closes_epic else "homegraf-agent"
+        issue["state"] = "closed"
+        issue["timeline"].append({"type": "close", "user": {"login": actor}})
+
+    def _conversation(self) -> dict:
+        return {"id": self.next_id(), "user": {"login": "homegraf-agent"},
+                "body": "Working in http://openhands.local:8000/conversations/abc123"
+                        "?access_token=conversation-secret"}
+
+    def _advance(self, repo: dict, issue: dict, polls: int) -> None:
+        number = issue["number"]
         if polls == 1 and self.conversation:
-            repo["comments"][number] = [{"id": self.next_id(), "user": {"login": "homegraf-agent"},
-                                         "body": "Working in http://openhands.local:8000/conversations/abc123"
-                                                 "?access_token=conversation-secret"}]
+            repo["comments"][number] = [self._conversation()]
         if polls >= 2 and number not in repo["pulls"]:
             repo["pulls"][number] = {
                 "id": self.next_id(), "number": number, "state": "open", "draft": True,
                 "title": f"WIP: {issue['title']}", "body": f"Closes #{number}",
                 "head": {"ref": f"ai/issue-{number}", "sha": f"sha{number}"},
-                "labels": [], "merged": False, "merged_at": None,
+                "labels": [], "merged": False, "merged_at": None, "created_at": self.stamp(),
                 "user": {"login": self.pr_author}}
         pull = repo["pulls"].get(number)
         if pull is None:
@@ -113,7 +155,7 @@ class FakeFactory:
             issue["labels"].add("ai:escalate")
         merged = polls >= 5 if issue["kind"] != "protected" else (self.protected_merged and polls >= 6)
         if merged:
-            pull.update({"merged": True, "merged_at": "2026-01-01T00:00:00Z", "state": "closed",
+            pull.update({"merged": True, "merged_at": self.stamp(), "state": "closed",
                          "merged_by": {"login": self.merge_author}})
             issue["state"] = "closed"
             issue["timeline"].append({"type": "close", "user": {"login": "homegraf-agent"}})
@@ -125,7 +167,7 @@ class FakeFactory:
 
     def pull_view(self, repo: dict, pull: dict) -> dict:
         view = {k: pull[k] for k in ("number", "state", "draft", "title", "body", "head", "labels", "merged",
-                                     "merged_at", "user")}
+                                     "merged_at", "created_at", "user")}
         view["merged"] = bool(pull["merged"])
         if pull.get("merged_by"):
             view["merged_by"] = pull["merged_by"]
@@ -145,6 +187,7 @@ class FakeFactory:
         if self.duplicate_children:
             self._child(repo, epic, token, "A", f"Create `smoke-epic/{token}-a.txt` with another line.")
         a, b, c = (child["number"] for child in children)
+        children[1]["blocked_by"] = a
         graph = {epic["number"]: {a, b, c}, a: set(), b: {a}, c: set()}
         if self.epic_missing_child:
             graph[epic["number"]] = {a, b}
@@ -162,7 +205,8 @@ class FakeFactory:
         number = len(repo["issues"]) + 1
         issue = {"number": number, "title": f"Factory smoke: epic child {part} [{token}]",
                  "body": f"Part of #{epic['number']}\n\n{task}", "state": "open", "labels": set(),
-                 "polls": 0, "timeline": [], "kind": "child"}
+                 "polls": 0, "timeline": [], "kind": "child", "epic": epic["number"], "part": part,
+                 "blocked_by": None}
         repo["issues"][number] = issue
         return issue
 
@@ -260,8 +304,9 @@ class FakeFactory:
                          "labels": {by_id[i] for i in req.json.get("labels") or []}, "polls": 0,
                          "timeline": [{"type": "label", "user": {"login": "owner"}, "label": {"name": by_id[i]}}
                                       for i in req.json.get("labels") or []],
-                         "kind": "protected" if "protected" in req.json["title"] else
-                                 ("later" if "added later" in req.json["body"] else "normal")}
+                         "kind": "epic" if "ai:plan" in {by_id[i] for i in req.json.get("labels") or []} else
+                                 ("protected" if "protected" in req.json["title"] else
+                                  ("later" if "added later" in req.json["body"] else "normal"))}
                 repo["issues"][number] = issue
                 if "ai:plan" in issue["labels"]:
                     self._plan(repo, issue)
@@ -862,6 +907,115 @@ class EpicGraphTests(SmokeTest):
         deletes = [request.path.split("?")[0] for request in self.srv.requests if request.method == "DELETE"]
         self.assertEqual(len(deletes), 7)
         self.assertTrue(all("/issues/" in path for path in deletes))
+
+
+class EpicRunTests(SmokeTest):
+    """The children run in order and the epic reviewer, never the smoke, closes the epic."""
+
+    def planned(self):
+        smoke = self.smoke(include_epic=True, timeout=60)
+        plan = smoke.preflight(REPO, REPO)
+        smoke._ensure_repository(plan)
+        smoke._configure(plan)
+        epic, children = smoke._epic_plan_case(plan)
+        return smoke, plan, epic, children
+
+    def test_the_children_run_in_order_and_the_reviewer_closes_the_epic(self):
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        text = report.render()
+        self.assertIn("epic order: passed (B started after A merged, C independent)", text)
+        self.assertIn("epic closure: passed (closed by the reviewer)", text)
+
+    def test_cleanup_deletes_the_epic_and_its_children_after_the_run(self):
+        self.fake.seed()
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(self.fake.repos[REPO]["issues"], {})
+        deletes = [request.path.split("?")[0] for request in self.srv.requests if request.method == "DELETE"]
+        self.assertEqual(len(deletes), 7)
+
+    def test_the_smoke_writes_to_the_epic_only_at_creation_and_cleanup(self):
+        self.fake.seed()
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        deletes = [request for request in self.writes() if request.method == "DELETE"]
+        self.assertEqual(len(deletes), 7)
+        epic = int(deletes[3].path.rsplit("/", 1)[1])       # cleanup follows the creation order
+        created = [request for request in self.writes() if request.path.endswith("/issues")
+                   and "epic planning" in request.json["body"]]
+        self.assertEqual(len(created), 1)
+        plan = [label for label in self.fake.repos[REPO]["labels"].values() if label["name"] == "ai:plan"][0]
+        self.assertIn(plan["id"], created[0].json["labels"])
+        touched = [(request.method, request.path) for request in self.writes()
+                   if f"/issues/{epic}" in request.path.split("?")[0]]
+        self.assertEqual(touched, [("DELETE", f"/api/v1/repos/{REPO}/issues/{epic}")])
+
+    def test_a_missing_timestamp_skips_the_order_comparison(self):
+        from hgboot.factory_smoke import Observation
+        smoke = self.smoke()
+        smoke._assert_merged_after(2, Observation(labels=(), pr={"created_at": ""}),
+                                   1, Observation(labels=(), pr={"merged_at": "2026-01-01T00:00:00Z"}))
+        smoke._assert_merged_after(2, Observation(labels=(), pr={"created_at": "2026-01-01T00:00:00Z"}),
+                                   1, Observation(labels=(), pr={}))
+
+    def _epic_run(self):
+        smoke, plan, epic, children = self.planned()
+        return smoke, plan, epic, children
+
+    def test_each_switch_fails_with_the_right_exception_and_message(self):
+        cases = [
+            ("early_start", SmokeFailure, "started before its prerequisite"),
+            ("human_closes_epic", SmokeFailure, "closed by owner, not the agent"),
+            ("planner_repeats", SmokeFailure, "the planner polled or re-ran"),
+            ("no_epic_closure", SmokeTimeout, "epic closure"),
+        ]
+        self.fake.seed()
+        for switch, exception, message in cases:
+            with self.subTest(switch=switch):
+                self.fake.repos.clear()
+                self.fake.seed()
+                self.srv.requests.clear()
+                setattr(self.fake, switch, True)
+                try:
+                    smoke, plan, epic, children = self._epic_run()
+                    with self.assertRaises(exception) as caught:
+                        smoke._epic_run_case(plan, epic, children)
+                finally:
+                    setattr(self.fake, switch, False)
+                self.assertIn(message, str(caught.exception))
+
+    def test_an_early_start_names_the_child_and_its_blocker(self):
+        self.fake.seed()
+        self.fake.early_start = True
+        self.addCleanup(setattr, self.fake, "early_start", False)
+        smoke, plan, epic, children = self._epic_run()
+        roles = factory_smoke._child_roles(children)
+        with self.assertRaises(SmokeFailure) as caught:
+            smoke._epic_run_case(plan, epic, children)
+        self.assertEqual(str(caught.exception),
+                         f"#{roles['b'][0]}: started before its prerequisite #{roles['a'][0]} closed")
+
+    def test_a_pull_request_created_before_the_prerequisite_merged_fails(self):
+        original = self.fake._advance
+
+        def early_pull(repo, issue, polls):
+            original(repo, issue, polls)
+            pull = repo["pulls"].get(issue["number"])
+            if issue["kind"] == "child" and issue.get("part") == "B" and pull:
+                pull["created_at"] = "2025-12-31T23:59:59Z"
+
+        self.fake._advance = early_pull
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("before #", report.render())
+        self.assertIn("merged at", report.render())
+
+    def test_the_epic_stage_is_absent_without_the_flag(self):
+        report = self.smoke().run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertNotIn("epic order", report.render())
+        self.assertNotIn("epic closure", report.render())
 
 
 class CheckEpicGraphTests(unittest.TestCase):

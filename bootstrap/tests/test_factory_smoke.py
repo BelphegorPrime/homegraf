@@ -60,6 +60,9 @@ class FakeFactory:
         self.second_pr = False
         self.second_pr_on_retrigger = False
         self.duplicate_run = False
+        self.rounds_exhausted = False
+        self.too_many_rounds = False
+        self.escalate_followup = False
         self.conversations = 0
         self.now = 0.0
 
@@ -113,13 +116,30 @@ class FakeFactory:
         self._advance(repo, issue, issue["work"])
 
     def _followup_step(self, repo: dict, issue: dict) -> None:
-        self._advance(repo, issue, issue["polls"])
+        polls = issue["polls"]
+        if self.rounds_exhausted and polls >= 5:
+            polls = 4                                   # the ai:blocked label replaces the merge
+        self._advance(repo, issue, polls)
         pull = repo["pulls"].get(issue["number"])
-        if pull is None or issue["polls"] != 3:
+        if pull is None:
+            return
+        if self.escalate_followup and issue["polls"] >= 3 and "ai:escalate" not in issue["labels"]:
+            issue["labels"].add("ai:escalate")
+            issue["timeline"].append({"id": self.next_id(), "type": "label", "user": {"login": "homegraf-agent"},
+                                      "label": {"name": "ai:escalate"}})
+        if self.rounds_exhausted and issue["polls"] >= 5:
+            if "ai:blocked" not in [label["name"] for label in pull["labels"]]:
+                pull["labels"].append({"name": "ai:blocked"})
+                issue["timeline"].append({"id": self.next_id(), "type": "label",
+                                          "user": {"login": "homegraf-agent"},
+                                          "label": {"name": "ai:blocked"}})
+        if issue["polls"] != 3:
             return
         pull["labels"].append({"name": "ai:changes"})
-        issue["timeline"].append({"type": "label", "user": {"login": "homegraf-agent"},
-                                  "label": {"name": "ai:changes"}})
+        for _ in range(4 if self.too_many_rounds else 1):
+            issue["timeline"].append({"id": self.next_id(), "type": "label",
+                                      "user": {"login": "homegraf-agent"},
+                                      "label": {"name": "ai:changes"}})
         pull["head"]["sha"] = f"sha{issue['number']}b"
         repo["statuses"][pull["head"]["sha"]] = [
             {"context": "ci / seed (pull_request)", "state": "success"},
@@ -1138,6 +1158,49 @@ class FollowupCaseTests(SmokeTest):
         report = self.smoke().run(REPO, REPO)
         self.assertTrue(report.passed, report.render())
         self.assertEqual(self._retriggers(), [])
+
+    def _followup_run(self):
+        smoke = self.smoke(include_epic=True, timeout=120)
+        plan = smoke.preflight(REPO, REPO)
+        smoke._ensure_repository(plan)
+        smoke._configure(plan)
+        return smoke, plan
+
+    def test_each_switch_fails_with_the_right_exception_and_message(self):
+        cases = [
+            ("rounds_exhausted", SmokeFailure, "rounds exhausted (ai:blocked) before the follow-up merged"),
+            ("too_many_rounds", SmokeFailure, "more than 3 ai:changes rounds"),
+        ]
+        self.fake.seed()
+        for switch, exception, message in cases:
+            with self.subTest(switch=switch):
+                self.fake.repos.clear()
+                self.fake.seed()
+                self.srv.requests.clear()
+                setattr(self.fake, switch, True)
+                try:
+                    smoke, plan = self._followup_run()
+                    with self.assertRaises(exception) as caught:
+                        smoke._followup_case(plan)
+                finally:
+                    setattr(self.fake, switch, False)
+                self.assertIn(message, str(caught.exception))
+
+    def test_an_escalated_followup_is_reported_and_still_merges(self):
+        self.fake.escalate_followup = True
+        self.addCleanup(setattr, self.fake, "escalate_followup", False)
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertIn("follow-up: passed (same pull request and branch, merged escalated)", report.render())
+
+    def test_an_escalated_followup_still_fails_on_a_second_pull_request(self):
+        self.fake.escalate_followup = True
+        self.fake.second_pr = True
+        self.addCleanup(setattr, self.fake, "escalate_followup", False)
+        self.addCleanup(setattr, self.fake, "second_pr", False)
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("second pull request or branch", report.render())
 
 
 class CheckEpicGraphTests(unittest.TestCase):

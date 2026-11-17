@@ -41,6 +41,8 @@ CHECK_CONTEXT = "ci / seed"
 DEFAULT_TIMEOUT = 1800.0
 DEFAULT_INTERVAL = 15.0
 SETTLE_POLLS = 3
+# Mirrors the documented ForgeHands default of FORGEHANDS_MAX_ROUNDS (docs/agents.md).
+DEFAULT_MAX_ROUNDS = 3
 PAGE_SIZE = 50
 
 CHAIN = ("ticket", "conversation", "draft pull request", "ci", "review", "merged", "issue closed")
@@ -634,6 +636,7 @@ class Smoke:
             observation = self._observe(repository, number)
             self._identity(observation, number)
             self._assert_single(repository, number)
+            self._assert_rounds(observation, number)
             record(observation)
             if observation.conversation and not observation.merged:
                 break
@@ -648,6 +651,7 @@ class Smoke:
             observation = self._observe(repository, number)
             self._identity(observation, number)
             self._assert_single(repository, number)
+            self._assert_rounds(observation, number)
             record(observation)
             if observation.merged and observation.closed:
                 break
@@ -703,6 +707,17 @@ class Smoke:
         path = f"/repos/{repository}/branches/{quote(expected, safe='')}"
         if self.api.call("GET", path, allow=(404,)).status != 200:
             raise SmokeFailure(f"#{number}: a follow-up opened a second pull request or branch")
+
+    def _assert_rounds(self, observation: Observation, number: int) -> None:
+        """A follow-up that ran out of rounds must not pass as a merged follow-up."""
+        if ("ai:blocked" in observation.labels or "ai:blocked" in observation.pr_labels) and not observation.merged:
+            raise SmokeFailure(f"#{number}: rounds exhausted (ai:blocked) before the follow-up merged")
+        limit = getattr(self.factory, "max_rounds", None)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            limit = DEFAULT_MAX_ROUNDS
+        rounds = len(observation.label_actors.get("ai:changes", ()))
+        if rounds > limit:
+            raise SmokeFailure(f"#{number}: more than {limit} ai:changes rounds, the rounds limit is exceeded")
 
     def _assert_not_started(self, number: int, blocker: int) -> None:
         """ForgeHands starts a child only when its dependencies closed; a start before that is a leak."""

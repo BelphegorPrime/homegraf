@@ -180,6 +180,45 @@ Comments and reviews remain the place for evidence and for asking for changes, b
 has a third account when its route is set up: the token behind `FORGEJO_SECURITY_TOKEN` must belong to a user the worker's token cannot sign
 as.
 
+### Security reviewer of its own and two keys
+
+Two keys protect a pull request from a worker that goes rogue:
+
+1. **The first key** is the worker's Forgejo token (`FORGEJO_TOKEN`, `FORGEHANDS_FORGEJO_AGENT_TOKEN` in `.env`). It can open branches,
+   push commits and comment on issues — everything the worker needs to do its job.
+2. **The second key** is the security reviewer's own Forgejo user and token (`FORGEJO_SECURITY_TOKEN`, named in `AGENT_SECRETS`). The security
+   review route signs its comment as this user. Because the comment is what a reviewer's verdict rests on, the worker must not be able to write
+   it: the security reviewer must be a Forgejo user the worker's token does not control, and the token is never a value in any compose file — only
+   a secret substitution (`${FORGEJO_SECURITY_TOKEN}`).
+
+The worker and the security reviewer are different people with different Forgejo accounts. The worker never learns the reviewer's token, so it
+cannot forge a review comment that looks like the reviewer's verdict.
+
+**Set it up:**
+
+1. Create a Forgejo user for the security reviewer — for example `openhands-security`. It must not be `homegraf-agent`, `operator` or any user
+   the worker's token can act as.
+2. Give that user read access to the repository (read:repository) so it can read the commits and files under review.
+3. Create a personal access token for it with scopes `read:repository` and `write:issue`: read the repository, and write the review comment on
+   pull requests.
+4. Store that token as a secret (`FORGEJO_SECURITY_TOKEN`) — never a value in `compose.yaml`, `seed/infra/homelab/templates/agents/compose.yaml`
+   or `.env`. The compose files already pass `${FORGEJO_SECURITY_TOKEN}`; your secret store fills it in.
+5. Set `SECURITY_REVIEWERS` to the reviewer's login, for example `openhands-security`. That is the list of Forgejo users ForgeHands trusts as
+   security reviewers; only one of them writes the verdict comment.
+6. Give the security review route the secret: in `LABEL_ROUTES`, the route whose `"on"` is `"pull_request"` and whose tier is the security
+   review tier gets `"forgejo_token_secret": "FORGEJO_SECURITY_TOKEN"` so ForgeHands hands the token to the conversation.
+7. Turn `two_keys` on per repository in `MERGE_POLICY` and give each protected path a `reasons`. Example, with neutral values:
+
+   ```
+   MERGE_POLICY: '{"owner/repository": {"two_keys": true, "reasons": {"tests/ingress": ["security review"], "README.md": ["security review"]}}}'
+   ```
+
+   With `two_keys: true`, ForgeHands merges a pull request on a path listed in `reasons` only when a security review comment from one of the
+   `SECURITY_REVIEWERS` users is present on it. Paths not in `reasons` keep the normal `deny`/`allow` handling.
+
+**How to go back.** Remove `two_keys` (or delete the whole repository entry) from `MERGE_POLICY`; the security review route then no longer gates
+merges and `FORGEJO_SECURITY_TOKEN` can be dropped from `AGENT_SECRETS` and from the compose files.
+
 ### Quirks worth knowing
 
 - A pull request whose title starts with `WIP: ` reads `mergeable: false` and Forgejo refuses to merge it. Agent pull requests are opened with

@@ -623,6 +623,12 @@ services:
       OPENHANDS_API_URL: ${FORGEHANDS_OPENHANDS_API_URL:-}
       OPENHANDS_API_KEY: ${OPENHANDS_LOCAL_BACKEND_API_KEY:-}
       # Variables handed to every conversation: without them the agent has no Forgejo token (saved secrets need to be named).
+      # Security reviewer of its own: which forge users the security review route trusts, e.g. "openhands-security".
+      SECURITY_REVIEWERS: ${FORGEHANDS_SECURITY_REVIEWERS:-}
+      # The security reviewer's token: never a value here, always from the secret store.
+      FORGEJO_SECURITY_TOKEN: ${FORGEJO_SECURITY_TOKEN:-}
+      # For two_keys: the security reviewer re-checks only files the worker did not touch since the last review.
+      WAIT_FOR_SAME_FILES: "1"
       AGENT_SECRETS: ${FORGEHANDS_AGENT_SECRETS:-}
       FORGEJO_URL: ${FORGEHANDS_FORGEJO_URL:-http://forgejo:3000}
       # The agent user's token only.  The operator's FORGEJO_TOKEN never reaches ForgeHands; in opted-in mode the bootstrap's

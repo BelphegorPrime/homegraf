@@ -116,7 +116,7 @@ Runs the agent factory end to end in one named scratch repository and reports th
   --confirm-scratch OWNER/REPO the same repository, repeated: the guard against a wrong target
   --keep                       keep the repository and its issues and list them as retained
   --preflight                  read-only: check the target, write nothing and spend no tokens
-  --include-epic               also add the ordered-epic and bounded follow-up scenarios; spends extra model tokens
+  --include-epic               also add the ordered epic and follow-up scenarios; spends extra model tokens
   --timeout SECONDS            bound on each wait (default 1800)
   --interval SECONDS           poll interval (default 15)
   -h, --help                   show this help
@@ -557,6 +557,7 @@ class Smoke:
     def _epic_cases(self, plan: Plan) -> None:
         epic, children = self._epic_plan_case(plan)
         self._epic_run_case(plan, epic, children)
+        self._followup_case(plan)
 
     def _epic_plan_case(self, plan: Plan) -> tuple[int, dict[int, str]]:
         """One epic planned by the planner into three children with an exact dependency graph."""
@@ -604,6 +605,56 @@ class Smoke:
         self._await_epic_closure(epic, children)
         self.report.add("epic order", "passed", "B started after A merged, C independent")
         self.report.add("epic closure", "passed", "closed by the reviewer")
+
+    def _followup_case(self, plan: Plan) -> None:
+        """One reviewer-requested change on the same pull request and branch, ending merged."""
+        repository = plan.repository
+        body = (f"Factory smoke {self.run_token} (follow-up round).\n\n"
+                f"Create `smoke-epic/{self.run_token}-f.txt` with the line `followup {self.run_token}`, "
+                "change nothing else, and do not touch `infra/`.\n\n"
+                "Reply on this issue with the link to your conversation, open a draft pull request that "
+                "closes this issue, and let CI and the reviewer finish.\n\n"
+                f"The reviewer must request exactly one follow-up change on that pull request: the line "
+                f"in `smoke-epic/{self.run_token}-f.txt` must end with ` ok`. Make that change on the same "
+                "branch and the same pull request; never open a second pull request or branch.")
+        number = self._open_issue(repository, "follow-up", body, ready_at_creation=True)
+        deadline = self.clock() + self.timeout
+        shas: set[str] = set()
+        escalated = False
+        while True:
+            observation = self._observe(repository, number)
+            self._identity(observation, number)
+            self._assert_single(repository, number)
+            head = observation.pr.get("head") if observation.pr else None
+            sha = head.get("sha") if isinstance(head, dict) else None
+            if isinstance(sha, str) and sha:
+                shas.add(sha)
+            escalated = escalated or "ai:escalate" in observation.labels or "ai:escalate" in observation.pr_labels
+            if observation.merged and observation.closed:
+                break
+            self._bound(deadline, f"#{number}: follow-up stalled at {observation.reached()}, "
+                                  f"reached {observation.chain()}")
+            self.sleep(self.interval)
+        if len(shas) < 2:
+            raise SmokeFailure(f"#{number}: the head sha never changed, no follow-up round happened")
+        suffix = " escalated" if escalated else ""
+        self.report.add("follow-up", "passed", "same pull request and branch, merged" + suffix)
+
+    def _assert_single(self, repository: str, number: int) -> None:
+        """The follow-up round stays on the one pull request and the one branch of the issue."""
+        pulls = self.api.json("GET", f"/repos/{repository}/pulls?state=all&limit={PAGE_SIZE}")
+        refs = [str((pull.get("head") or {}).get("ref") or "")
+                for pull in pulls or [] if isinstance(pull, dict)]
+        expected = f"ai/issue-{number}"
+        matching = [ref for ref in refs if ref.endswith(f"issue-{number}")]
+        extra = [ref for ref in refs if ref.startswith(expected + "-")]
+        if len(matching) > 1 or extra or any(ref != matching[0] for ref in matching):
+            raise SmokeFailure(f"#{number}: a follow-up opened a second pull request or branch")
+        if not matching:
+            return
+        path = f"/repos/{repository}/branches/{quote(expected, safe='')}"
+        if self.api.call("GET", path, allow=(404,)).status != 200:
+            raise SmokeFailure(f"#{number}: a follow-up opened a second pull request or branch")
 
     def _assert_not_started(self, number: int, blocker: int) -> None:
         """ForgeHands starts a child only when its dependencies closed; a start before that is a leak."""

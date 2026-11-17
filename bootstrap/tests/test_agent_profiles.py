@@ -275,7 +275,8 @@ class AgentProfilesTest(unittest.TestCase):
             prompt = (PROMPTS / expected_prompt[role.name]).read_text(encoding="utf-8")
             self.assertEqual(stored["llm_profile_ref"], expected_llm[role.name])
             self.assertEqual(stored["system_message_suffix"], prompt)
-            self.assertEqual(stored["public_skills"], list(TRIMMED_SKILLS))
+            self.assertEqual(stored["public_skills"], list(role.public_skills))
+            self.assertEqual(stored["disabled_skills"], list(role.disabled_skills))
             self.assertEqual(stored["mcp_server_refs"], [])
             self.assertEqual(stored["condenser"],
                              {"condenser_kind": "llm_summarizing", "enabled": True, "max_size": 100})
@@ -323,6 +324,51 @@ class AgentProfilesTest(unittest.TestCase):
         self.assert_read_after_every_write()
         for req in self.srv.requests:
             self.assertEqual(req.headers.get("x-session-api-key"), BACKEND_KEY)
+
+    def test_each_role_gets_exactly_its_skill_lists(self):
+        trimmed = ["agent-canvas-environment", "code-review"]
+        review = [*trimmed, "security"]
+        worker_skills = ["systematic-debugging", "test-driven-development"]
+        expected = {
+            "planner": (trimmed, worker_skills),
+            "worker": (trimmed, []),
+            "worker-strong": (trimmed, []),
+            "worker-free": (trimmed, []),
+            "reviewer": (review, worker_skills),
+            "sensitive-reviewer": (review, worker_skills),
+        }
+
+        self.run_profiles(cfg=factory(self.srv.url, free_model=FREE_MODEL))
+
+        for role, (public, disabled) in expected.items():
+            with self.subTest(role=role):
+                self.assertEqual(self.fake.agents[role]["public_skills"], public)
+                self.assertEqual(self.fake.agents[role]["disabled_skills"], disabled)
+                body = self.fake.written(f"/api/agent-profiles/{role}")[0][2]
+                self.assertEqual(body["public_skills"], public)
+                self.assertEqual(body["disabled_skills"], disabled)
+
+    def test_old_skill_lists_are_rewritten_once_and_the_id_is_kept(self):
+        ids = self.run_profiles()
+        self.fake.agents["reviewer"].update({"public_skills": list(FULL_SKILLS), "disabled_skills": []})
+        self.fake.agents["worker"]["disabled_skills"] = ["systematic-debugging", "test-driven-development"]
+        self.fake.writes.clear()
+
+        self.assertEqual(self.run_profiles(), ids)
+
+        self.assertEqual({path for _, path, _ in self.fake.writes},
+                         {"/api/agent-profiles/reviewer", "/api/agent-profiles/worker"})
+        self.assertEqual(self.fake.agents["reviewer"]["public_skills"],
+                         ["agent-canvas-environment", "code-review", "security"])
+        self.assertEqual(self.fake.agents["reviewer"]["disabled_skills"],
+                         ["systematic-debugging", "test-driven-development"])
+        self.assertEqual(self.fake.agents["worker"]["disabled_skills"], [])
+        self.assertEqual(self.fake.agents["reviewer"]["id"], ids["reviewer"])
+        self.assertEqual(self.fake.agents["worker"]["id"], ids["worker"])
+
+        self.fake.writes.clear()
+        self.assertEqual(self.run_profiles(), ids)
+        self.assertEqual(self.fake.writes, [])
 
     def test_a_free_model_adds_the_free_llm_profile_and_the_worker_free_role(self):
         cfg = factory(self.srv.url, free_model=FREE_MODEL)

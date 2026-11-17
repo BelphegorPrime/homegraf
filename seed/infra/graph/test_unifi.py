@@ -54,7 +54,8 @@ def test_the_snapshot_keeps_what_the_map_needs_and_nothing_private():
     assert s["devices"][0]["ports"] == {1: {"name": "Port 1", "speed": 1000}, 11: {"name": "SFP+ 2", "speed": 10000}}   # ports that are up
     assert s["clients"] == {"total": 4, "wired": 2, "perDevice": {CORE: {"wired": 2, "wireless": 0}, AP: {"wired": 0, "wireless": 2}}}
     assert [k["ip"] for k in s["known"]] == ["10.0.0.45", "10.0.10.100"]                                   # only the machines we know
-    text = json.dumps(s)
+    # The fetch time is not private, and a clock at 11:11 contains the client MAC checked below.
+    text = json.dumps({k: v for k, v in s.items() if k != "fetched"})
     for private in ("SECRET-WIFI", "someones-phone", "workhorse", "11:11", "33:33"):
         assert private not in text
     assert [w["name"] for w in s["wlans"]] == ["Home", "Off"] and s["wlans"][0]["network"] == "Default"

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Idempotenter CA-Bootstrap für ingressctl in Infisical v0.167.x (Certificate Manager).
+"""Idempotent CA bootstrap for ingressctl in Infisical v0.167.x (Certificate Manager).
 
-  # Org-Admin-Identity (Universal Auth) des Betreibers; claude-bootstrap wurde nach dem Bootstrap gelöscht:
+  # the operator's org-admin identity (Universal Auth); claude-bootstrap was deleted after the bootstrap:
   export INFISICAL_URL=http://10.0.0.45:8079 INFISICAL_BOOTSTRAP_CLIENT_ID=... INFISICAL_BOOTSTRAP_CLIENT_SECRET=...
-  python infra/infisical/bootstrap.py            # Probelauf: zeigt, was angelegt würde
-  python infra/infisical/bootstrap.py --apply    # anlegen (bestehende Objekte gleichen Namens werden wiederverwendet)
+  python infra/infisical/bootstrap.py            # dry run: shows what would be created
+  python infra/infisical/bootstrap.py --apply    # create (existing objects with the same name are reused)
 
-Legt an (Namen fest, damit Wiederholungen nichts doppelt anlegen):
-- Policy  `ingressctl-local-codes`: nur *.<domain> (inventory/homegraf.yaml), server_auth, EC P-256/P-384, max. 90 Tage
-- Profil  `ingressctl` auf der vorhandenen Root-CA (Free self-hosted erlaubt genau eine CA)
-- Application `ingressctl` mit dem Profil und aktiviertem API-Enrollment
-- Machine Identity `ingressctl` (Org-Rolle no-access, Universal Auth, Access-Token 1 h),
-  Mitglied der Application mit Rolle `operator`; Client Secret -> infra/secrets/ingressctl.env
-Schreibt außerdem profile_id/application_id in inventory/ingress.yaml und das Root-Zertifikat nach
-docs/homelab-root-ca.pem. Endpunkte und Schemas: backend/src/server/routes/v1 am Tag v0.167.2.
+Creates (names are fixed so that repeated runs create nothing twice):
+- policy  `ingressctl-local-codes`: only *.<domain> (inventory/homegraf.yaml), server_auth, EC P-256/P-384, max 90 days
+- profile `ingressctl` on the existing root CA (free self-hosted allows exactly one CA)
+- application `ingressctl` with the profile and API enrollment enabled
+- machine identity `ingressctl` (org role no-access, Universal Auth, access token 1 h),
+  member of the application with role `operator`; client secret -> infra/secrets/ingressctl.env
+It also writes profile_id/application_id into inventory/ingress.yaml and the root certificate to
+docs/homelab-root-ca.pem. Endpoints and schemas: backend/src/server/routes/v1 at tag v0.167.2.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ NAME = "ingressctl"
 DOMAIN = settings.domain(ROOT)   # inventory/homegraf.yaml: the names the CA may issue for are *.<domain>
 POLICY = {
     "name": "ingressctl-local-codes",   # the name stays: an installation that already has the policy reuses it
-    "description": f"TLS-Serverzertifikate für *.{DOMAIN} über ingressctl (NPM)",
+    "description": f"TLS server certificates for *.{DOMAIN} via ingressctl (NPM)",
     "subject": [{"type": "common_name", "allowed": [f"*.{DOMAIN}"]}],
     "sans": [{"type": "dns_name", "allowed": [f"*.{DOMAIN}"]}],
     "keyUsages": {"allowed": ["digital_signature", "key_encipherment"], "required": ["digital_signature"]},
@@ -86,57 +86,57 @@ def _login_ok(api: Api, secrets_file: pathlib.Path) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
-    ap.add_argument("--identity-id", help="bestehende Identity ingressctl wiederverwenden")
+    ap.add_argument("--identity-id", help="reuse an existing identity ingressctl")
     args = ap.parse_args()
     api = Api()
-    say = (lambda m: print(m)) if args.apply else (lambda m: print("[Probelauf] " + m))
+    say = (lambda m: print(m)) if args.apply else (lambda m: print("[Dry run] " + m))
 
     cas = [c for c in api.call("GET", "/api/v1/cert-manager/ca")["certificateAuthorities"]
            if c["type"] == "internal" and c["status"] == "active" and c["configuration"]["type"] == "root"]
     if len(cas) != 1:
-        raise SystemExit(f"erwartet genau eine aktive interne Root-CA, gefunden: {[c['name'] for c in cas]}")
+        raise SystemExit(f"expected exactly one active internal root CA, got: {[c['name'] for c in cas]}")
     ca = cas[0]
-    print(f"Root-CA: {ca['name']} ({ca['configuration']['dn']}, bis {ca['configuration']['notAfter'][:10]})")
+    print(f"Root CA: {ca['name']} ({ca['configuration']['dn']}, until {ca['configuration']['notAfter'][:10]})")
 
     policy = next((p for p in api.call("GET", "/api/v1/cert-manager/certificate-policies")["certificatePolicies"]
                    if p["name"] == POLICY["name"]), None)
     if policy is None:
-        say(f"Policy {POLICY['name']} anlegen")
+        say(f"create policy {POLICY['name']}")
         if args.apply:
             policy = api.call("POST", "/api/v1/cert-manager/certificate-policies", POLICY)["certificatePolicy"]
     else:
-        print(f"Policy {POLICY['name']} vorhanden ({policy['id']})")
+        print(f"policy {POLICY['name']} present ({policy['id']})")
 
     profile = next((p for p in api.call("GET", "/api/v1/cert-manager/certificate-profiles")["certificateProfiles"]
                     if p["slug"] == NAME), None)
     if profile is None:
-        say(f"Profil {NAME} anlegen (CA {ca['name']})")
+        say(f"create profile {NAME} (CA {ca['name']})")
         if args.apply:
             profile = api.call("POST", "/api/v1/cert-manager/certificate-profiles", {
                 "slug": NAME, "description": "ingressctl / NPM", "caId": ca["id"],
                 "certificatePolicyId": policy["id"], "issuerType": "ca", "defaults": PROFILE_DEFAULTS,
             })["certificateProfile"]
     else:
-        print(f"Profil {NAME} vorhanden ({profile['id']})")
+        print(f"profile {NAME} present ({profile['id']})")
 
     apps = api.call("GET", "/api/v1/cert-manager/applications")["applications"]
     app = next((a for a in apps if a["name"] == NAME), None)
     if app is None:
-        say(f"Application {NAME} anlegen")
+        say(f"create application {NAME}")
         if args.apply:
             app = api.call("POST", "/api/v1/cert-manager/applications",
-                           {"name": NAME, "description": "ingressctl (NPM-Ingress)", "profileIds": [profile["id"]]})["application"]
+                           {"name": NAME, "description": "ingressctl (NPM ingress)", "profileIds": [profile["id"]]})["application"]
     else:
-        print(f"Application {NAME} vorhanden ({app['id']})")
+        print(f"application {NAME} present ({app['id']})")
     if app and profile:
         linked = {p["profileId"]: p for p in api.call("GET", f"/api/v1/cert-manager/applications/{app['id']}/profiles")["profiles"]}
         if profile["id"] not in linked:
-            say("Profil an Application hängen")
+            say("attach profile to application")
             if args.apply:
                 api.call("POST", f"/api/v1/cert-manager/applications/{app['id']}/profiles", {"profileIds": [profile["id"]]})
                 linked = {p["profileId"]: p for p in api.call("GET", f"/api/v1/cert-manager/applications/{app['id']}/profiles")["profiles"]}
         if not (linked.get(profile["id"]) or {}).get("apiConfigId"):
-            say("API-Enrollment aktivieren (ohne serverseitige Auto-Renewal; ingressctl erneuert selbst)")
+            say("enable API enrollment (no server-side auto-renewal; ingressctl renews on its own)")
             if args.apply:
                 api.call("PUT", f"/api/v1/cert-manager/applications/{app['id']}/profiles/{profile['id']}/enrollment/api",
                          {"autoRenew": False})
@@ -144,11 +144,11 @@ def main() -> int:
     secrets_file = ROOT / "infra/secrets/ingressctl.env"
     ident_id = args.identity_id
     if not ident_id and not secrets_file.exists():
-        say(f"Machine Identity {NAME} anlegen (Org-Rolle no-access)")
+        say(f"create machine identity {NAME} (org role no-access)")
         if args.apply:
             ident_id = api.call("POST", "/api/v1/identities",
                                 {"name": NAME, "organizationId": api.org_id, "role": "no-access"})["identity"]["id"]
-            print(f"Identity angelegt: {ident_id}")
+            print(f"identity created: {ident_id}")
     if ident_id and args.apply:
         ua_path = f"/api/v1/auth/universal-auth/identities/{ident_id}"
         try:
@@ -157,27 +157,27 @@ def main() -> int:
             ua = api.call("POST", ua_path, {"accessTokenTTL": 3600, "accessTokenMaxTTL": 86400})["identityUniversalAuth"]
         if not _login_ok(api, secrets_file):
             for old in api.call("GET", f"{ua_path}/client-secrets").get("clientSecretData", []):
-                if not old.get("isClientSecretRevoked"):  # nicht gespeicherte Secrets abgebrochener Läufe widerrufen
+                if not old.get("isClientSecretRevoked"):  # revoke secrets of aborted runs that were never stored
                     api.call("POST", f"{ua_path}/client-secrets/{old['id']}/revoke")
             secret = api.call("POST", f"{ua_path}/client-secrets", {"description": "ingressctl"})["clientSecret"]
-            secrets_file.write_text(  # sofort sichern: Infisical zeigt das Secret nur einmal
-                "# Infisical Machine Identity \"ingressctl\" (Rolle operator in Application ingressctl).\n"
-                "# Angelegt von infra/infisical/bootstrap.py; auf Wunsch des Betreibers im Repo.\n"
+            secrets_file.write_text(  # store it at once: Infisical shows the secret only once
+                "# Infisical machine identity \"ingressctl\" (role operator in application ingressctl).\n"
+                "# Created by infra/infisical/bootstrap.py; in the repository at the operator's request.\n"
                 f"export INFISICAL_IDENTITY_ID={ident_id}\n"
                 f"export INFISICAL_CLIENT_ID={ua['clientId']}\nexport INFISICAL_CLIENT_SECRET={secret}\n")
-            print(f"Zugang geschrieben: {secrets_file.relative_to(ROOT)}")
+            print(f"credentials written: {secrets_file.relative_to(ROOT)}")
         project_id = ca["projectId"]
         members = api.call("GET", f"/api/v1/projects/{project_id}/identity-memberships").get("identityMemberships", [])
         if not any((m.get("identity") or {}).get("id") == ident_id for m in members):
-            # Voraussetzung für die Application-Mitgliedschaft; Certificate Manager erlaubt nur admin/member
+            # prerequisite for the application membership; Certificate Manager allows only admin/member
             api.call("POST", f"/api/v1/projects/{project_id}/identity-memberships/{ident_id}", {"role": "member"})
-            print("Identity ist Projektmitglied (member)")
+            print("identity is a project member (member)")
         app_members = api.call("GET", f"/api/v1/cert-manager/applications/{app['id']}/identities")["memberships"]
         if not any(m.get("actorIdentityId") == ident_id for m in app_members):
             api.call("POST", f"/api/v1/cert-manager/applications/{app['id']}/identities/{ident_id}", {"role": "operator"})
-        print(f"Identity {NAME} ist Mitglied der Application (operator)")
+        print(f"identity {NAME} is a member of the application (operator)")
     elif not ident_id:
-        say(f"Identity {NAME}: Mitgliedschaften prüfen (--identity-id angeben)")
+        say(f"identity {NAME}: check memberships (pass --identity-id)")
 
     if args.apply:
         pem = api.call("GET", f"/api/v1/cert-manager/ca/internal/{ca['id']}/certificate")["certificate"]

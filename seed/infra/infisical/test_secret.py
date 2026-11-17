@@ -1,4 +1,4 @@
-"""Tests für secret.py mit einem Fake für Infisical v0.167.2 (pytest infra/infisical)."""
+"""Tests for secret.py with a fake for Infisical v0.167.2 (pytest infra/infisical)."""
 import io
 import json
 import pathlib
@@ -20,7 +20,7 @@ COMPOSE = "services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: ${POSTGR
 
 class FakeInfisical:
     def __init__(self):
-        self.secrets = {"POSTGRES_PASSWORD": "alt", "UNUSED": "x"}
+        self.secrets = {"POSTGRES_PASSWORD": "old", "UNUSED": "x"}
         self.calls = []
 
     def call(self, method, path, body=None, auth=True):
@@ -78,15 +78,15 @@ def test_list_json_says_which_keys_a_compose_file_uses(inf, capsys):
 
 def test_get(inf, capsys):
     secret.run(secret.parse_args(["get", "paperless", "POSTGRES_PASSWORD"]), inf)
-    assert capsys.readouterr().out.strip() == "alt"
+    assert capsys.readouterr().out.strip() == "old"
 
 
 def test_set_updates_from_stdin(inf, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "stdin", io.StringIO("neu wert\n"))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("new value\n"))
     secret.run(secret.parse_args(["set", "paperless", "POSTGRES_PASSWORD"]), inf)
-    assert inf.secrets["POSTGRES_PASSWORD"] == "neu wert"
+    assert inf.secrets["POSTGRES_PASSWORD"] == "new value"
     out = capsys.readouterr().out
-    assert "stacks-host-1/prod/paperless/POSTGRES_PASSWORD changed" in out and "neu wert" not in out
+    assert "stacks-host-1/prod/paperless/POSTGRES_PASSWORD changed" in out and "new value" not in out
 
 
 def test_set_generate_creates_and_hints(inf, capsys):

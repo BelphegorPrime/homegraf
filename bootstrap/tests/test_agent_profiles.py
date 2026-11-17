@@ -6,8 +6,8 @@ import unittest
 import urllib.parse
 import uuid
 
-from hgboot.agent_profiles import (CONDENSER_MAX_SIZE, LLM_CHEAP, LLM_STRONG, ROLES, TRIMMED_SKILLS,
-                                   AgentProfiles, STATE_SECTION)
+from hgboot.agent_profiles import (CONDENSER_MAX_SIZE, LLM_CHEAP, LLM_FREE, LLM_STRONG, ROLE_WORKER_FREE, ROLES,
+                                   TRIMMED_SKILLS, AgentProfiles, STATE_SECTION)
 from hgboot.factory_config import FactoryConfig
 from hgboot.state import State
 from hgboot.steps import StepError
@@ -18,6 +18,7 @@ BACKEND_KEY = "backend-key-123"
 GATEWAY_KEY = "gateway-key-456"
 STRONG_MODEL = "openai/strong-model"
 CHEAP_MODEL = "openai/cheap-model"
+FREE_MODEL = "openai/free-model"
 GATEWAY_URL = "http://gateway.internal:4000"
 DEFAULT_ID = "00000000-0000-4000-8000-000000000001"
 PROMPTS = pathlib.Path(__file__).resolve().parents[1] / "hgboot" / "prompts"
@@ -313,11 +314,48 @@ class AgentProfilesTest(unittest.TestCase):
         self.assertEqual(self.fake.activations, [])
         self.assertEqual(self.fake.written("/api/agent-profiles/default"), [])
 
+        self.assertNotIn(LLM_FREE, self.fake.llm)
+        self.assertNotIn("worker-free", self.fake.agents)
+        self.assertEqual(self.fake.written(f"/api/profiles/{LLM_FREE}"), [])
+
         for role, profile_id in ids.items():
             self.assertEqual(self.state.get(STATE_SECTION, role), profile_id)
         self.assert_read_after_every_write()
         for req in self.srv.requests:
             self.assertEqual(req.headers.get("x-session-api-key"), BACKEND_KEY)
+
+    def test_a_free_model_adds_the_free_llm_profile_and_the_worker_free_role(self):
+        cfg = factory(self.srv.url, free_model=FREE_MODEL)
+
+        ids = self.run_profiles(cfg=cfg)
+
+        roles = (*ROLES, ROLE_WORKER_FREE)
+        self.assertEqual(set(ids), {role.name for role in roles})
+        self.assertEqual(len(set(ids.values())), len(roles))
+        free = self.fake.written(f"/api/profiles/{LLM_FREE}")
+        self.assertEqual(len(free), 1)
+        self.assertEqual(free[0][2]["llm"],
+                         {"model": FREE_MODEL, "base_url": GATEWAY_URL, "api_key": GATEWAY_KEY})
+        stored = self.fake.agents[ROLE_WORKER_FREE.name]
+        self.assertEqual(stored["llm_profile_ref"], LLM_FREE)
+        self.assertEqual(stored["system_message_suffix"], (PROMPTS / "worker.md").read_text(encoding="utf-8"))
+        self.assertEqual(stored["id"], ids[ROLE_WORKER_FREE.name])
+        self.assertEqual(self.state.get(STATE_SECTION, ROLE_WORKER_FREE.name), stored["id"])
+
+        self.fake.writes.clear()
+        self.assertEqual(self.run_profiles(cfg=cfg), ids)
+        self.assertEqual(self.fake.writes, [])
+
+        self.fake.llm[LLM_FREE]["model"] = "openai/wrong-free-model"
+        self.fake.agents[ROLE_WORKER_FREE.name]["llm_profile_ref"] = LLM_CHEAP
+        self.fake.writes.clear()
+
+        self.assertEqual(self.run_profiles(cfg=cfg), ids)
+        self.assertEqual({path for _, path, _ in self.fake.writes},
+                         {f"/api/profiles/{LLM_FREE}", f"/api/agent-profiles/{ROLE_WORKER_FREE.name}"})
+        self.assertEqual(self.fake.llm[LLM_FREE]["model"], FREE_MODEL)
+        self.assertEqual(self.fake.agents[ROLE_WORKER_FREE.name]["llm_profile_ref"], LLM_FREE)
+        self.assert_read_after_every_write()
 
     def test_the_sensitive_reviewer_role_is_created_and_reconciled_without_writes(self):
         ids = self.run_profiles()

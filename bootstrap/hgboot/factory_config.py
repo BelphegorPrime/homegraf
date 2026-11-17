@@ -11,6 +11,7 @@ Field contract (environment -> attribute, reused names first)::
     OPENHANDS_LOCAL_BACKEND_API_KEY            openhands_backend_key      required
     FORGEHANDS_STRONG_MODEL                    strong_model               required
     FORGEHANDS_CHEAP_MODEL                     cheap_model                required
+    FORGEHANDS_FREE_MODEL                      free_model                 optional; empty means no free tier
     FORGEHANDS_GATEWAY_URL                     gateway_url                required
     FORGEHANDS_GATEWAY_API_KEY                 gateway_api_key            required
     FORGEHANDS_ALLOWED_REPOS                   allowed_repos              required, comma separated
@@ -95,6 +96,7 @@ class FactoryConfig:
     openhands_backend_key: str = field(default="", repr=False)
     strong_model: str = ""
     cheap_model: str = ""
+    free_model: str = ""
     gateway_url: str = ""
     gateway_api_key: str = field(default="", repr=False)
     allowed_repos: tuple[str, ...] = ()
@@ -160,6 +162,7 @@ class FactoryConfig:
             openhands_backend_key=_secret(env, "OPENHANDS_LOCAL_BACKEND_API_KEY"),
             strong_model=_model(env, "FORGEHANDS_STRONG_MODEL"),
             cheap_model=_model(env, "FORGEHANDS_CHEAP_MODEL"),
+            free_model=_model(env, "FORGEHANDS_FREE_MODEL", required=False),
             gateway_url=gateway_url,
             gateway_api_key=_secret(env, "FORGEHANDS_GATEWAY_API_KEY"),
             allowed_repos=_repositories(env, "FORGEHANDS_ALLOWED_REPOS"),
@@ -202,8 +205,10 @@ def _secret(env, name: str, *, required: bool = True) -> str:
     return value
 
 
-def _model(env, name: str) -> str:
-    value = _required(env, name)
+def _model(env, name: str, *, required: bool = True) -> str:
+    value = _required(env, name) if required else _present(env, name)
+    if not value:
+        return ""
     if len(value) > _MODEL_MAX or any(c.isspace() or ord(c) < 32 for c in value):
         raise FactoryConfigError(f"{name} is not a model identifier")
     return value

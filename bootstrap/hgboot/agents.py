@@ -49,6 +49,7 @@ ROUTES = (
     ("pr:conflict", Route("worker-strong", "smart", 120, on="conflict")),
     ("sensitive:review", Route("sensitive-reviewer", "smart", 60, on="sensitive_review")),
 )
+FREE_ROUTE_LABELS = frozenset(label for label, route in ROUTES if route.profile == FALLBACK_PROFILE)
 
 
 def _select(profile_ids: dict[str, str]) -> tuple[tuple[str, Route], ...]:

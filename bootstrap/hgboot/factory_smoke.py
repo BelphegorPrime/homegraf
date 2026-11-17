@@ -713,9 +713,13 @@ class Smoke:
         return self.api.json("GET", f"/repos/{repository}/branches/{branch}", allow=(404,)) is not None
 
     def _single_followup(self, repository: str, number: int) -> dict | None:
-        """The issue's one pull request on its one branch; a duplicate raises a failure naming it."""
+        """The issue's one pull request on its one branch; a duplicate raises a failure naming it.
+
+        ForgeHands deletes the branch when it merges, so a merged pull request need not still have one.
+        """
         pulls = self._issue_pulls(repository, number)
-        if len(pulls) > 1 or (pulls and not self._branch_exists(repository, number)):
+        merged = bool(pulls) and bool(pulls[0].get("merged") or pulls[0].get("merged_at"))
+        if len(pulls) > 1 or (pulls and not merged and not self._branch_exists(repository, number)):
             raise SmokeFailure(f"#{number}: a follow-up opened a second pull request or branch")
         return pulls[0] if pulls else None
 

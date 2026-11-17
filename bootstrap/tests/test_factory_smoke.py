@@ -164,6 +164,7 @@ class FakeFactory:
         if polls >= 8:
             pull.update({"merged": True, "merged_at": self.stamp(), "state": "closed",
                          "merged_by": {"login": self.merge_author}})
+            repo["branches"].discard(f"ai/issue-{number}")
             issue["state"] = "closed"
             issue["timeline"].append({"id": self.next_id(), "type": "close",
                                       "user": {"login": "homegraf-agent"}})
@@ -1127,8 +1128,27 @@ class FollowupTests(SmokeTest):
         self.assertEqual(len(pulls), 1, "a follow-up opened a second pull request")
         self.assertTrue(pulls[0]["merged"])
         self.assertEqual(pulls[0]["head"]["sha"], f"sha{issue['number']}-2")
+        self.assertNotIn(f"ai/issue-{issue['number']}", self.fake.repos[REPO]["branches"],
+                         "ForgeHands deletes the branch on merge, so a merged follow-up has none")
         self.assertEqual({request.path.split("?")[0].split("/")[4] for request in self.writes()
                           if request.path.startswith("/api/v1/repos/")}, {"owner"})
+
+    def test_a_merged_followup_is_single_without_its_branch_but_a_second_pull_request_fails(self):
+        repo = self.fake.repo(REPO)
+        pull = {"id": self.fake.next_id(), "number": 77, "state": "closed", "draft": False,
+                "title": "WIP: follow-up", "body": "Closes #77",
+                "head": {"ref": "ai/issue-77", "sha": "sha77-2"}, "labels": [], "merged": True,
+                "merged_at": "2026-01-01T00:00:00Z", "created_at": "2026-01-01T00:00:00Z",
+                "user": {"login": self.fake.pr_author}}
+        repo["pulls"][77] = pull
+        repo["branches"].discard("ai/issue-77")
+        smoke = self.smoke()
+        single = smoke._single_followup(REPO, 77)
+        self.assertEqual((single["number"], single["merged"]), (77, True))
+        repo["pulls"][78] = {**pull, "id": self.fake.next_id(), "number": 78}
+        with self.assertRaises(SmokeFailure) as caught:
+            smoke._single_followup(REPO, 77)
+        self.assertIn("a follow-up opened a second pull request or branch", str(caught.exception))
 
     def test_exactly_one_retrigger_comment_is_posted(self):
         self.smoke(include_epic=True, timeout=60).run(REPO, REPO)

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits"],
+  "labels": ["renovate"],
+  "dependencyDashboard": {
+    "enabled": true
+  },
+  "configMigration": true,
+  "timezone": "Europe/Berlin",
+  "schedule": ["before 6am on monday"],
+  "automerge": false,
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "packageRules": [
+    {
+      "description": "One grouped pull request per week and manager for non-major updates",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest", "lockFileMaintenance"],
+      "groupName": "{{manager}} non-major"
+    },
+    {
+      "description": "Major updates are never grouped",
+      "matchUpdateTypes": ["major"],
+      "groupName": null
+    }
+  ]
+}

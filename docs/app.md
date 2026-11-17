@@ -24,6 +24,8 @@ A service counts as public when the graph builder finds a reason for it: its ing
 
 The Catalog marks such a tile with a `public` badge: plain outline when only the listed paths are exposed, in the warning colour when the whole host is (hover shows the domains). Its **Public only** checkbox narrows the tiles to those services; the same checkbox in the **Request path** view drops every domain, route and target that is not public. The detail panel lists, per exposed domain, the paths (or `whole host`), the methods and the source allowlist (`any address` when the proxy lets in everything).
 
+**New app.** The form's **Expose publicly (selected paths only)** step (below the routing options, so it needs HTTPS through NPM) sends `public` with the paths, the allowed methods and the source: any address, GitHub's webhooks or networks you list. It warns that only these paths are reachable from the internet and that the app's UI is not exposed, and it refuses `/` or `/*` before sending, since that would expose the whole host. A user with `hosts:expose` also sees **Make the whole host public (no path restriction)**; it needs a separate confirmation that the whole app, including its login page, is reachable, and it excludes the path list.
+
 ## Run
 
 The image is `ghcr.io/belphegorprime/homegraf`; how to start it alone, and which environment turns on what, is in the [README](../README.md#run-the-image). The all-in-one stack in [stack.md](stack.md) runs it together with Forgejo, Komodo, Infisical and the proxy.

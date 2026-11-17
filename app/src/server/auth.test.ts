@@ -39,7 +39,15 @@ describe("authenticator", () => {
     const auth = authenticator({ adminPassword: "s3cret-admin", users: freshStore() });
     const ok = await auth(basic("admin", "s3cret-admin"));
     expect(ok).toMatchObject({ ok: true, principal: { name: "admin", source: "builtin" } });
-    expect(ok.ok && ok.principal.permissions).toEqual(["apps:create", "apps:remove", "hosts:edit", "stacks:deploy", "secrets:manage", "users:manage"]);
+    expect(ok.ok && ok.principal.permissions).toEqual([
+      "apps:create",
+      "apps:remove",
+      "hosts:edit",
+      "hosts:expose",
+      "stacks:deploy",
+      "secrets:manage",
+      "users:manage",
+    ]);
     expect(await auth(basic("admin", "s3cret-admiN"))).toEqual({ ok: false, reason: "wrong" });
   });
 

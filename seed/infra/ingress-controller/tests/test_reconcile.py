@@ -17,10 +17,10 @@ def apply(env, stack="omniroute", **kw):
 
 
 def set_public(env, value: str | None):
-    """Setzt (oder entfernt) den einzeiligen proxy.public-Block im Omniroute-Manifest.
+    """Set (or remove) the single-line proxy.public block in the Omniroute manifest.
 
-    proxy.public verlangt einen Let's-Encrypt-Issuer; deshalb stellt das Manifest für diese Tests auf den
-    öffentlichen LE-Host um. Das Entfernen lässt Issuer und Domain unverändert (kein neues Zertifikat).
+    proxy.public requires a Let's Encrypt issuer, so for these tests the manifest switches to the public
+    LE host. Removing the block leaves issuer and domain unchanged (no new certificate).
     """
     path = env.root / "stacks/ai/omniroute/ingress.yaml"
     text = path.read_text()
@@ -79,23 +79,23 @@ def test_upstream_change_updates_proxy_keeps_cert(env):
 def test_expiring_cert_is_renewed_and_old_object_removed(env):
     ctx, _, _ = apply(env)
     old = ctx.state.get("ai-sandbox/omniroute")
-    env.now += dt.timedelta(days=65)  # < 30 Tage Restlaufzeit
+    env.now += dt.timedelta(days=65)  # < 30 days left
     env.inf.not_before = env.now - dt.timedelta(minutes=1)
     ctx, _, res = apply(env, commit=old["reconciled_commit"])
     new = ctx.state.get("ai-sandbox/omniroute")
     assert res == "applied" and env.inf.issued == 2
     assert new["cert_fingerprint"] != old["cert_fingerprint"]
     assert env.npm.presented["omni.lab.example"] == new["cert_fingerprint"]
-    assert old["npm_cert_id"] not in env.npm.certs  # erst nach erfolgreicher Prüfung bereinigt
+    assert old["npm_cert_id"] not in env.npm.certs  # cleaned up only after a successful check
 
 
 def test_short_issuer_validity_does_not_loop(env):
-    env.inf.override_days = 9  # Issuer stellt kürzer aus als beantragt
+    env.inf.override_days = 9  # the issuer grants a shorter validity than requested
     apply(env)
     env.now += dt.timedelta(days=2)
     _, _, res = apply(env)
     assert res == "noop" and env.inf.issued == 1
-    env.now += dt.timedelta(days=5)  # jetzt < 1/3 der echten Laufzeit übrig
+    env.now += dt.timedelta(days=5)  # now less than 1/3 of the real lifetime left
     env.inf.not_before = env.now - dt.timedelta(minutes=1)
     _, _, res = apply(env)
     assert res == "applied" and env.inf.issued == 2
@@ -104,7 +104,7 @@ def test_short_issuer_validity_does_not_loop(env):
 def test_manual_host_with_same_domain_is_conflict(env):
     env.npm.add_manual_host(["omni.lab.example"])
     before = env.npm.mutations
-    with pytest.raises(ConflictError, match="nicht ai-sandbox/omniroute zugeordnet"):
+    with pytest.raises(ConflictError, match="not assigned to ai-sandbox/omniroute"):
         apply(env)
     assert env.npm.mutations == before and env.inf.issued == 0
 
@@ -119,7 +119,7 @@ def test_explicit_adopt_snapshots_and_takes_over(env):
     _, _, res = apply(env)
     host = env.npm.hosts[hid]
     assert res == "applied" and len(env.npm.hosts) == 1
-    assert host["forward_port"] == 20128 and host["advanced_config"] == "# manual"  # unverwaltete Felder bleiben
+    assert host["forward_port"] == 20128 and host["advanced_config"] == "# manual"  # unmanaged fields stay
 
 
 def test_adopt_refuses_domain_mismatch(env):
@@ -194,8 +194,8 @@ def test_failed_verification_rolls_back_to_old_cert(env, monkeypatch):
     env.now += dt.timedelta(days=65)
     env.inf.not_before = env.now - dt.timedelta(minutes=1)
     from ingressctl.checks import TlsResult
-    monkeypatch.setattr(env.checker, "https", lambda *a, **k: TlsResult(False, None, None, "TLS kaputt"))
-    with pytest.raises(IngressError, match="zurück auf vorheriges Zertifikat"):
+    monkeypatch.setattr(env.checker, "https", lambda *a, **k: TlsResult(False, None, None, "TLS broken"))
+    with pytest.raises(IngressError, match="switched back to previous certificate"):
         apply(env)
     host = env.npm.hosts[old["npm_host_id"]]
     assert host["certificate_id"] == old["npm_cert_id"]
@@ -225,14 +225,14 @@ def test_late_webhook_does_not_roll_back(env):
     (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
     new_commit = env.commit()
     apply(env, commit=new_commit)
-    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text.replace("20300", "20128"))  # Checkout von A
+    (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text.replace("20300", "20128"))  # checkout of A
     _, _, res = apply(env, commit=old_commit)
     assert res == "skipped"
     assert next(iter(env.npm.hosts.values()))["forward_port"] == 20300
 
 
 def test_deployed_commit_mismatch_aborts(env):
-    with pytest.raises(IngressError, match="Komodo hat"):
+    with pytest.raises(IngressError, match="Komodo deployed"):
         apply(env, deployed_commit="0" * 40)
     assert env.npm.mutations == 0
 
@@ -279,7 +279,7 @@ def test_state_restore_requires_marked_certificate(env, tmp_path):
     recover(ctx2, spec, row["npm_host_id"], row["npm_cert_id"])
     assert ctx2.state.get("ai-sandbox/omniroute")["cert_fingerprint"] == row["cert_fingerprint"]
     env.npm.certs[999] = {"id": 999, "provider": "other", "nice_name": "manual", "domain_names": [], "meta": {}}
-    with pytest.raises(ConflictError, match="Marker"):
+    with pytest.raises(ConflictError, match="marker"):
         recover(ctx2, spec, row["npm_host_id"], 999)
 
 
@@ -289,7 +289,7 @@ def test_no_private_keys_in_state_or_logs(env, capsys):
     assert "PRIVATE KEY" not in err and "jwt-test" not in err and "inf-token" not in err
     dump = "\n".join(sqlite3.connect(ctx.state.dir / "state.sqlite3").iterdump())
     assert "PRIVATE KEY" not in dump
-    assert list((ctx.state.dir / "pending").iterdir()) == []  # Pending-Schlüssel nach Abschluss entfernt
+    assert list((ctx.state.dir / "pending").iterdir()) == []  # pending key removed after completion
 
 
 def test_npm_certificate_reads_drop_private_key(env):
@@ -299,7 +299,7 @@ def test_npm_certificate_reads_drop_private_key(env):
 
 
 def test_verification_retries_until_nginx_reloaded(env, monkeypatch):
-    """NPM antwortet vor Abschluss des nginx-Reloads; die erste Prüfung darf scheitern."""
+    """NPM answers before the nginx reload has finished; the first check may fail."""
     real = env.checker.https
     calls = []
 
@@ -326,7 +326,7 @@ def test_failed_first_apply_resumes_without_reissue(env, monkeypatch):
 
 
 def test_cli_apply_all_uses_checkout_commit(env, monkeypatch, capsys):
-    """Komodo-Procedure ingress-apply: `apply --all` ohne --commit nimmt HEAD des Checkouts."""
+    """Komodo procedure ingress-apply: `apply --all` without --commit uses the HEAD of the checkout."""
     import json as _json
     from ingressctl import cli
     ctx = env.ctx()
@@ -430,12 +430,12 @@ def test_hand_edit_of_managed_advanced_config_is_drift_and_restored(env):
 
 
 def test_hand_made_advanced_config_is_conflict_naming_host(env):
-    ctx, _, _ = apply(env)  # noch ohne public:
+    ctx, _, _ = apply(env)  # still without public:
     hid = ctx.state.get("ai-sandbox/omniroute")["npm_host_id"]
     env.npm.hosts[hid]["advanced_config"] = "# manual\nadd_header X-Test 1;"
     set_public(env, "{paths: [/hook/abc]}")
     before = env.npm.mutations
-    with pytest.raises(ConflictError, match=rf"NPM-Host {hid}.*advanced_config"):
+    with pytest.raises(ConflictError, match=rf"NPM host {hid}.*advanced_config"):
         apply(env)
     assert env.npm.mutations == before
     assert env.npm.hosts[hid]["advanced_config"].startswith("# manual")

@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-from hgboot.agents import _validate, label_routes
+from hgboot.agents import SECURITY_TOKEN_SECRET, _validate, label_routes
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PROFILE_IDS = {"planner": "11111111-1111-1111-1111-111111111111",
@@ -53,6 +53,21 @@ class LabelRoutesTests(unittest.TestCase):
 
     def test_the_json_is_stable_and_keeps_the_route_order(self):
         self.assertEqual(label_routes(PROFILE_IDS), json.dumps(EXPECTED_ROUTES, separators=(",", ":")))
+
+    def test_a_security_token_is_named_only_by_the_security_review_route(self):
+        routes = json.loads(label_routes(PROFILE_IDS, "security-token-123"))
+        self.assertEqual(routes["sensitive:review"]["forgejo_token_secret"], SECURITY_TOKEN_SECRET)
+        self.assertEqual(SECURITY_TOKEN_SECRET, "FORGEJO_SECURITY_TOKEN")
+        self.assertEqual([label for label, route in routes.items() if "forgejo_token_secret" in route],
+                         ["sensitive:review"])
+        self.assertNotIn("security-token-123", json.dumps(routes))
+        self.assertEqual(routes["sensitive:review"]["profile"], PROFILE_IDS["sensitive-reviewer"])
+        self.assertEqual(routes["sensitive:review"]["tier"], "smart")
+
+    def test_without_a_security_token_the_routes_are_as_before(self):
+        for value in ("", None):
+            with self.subTest(value=value):
+                self.assertEqual(json.loads(label_routes(PROFILE_IDS, value)), EXPECTED_ROUTES)
 
     def test_only_the_follow_up_and_synthetic_routes_name_an_event(self):
         routes = json.loads(label_routes(PROFILE_IDS))

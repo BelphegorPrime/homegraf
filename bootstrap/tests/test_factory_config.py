@@ -68,6 +68,7 @@ class FieldContractTests(unittest.TestCase):
         self.assertEqual(cfg.allowed_repos, ("owner/infrastructure", "owner/other"))
         self.assertEqual(cfg.allowed_senders, ("marcel", "owner", "homegraf-agent"))
         self.assertEqual((cfg.agent_login, cfg.human_login), (DEFAULT_AGENT_LOGIN, "marcel"))
+        self.assertEqual((cfg.security_reviewers, cfg.security_token), ((), ""))
         self.assertEqual(cfg.forgejo_agent_token, SECRETS["FORGEHANDS_FORGEJO_AGENT_TOKEN"])
         self.assertEqual(cfg.forgejo_webhook_secret, SECRETS["FORGEHANDS_FORGEJO_WEBHOOK_SECRET"])
         self.assertEqual((cfg.mirror_url, cfg.mirror_token), ("", ""))
@@ -285,6 +286,112 @@ class MergePolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(FactoryConfigError, "repeats"):
             FactoryConfig.from_env({**ENV, "FORGEHANDS_MERGE_POLICY":
                                     '{"owner/repo": {"deny": []}, "owner/repo": {"deny": ["x"]}}'}, REPOSITORY)
+
+
+TWO_KEYS_ENV = {"FORGEHANDS_SECURITY_REVIEWERS": "openhands-security",
+                "FORGEHANDS_SECURITY_TOKEN": "security-token-123"}
+
+
+class TwoKeysTests(unittest.TestCase):
+    """The protected paths that merge with a reviewer and an independent security review instead of a human."""
+
+    def test_a_two_keys_entry_parses_with_reasons_and_an_independent_reviewer(self):
+        policy = {"owner/infrastructure": {"deny": ["infra/**", "setup.sh"],
+                                           "reasons": {"infra/**": "a merge here deploys production"},
+                                           "two_keys": ["infra/**"]}}
+        cfg = FactoryConfig.from_env({**ENV, **TWO_KEYS_ENV, "FORGEHANDS_MERGE_POLICY": json.dumps(policy)},
+                                     REPOSITORY)
+        self.assertEqual(cfg.repository_merge_policy(REPOSITORY),
+                         {"deny": ("infra/**", "setup.sh"),
+                          "reasons": {"infra/**": "a merge here deploys production"},
+                          "two_keys": ("infra/**",)})
+        self.assertEqual(cfg.security_reviewers, ("openhands-security",))
+        self.assertEqual(cfg.security_token, TWO_KEYS_ENV["FORGEHANDS_SECURITY_TOKEN"])
+        self.assertNotIn(TWO_KEYS_ENV["FORGEHANDS_SECURITY_TOKEN"], repr(cfg))
+
+    def test_a_two_keys_entry_without_reviewers_or_token_names_what_is_missing(self):
+        policy = json.dumps({"owner/infrastructure": {"deny": ["infra/**"], "two_keys": ["infra/**"]}})
+        cases = (({}, "FORGEHANDS_SECURITY_REVIEWERS and FORGEHANDS_SECURITY_TOKEN"),
+                 ({"FORGEHANDS_SECURITY_REVIEWERS": "openhands-security"}, "FORGEHANDS_SECURITY_TOKEN"),
+                 ({"FORGEHANDS_SECURITY_TOKEN": "security-token-123"}, "FORGEHANDS_SECURITY_REVIEWERS"))
+        for extra, message in cases:
+            with self.subTest(extra=extra), self.assertRaisesRegex(FactoryConfigError, message):
+                FactoryConfig.from_env({**ENV, **extra, "FORGEHANDS_MERGE_POLICY": policy}, REPOSITORY)
+
+    def test_two_keys_need_a_reviewer_that_is_not_the_agent(self):
+        policy = json.dumps({"owner/infrastructure": {"deny": ["infra/**"], "two_keys": ["infra/**"]}})
+        with self.assertRaisesRegex(FactoryConfigError, "FORGEHANDS_SECURITY_REVIEWERS.*FORGEHANDS_AGENT_LOGIN"):
+            FactoryConfig.from_env({**ENV, **TWO_KEYS_ENV, "FORGEHANDS_SECURITY_REVIEWERS": "homegraf-agent",
+                                    "FORGEHANDS_MERGE_POLICY": policy}, REPOSITORY)
+
+    def test_a_two_keys_pattern_must_be_covered_by_a_deny_pattern(self):
+        for deny, two_keys in ((["infra/**"], ["AGENTS.md"]),
+                               (["infra/*"], ["infra/ci/validate.sh"]),
+                               ([], ["infra/**"])):
+            policy = json.dumps({"owner/infrastructure": {"deny": deny, "two_keys": two_keys}})
+            with self.subTest(deny=deny, two_keys=two_keys), \
+                    self.assertRaisesRegex(FactoryConfigError, "two_keys|not covered"):
+                FactoryConfig.from_env({**ENV, **TWO_KEYS_ENV, "FORGEHANDS_MERGE_POLICY": policy}, REPOSITORY)
+        covered = json.dumps({"owner/infrastructure": {"deny": ["**/compose.yaml"],
+                                                       "two_keys": ["stacks/app/compose.yaml"]}})
+        cfg = FactoryConfig.from_env({**ENV, **TWO_KEYS_ENV, "FORGEHANDS_MERGE_POLICY": covered}, REPOSITORY)
+        self.assertEqual(cfg.repository_merge_policy(REPOSITORY)["two_keys"], ("stacks/app/compose.yaml",))
+
+    def test_two_keys_without_deny_is_an_error(self):
+        for rule in ({"deny": [], "two_keys": ["infra/**"]}, {"two_keys": ["infra/**"]}):
+            policy = json.dumps({"owner/infrastructure": rule})
+            with self.subTest(rule=rule), self.assertRaisesRegex(FactoryConfigError, "two_keys.*needs a deny list"):
+                FactoryConfig.from_env({**ENV, **TWO_KEYS_ENV, "FORGEHANDS_MERGE_POLICY": policy}, REPOSITORY)
+
+    def test_reasons_must_name_a_deny_pattern_and_carry_text(self):
+        bad_rules = ({"deny": ["infra/**"], "reasons": {"AGENTS.md": "not denied"}},
+                     {"deny": ["infra/**"], "reasons": {"infra/**": ""}},
+                     {"deny": ["infra/**"], "reasons": {"infra/**": "  "}},
+                     {"deny": ["infra/**"], "reasons": {"infra/**": 1}},
+                     {"deny": ["infra/**"], "reasons": ["infra/**"]},
+                     {"reasons": {"infra/**": "no deny list"}})
+        for rule in bad_rules:
+            policy = json.dumps({"owner/infrastructure": rule})
+            with self.subTest(rule=rule), self.assertRaisesRegex(FactoryConfigError, "FORGEHANDS_MERGE_POLICY"):
+                FactoryConfig.from_env({**ENV, **TWO_KEYS_ENV, "FORGEHANDS_MERGE_POLICY": policy}, REPOSITORY)
+
+    def test_bad_two_keys_values_and_unknown_keys_are_rejected(self):
+        bad_rules = ({"deny": ["infra/**"], "two_keys": "infra/**"},
+                     {"deny": ["infra/**"], "two_keys": [""]},
+                     {"deny": ["infra/**"], "two_keys": ["/abs"]},
+                     {"deny": ["infra/**"], "two_keys": [1]},
+                     {"deny": ["infra/**"], "two_key": ["infra/**"]},
+                     {"deny": ["infra/**"], "reason": {}})
+        for rule in bad_rules:
+            policy = json.dumps({"owner/infrastructure": rule})
+            with self.subTest(rule=rule), self.assertRaisesRegex(FactoryConfigError, "FORGEHANDS_MERGE_POLICY"):
+                FactoryConfig.from_env({**ENV, **TWO_KEYS_ENV, "FORGEHANDS_MERGE_POLICY": policy}, REPOSITORY)
+
+    def test_a_bad_security_reviewer_login_or_an_empty_entry_is_rejected(self):
+        for value in ("openhands security", "openhands-security,", "openhands-security,,someone"):
+            with self.subTest(value=value), self.assertRaisesRegex(FactoryConfigError, "FORGEHANDS_SECURITY_REVIEWERS"):
+                FactoryConfig.from_env({**ENV, **TWO_KEYS_ENV, "FORGEHANDS_SECURITY_REVIEWERS": value}, REPOSITORY)
+        with self.assertRaisesRegex(FactoryConfigError, "FORGEHANDS_SECURITY_TOKEN") as caught:
+            FactoryConfig.from_env({**ENV, **TWO_KEYS_ENV, "FORGEHANDS_SECURITY_TOKEN": "good\nleak-value",
+                                    "FORGEHANDS_MERGE_POLICY":
+                                        '{"owner/infrastructure": {"deny": ["infra/**"], "two_keys": ["infra/**"]}}'},
+                                   REPOSITORY)
+        self.assertNotIn("leak-value", str(caught.exception))
+
+    def test_an_old_policy_shape_without_the_new_fields_is_unchanged(self):
+        cfg = FactoryConfig.from_env({**ENV, "FORGEHANDS_MERGE_POLICY":
+                                      '{"owner/infrastructure": {"deny": ["docs/**"]}}'}, REPOSITORY)
+        self.assertEqual(cfg.repository_merge_policy(REPOSITORY), {"deny": ("docs/**",)})
+        self.assertEqual((cfg.security_reviewers, cfg.security_token), ((), ""))
+
+    def test_a_policy_without_two_keys_does_not_need_the_security_reviewer(self):
+        cfg = FactoryConfig.from_env({**ENV, "FORGEHANDS_SECURITY_REVIEWERS": "openhands-security",
+                                      "FORGEHANDS_MERGE_POLICY":
+                                          '{"owner/infrastructure": {"deny": ["docs/**"], "reasons": {"docs/**": "docs"}}}'},
+                                     REPOSITORY)
+        self.assertEqual(cfg.security_token, "")
+        self.assertEqual(cfg.repository_merge_policy(REPOSITORY),
+                         {"deny": ("docs/**",), "reasons": {"docs/**": "docs"}})
 
 
 def _glob_matches(pattern: str, path: str) -> bool:

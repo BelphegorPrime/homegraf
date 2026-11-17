@@ -291,13 +291,21 @@ class AgentProfilesTest(unittest.TestCase):
                       reviewer)
         self.assertIn("The `WIP: ` prefix of the title and a draft state are never a reason for NOT OK",
                       reviewer)
+        self.assertIn("Run the repository's checks on the pull request head", reviewer)
+        self.assertIn("Only if one of them fails, run that same check on the default branch", reviewer)
+        self.assertNotIn("Run the repository's checks once on the default branch", reviewer)
         sensitive = (PROMPTS / "sensitive-reviewer.md").read_text(encoding="utf-8")
         self.assertIn("`## Security review: OK`", sensitive)
         self.assertIn("`## Security review: CONCERNS`", sensitive)
         self.assertIn("never set or remove a label", sensitive)
         for prompt_name in ("worker.md", "worker-strong.md"):
             worker = (PROMPTS / prompt_name).read_text(encoding="utf-8")
-            for phrase in ("BEFORE YOU OPEN THE PULL REQUEST", "empty page", "redirect", "egg-info", "-rs"):
+            for phrase in ("BEFORE YOU OPEN THE PULL REQUEST", "empty page", "redirect", "egg-info", "-rs",
+                           "run only the fast check of the area you change",
+                           "full validation once, when the change is complete",
+                           "before you open or update the pull request",
+                           "Read only the files the issue names and what they import",
+                           "do not list or read whole directories"):
                 self.assertIn(phrase, worker)
         self.assertEqual(self.fake.agents["default"], default_before)
         self.assertEqual(self.fake.llm["default"], default_llm_before)

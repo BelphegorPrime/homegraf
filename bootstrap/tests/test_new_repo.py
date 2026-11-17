@@ -77,6 +77,11 @@ class FakeNewRepoForgejo:
         for event in events:
             if event == "issues":
                 expanded.update(("issue_assign", "issue_comment", "issue_label", "issue_milestone", "issues"))
+            elif event == "pull_request":
+                expanded.update(("pull_request", "pull_request_assign", "pull_request_comment", "pull_request_label",
+                                 "pull_request_milestone", "pull_request_review_approved",
+                                 "pull_request_review_comment", "pull_request_review_rejected",
+                                 "pull_request_review_request", "pull_request_sync"))
             else:
                 expanded.add(event)
         return sorted(expanded)

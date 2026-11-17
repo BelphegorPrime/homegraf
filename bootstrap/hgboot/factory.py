@@ -104,7 +104,7 @@ def run(factory, cfg, state, env=os.environ, *, http=request, sleep=time.sleep,
         _validate_contract(factory, env)
         _validate_runtime_dir(factory.runtime_dir)
         mirror = _preflight(factory, cfg, state, operator_token, http, mirror_attempts, sleep)
-        warning = mailer_warning(env, getattr(factory, "human_login", ""))
+        warning = mailer_warning(env, factory.human_login)
         if warning:
             warn(STEP, warning)
 

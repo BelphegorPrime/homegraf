@@ -7,14 +7,14 @@ not restricted), but its visibility is limited and it reads: it is a collaborato
 token carries read:repository and write:issue only, because the verdict is a comment on the pull request.
 
 The step is idempotent and is not wired into hgboot yet. The HTTP call and the secret store are passed in, so the tests run it against
-fakes. This module has the account and its read access; the token of the reviewer is added by the next part of the series and keeps
-the signature.
+fakes. This module has the account, its read access and its token.
 """
 from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
 
+from . import agent_user
 from .http import request
 from .steps import StepError, log
 
@@ -33,9 +33,9 @@ class SecuritySettings:
 
 
 def ensure_security_user(cfg, factory, store, *, http=request, repositories=None) -> SecuritySettings | None:
-    """Creates the security reviewer's user and its read access, or does nothing when no reviewer is configured.
+    """Creates the security reviewer's user, its token and its read access, or does nothing when no reviewer is configured.
 
-    store is the secret store: get(name) and set(name, value). It holds the token as FORGEJO_SECURITY_TOKEN in the next part.
+    store is the secret store: get(name) and set(name, value). It holds the token as FORGEJO_SECURITY_TOKEN.
     repositories: owner/name of every repository the reviewer may read; each must exist. None means factory.allowed_repos.
     """
     if len(factory.security_reviewers) != 1:
@@ -52,10 +52,12 @@ def ensure_security_user(cfg, factory, store, *, http=request, repositories=None
             raise StepError(f"the security user must not be {reason} {name!r}: the security review needs an account of its own")
 
     api, admin = cfg.forgejo_url + "/api/v1", (cfg.forgejo_user, cfg.admin_password)
+    password = ""
     r = http("GET", f"{api}/users/{login}", basic=admin)
     if r.status == 404:
+        password = secrets.token_urlsafe(32)
         r = http("POST", f"{api}/admin/users", basic=admin, body={
-            "username": login, "email": f"{login}@noreply.{cfg.domain}", "password": secrets.token_urlsafe(32),
+            "username": login, "email": f"{login}@noreply.{cfg.domain}", "password": password,
             "must_change_password": False, "send_notify": False, "visibility": VISIBILITY, "admin": False,
             "restricted": False})
         if not r.ok:
@@ -67,6 +69,26 @@ def ensure_security_user(cfg, factory, store, *, http=request, repositories=None
         raise StepError(f"the user {login} is an administrator: the security review must not work with an administrator's rights")
     else:
         log(STEP, f"user {login}: already there")
+
+    token = store.get(TOKEN) or factory.security_token
+    if token and agent_user._works(http, api, token, login):
+        log(STEP, "token: already there")
+    else:
+        if not password:
+            password = agent_user._reset_password(http, api, login, admin)
+        # before the token is stored: a failed web step must be retried by the next run, which still has no token then
+        agent_user._notifications_off(cfg.forgejo_url, login, password)
+        name, token = _create_token(http, api, login, password)
+        store.set(TOKEN, token)                     # stored before the older one goes: a lost write would leave no token at all
+        _delete_older(http, api, login, password, name)
+        log(STEP, f"token: created (scopes {', '.join(TOKEN_SCOPES)})")
+
+    if not agent_user._works(http, api, token, login):
+        raise StepError(f"the token of {login} does not answer GET /user as {login}")
+    r = http("GET", f"{api}/admin/users", headers={"Authorization": f"token {token}"})
+    if r.status not in (401, 403):
+        raise StepError(f"the token of {login} can read the administrator endpoints ({r.status}): it has more rights than "
+                        f"{', '.join(TOKEN_SCOPES)}")
 
     for repo in factory.allowed_repos if repositories is None else repositories:
         r = http("GET", f"{api}/repos/{repo}", basic=admin)
@@ -80,3 +102,26 @@ def ensure_security_user(cfg, factory, store, *, http=request, repositories=None
         log(STEP, f"{login} is a collaborator of {repo} ({PERMISSION})")
 
     return SecuritySettings(login=login)
+
+
+def _create_token(http, api: str, login: str, password: str) -> tuple[str, str]:
+    """A token under a name of its own (Forgejo shows a token once, so an older name is not reused)."""
+    name = TOKEN_PREFIX + secrets.token_hex(4)
+    r = http("POST", f"{api}/users/{login}/tokens", basic=(login, password), body={"name": name, "scopes": list(TOKEN_SCOPES)})
+    if not r.ok:
+        raise StepError(f"Forgejo refused to create a token for {login}: {r.status}")
+    return name, r.json()["sha1"]
+
+
+def _delete_older(http, api: str, login: str, password: str, keep: str) -> None:
+    """Deletes the tokens of this step that the new one replaces: Forgejo shows a token once, so one whose value is lost is useless."""
+    r = http("GET", f"{api}/users/{login}/tokens", basic=(login, password))
+    if not r.ok:
+        raise StepError(f"Forgejo refused to list the tokens of {login}: {r.status}")
+    older = [t["name"] for t in r.json() or [] if t["name"].startswith(TOKEN_PREFIX) and t["name"] != keep]
+    for old in older:
+        r = http("DELETE", f"{api}/users/{login}/tokens/{old}", basic=(login, password))
+        if not r.ok:
+            raise StepError(f"Forgejo refused to delete the older token {old} of {login}: {r.status}")
+    if older:
+        log(STEP, f"token of {login}: the older one is deleted")

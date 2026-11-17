@@ -479,6 +479,22 @@ class IdentityTests(SmokeTest):
         self.assertFalse(report.passed)
         self.assertIn("stalled at issue closed", report.render())
 
+    def test_a_label_without_an_agent_attribution_does_not_pass(self):
+        original = self.fake.__call__
+
+        def without_timeline(req):
+            if req.path.split("?")[0].endswith("/timeline"):
+                return 200, []
+            return original(req)
+
+        self.srv.close()
+        self.srv = Server(without_timeline)
+        self.addCleanup(self.srv.close)
+        self.cfg = config(tmp=self.tmp, forgejo_url=self.srv.url)
+        report = self.smoke(timeout=60).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("stalled at issue closed", report.render())
+
 
 class TimeoutTests(SmokeTest):
     def test_a_stalled_worker_does_not_pass_the_smoke(self):

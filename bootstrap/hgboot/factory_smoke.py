@@ -641,13 +641,18 @@ class Smoke:
             if others:
                 raise SmokeFailure(f"#{number}: the {name} label is attributed to {', '.join(others)}, not the agent {agent}")
 
+    def _agent_owns_labels(self, observation: Observation) -> bool:
+        agent = self.factory.agent_login
+        return all(agent in (observation.label_actors.get(name) or ()) for name in observation.pr_labels)
+
     def _track_merged(self, number: int) -> Observation:
         repository = self.report.repository
         deadline = self.clock() + self.timeout
         while True:
             observation = self._observe(repository, number)
             self._identity(observation, number)
-            if observation.merged and observation.closed and observation.ci and observation.review and observation.conversation:
+            if (observation.merged and observation.closed and observation.ci and observation.review
+                    and observation.conversation and self._agent_owns_labels(observation)):
                 return observation
             if observation.pr and str(observation.pr.get("state") or "") == "closed" and not observation.merged:
                 raise SmokeFailure(f"#{number}: the pull request was closed without a merge ({observation.chain()})")
@@ -667,7 +672,8 @@ class Smoke:
                 raise SmokeFailure(f"#{number}: the protected path was merged; it must stay open for a human merge")
             if observation.pr and str(observation.pr.get("state") or "") == "closed":
                 raise SmokeFailure(f"#{number}: the protected pull request was closed without a human review")
-            ready = observation.open and observation.review and observation.ci and not observation.draft
+            ready = (observation.open and observation.review and observation.ci and not observation.draft
+                     and self._agent_owns_labels(observation))
             settled = settled + 1 if ready else 0
             if settled >= SETTLE_POLLS:
                 return observation

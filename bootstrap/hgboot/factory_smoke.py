@@ -44,6 +44,7 @@ SETTLE_POLLS = 3
 PAGE_SIZE = 50
 
 CHAIN = ("ticket", "conversation", "draft pull request", "ci", "review", "merged", "issue closed")
+EPIC_VERDICTS = ("ai:review", "ai:approved", "ai:close")
 
 WORKFLOW = """\
 # Tests only: this workflow of the factory smoke repository never publishes or deploys anything.
@@ -554,9 +555,10 @@ class Smoke:
                         "approved, green, open, without WIP: " + observation.chain())
 
     def _epic_cases(self, plan: Plan) -> None:
-        self._epic_plan_case(plan)
+        epic, children = self._epic_plan_case(plan)
+        self._epic_run_case(plan, epic, children)
 
-    def _epic_plan_case(self, plan: Plan) -> None:
+    def _epic_plan_case(self, plan: Plan) -> tuple[int, dict[int, str]]:
         """One epic planned by the planner into three children with an exact dependency graph."""
         repository = plan.repository
         epic = self._open_issue(repository, "epic", self._epic_body(), ready_at_creation=True, label="ai:plan")
@@ -589,6 +591,77 @@ class Smoke:
         if len(summaries) != 1:
             raise SmokeFailure(f"#{epic}: the planner left {len(summaries)} comments, expected one summary")
         self.report.add("epic graph", "passed", "3 children, epic depends on all, B after A, C independent")
+        return epic, children
+
+    def _epic_run_case(self, plan: Plan, epic: int, children: dict[int, str]) -> None:
+        """The children run in order: B only after A merged, C alone, the reviewer closes the epic."""
+        roles = _child_roles(children)
+        a, b, c = (roles[role][0] for role in "abc")
+        a_observation = self._track_merged(a, watch=lambda: self._assert_not_started(b, a))
+        b_observation = self._track_merged(b)
+        self._track_merged(c)
+        self._assert_merged_after(b, b_observation, a, a_observation)
+        self._await_epic_closure(epic, children)
+        self.report.add("epic order", "passed", "B started after A merged, C independent")
+        self.report.add("epic closure", "passed", "closed by the reviewer")
+
+    def _assert_not_started(self, number: int, blocker: int) -> None:
+        """ForgeHands starts a child only when its dependencies closed; a start before that is a leak."""
+        repository = self.report.repository
+        if self._observe(repository, blocker).closed:
+            return
+        started = self._observe(repository, number)
+        if started.conversation or started.pr:
+            raise SmokeFailure(f"#{number}: started before its prerequisite #{blocker} closed")
+
+    def _assert_merged_after(self, number: int, observation: Observation,
+                             blocker: int, blocker_observation: Observation) -> None:
+        created = str((observation.pr or {}).get("created_at") or "")
+        merged = str((blocker_observation.pr or {}).get("merged_at") or "")
+        if created and merged and created <= merged:
+            raise SmokeFailure(f"#{number}: the pull request was created at {created}, "
+                               f"before #{blocker} merged at {merged}")
+
+    def _await_epic_closure(self, epic: int, children: dict[int, str]) -> None:
+        repository = self.report.repository
+        deadline = self.clock() + self.timeout
+        while True:
+            observation = self._observe(repository, epic)
+            self._assert_planner_once(epic, children)
+            if observation.closed:
+                self._assert_epic_actor(epic)
+                return
+            self._bound(deadline, f"#{epic}: epic closure did not happen after every child merged")
+            self.sleep(self.interval)
+
+    def _assert_planner_once(self, epic: int, children: dict[int, str]) -> None:
+        repository = self.report.repository
+        agent = self.factory.agent_login
+        comments = [comment for comment in self.api.paged(f"/repos/{repository}/issues/{epic}/comments")
+                    if isinstance(comment, dict) and (comment.get("user") or {}).get("login") == agent]
+        replanned = set(self._epic_children(repository, epic)) - set(children)
+        if len(comments) != 1 or replanned:
+            raise SmokeFailure(f"#{epic}: the planner polled or re-ran")
+
+    def _assert_epic_actor(self, epic: int) -> None:
+        """The epic reviewer closes the epic; the smoke and the operator never do."""
+        repository = self.report.repository
+        agent = self.factory.agent_login
+        closed = False
+        for event in self.api.paged(f"/repos/{repository}/issues/{epic}/timeline"):
+            if not isinstance(event, dict):
+                continue
+            user = (event.get("user") or {}).get("login")
+            label = (event.get("label") or {}).get("name")
+            if event.get("type") == "close":
+                closed = True
+                if user != agent:
+                    raise SmokeFailure(f"#{epic}: closed by {user or 'an unknown user'}, not the agent {agent}")
+            elif event.get("type") == "label" and not event.get("removed") and label in EPIC_VERDICTS \
+                    and user != agent:
+                raise SmokeFailure(f"#{epic}: the {label} label is attributed to {user}, not the agent {agent}")
+        if not closed:
+            raise SmokeFailure(f"#{epic}: closed without a timeline event naming who closed it")
 
     def _epic_body(self) -> str:
         return (f"Factory smoke {self.run_token} (epic planning).\n\n"
@@ -732,12 +805,14 @@ class Smoke:
         agent = self.factory.agent_login
         return all(agent in (observation.label_actors.get(name) or ()) for name in observation.pr_labels)
 
-    def _track_merged(self, number: int) -> Observation:
+    def _track_merged(self, number: int, watch=None) -> Observation:
         repository = self.report.repository
         deadline = self.clock() + self.timeout
         while True:
             observation = self._observe(repository, number)
             self._identity(observation, number)
+            if watch is not None:
+                watch()
             if (observation.merged and observation.closed and observation.ci and observation.review
                     and observation.conversation and self._agent_owns_labels(observation)):
                 return observation
@@ -812,6 +887,24 @@ def _conversation(observation: Observation) -> str:
     return ", conversation on " + _clean_urls(observation.conversation)
 
 
+def _child_roles(children: dict[int, str]) -> dict:
+    """The children claiming each part, told apart by the ``smoke-epic/`` file their body names.
+
+    A creates the ``-a.txt`` file, B appends to it and C owns the ``-c.txt`` file, so the result
+    reads ``{"a": [n], "b": [n], "c": [n]}``; a list holds more than one number only when the
+    planner duplicated that part.
+    """
+    roles: dict = {"a": [], "b": [], "c": []}
+    for number in sorted(children):
+        body = str(children[number] or "")
+        files = _SMOKE_FILE.findall(body)
+        if any(name.endswith("-c.txt") for name in files):
+            roles["c"].append(number)
+        elif any(name.endswith("-a.txt") for name in files):
+            roles["b" if "append" in body.lower() else "a"].append(number)
+    return roles
+
+
 def check_epic_graph(epic: int, children: dict[int, str], depends_on: dict[int, set[int]]) -> list[str]:
     """Problems of the planned graph: A, then B, C alone, and the epic waiting for all three.
 
@@ -824,24 +917,18 @@ def check_epic_graph(epic: int, children: dict[int, str], depends_on: dict[int, 
     problems: list[str] = []
     if len(children) != 3:
         problems.append(f"duplicate children: {len(children)} children, expected three")
-    roles: dict[str, list[int]] = {"A": [], "B": [], "C": []}
+    roles = _child_roles(children)
+    known = {number for numbers in roles.values() for number in numbers}
     for number in sorted(children):
-        body = str(children[number] or "")
-        lower = body.lower()
-        if f"part of #{epic}" not in lower:
+        if f"part of #{epic}" not in str(children[number] or "").lower():
             problems.append(f"#{number}: the body does not say 'Part of #{epic}'")
-        files = _SMOKE_FILE.findall(body)
-        if any(name.endswith("-c.txt") for name in files):
-            roles["C"].append(number)
-        elif any(name.endswith("-a.txt") for name in files):
-            roles["B" if "append" in lower else "A"].append(number)
-        else:
+        if number not in known:
             problems.append(f"#{number}: the body names no file under smoke-epic/")
-    for role in "ABC":
+    for role in "abc":
         if len(roles[role]) > 1:
             problems.append("duplicate children: " + ", ".join(f"#{number}" for number in roles[role])
-                            + f" all take the {role} part")
-    a, b, c = (roles[role][0] if len(roles[role]) == 1 else None for role in "ABC")
+                            + f" all take the {role.upper()} part")
+    a, b, c = (roles[role][0] if len(roles[role]) == 1 else None for role in "abc")
     deps = {number: set(depends_on.get(number) or ()) for number in children}
     epic_deps = set(depends_on.get(epic) or ())
     for number in sorted(children):

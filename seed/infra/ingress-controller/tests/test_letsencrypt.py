@@ -81,8 +81,8 @@ def test_plan_for_new_le_service_is_read_only(env):
     use_le(env)
     ctx, spec, p = plan(env)
     text = p.render()
-    assert "+ Proxy Host anlegen" in text
-    assert "* Zertifikat ausstellen: kein eigenes Zertifikat vorhanden" in text
+    assert "+ Create proxy host" in text
+    assert "* Issue certificate: no certificate of our own yet" in text
     assert not p.blockers and not p.renew_cert
     assert env.npm.le_issued == [] and env.npm.hosts == {} and env.npm.certs == {}
 
@@ -107,7 +107,7 @@ def test_http01_precheck_failure_blocks_before_any_mutation(env):
         apply(env)
     msg = str(e.value)
     assert "app.pub.example" in msg and "no-host" in msg
-    assert "Port 80 aus dem Internet erreichbar machen oder certificate.dns_challenge: true" in msg
+    assert "make port 80 reachable from the internet or set certificate.dns_challenge: true" in msg
     assert env.npm.hosts == {} and env.npm.certs == {}
     assert env.npm.le_issued == [] and env.npm.le_requests == []
 
@@ -136,7 +136,7 @@ def test_dns01_without_credentials_is_a_blocker(env):
     set_issuer(env, dns_provider="cloudflare")
     use_le(env, cert="issuer_ref: letsencrypt, dns_challenge: true")
     _, _, p = plan(env)
-    assert "LETSENCRYPT_DNS_CREDENTIALS fehlt" in p.blockers
+    assert "LETSENCRYPT_DNS_CREDENTIALS is missing" in p.blockers
     with pytest.raises(ConflictError, match="LETSENCRYPT_DNS_CREDENTIALS"):
         apply(env)
     assert env.npm.le_issued == [] and env.npm.hosts == {} and env.npm.certs == {}
@@ -209,7 +209,7 @@ def test_expiring_le_certificate_is_renewed_in_place(env):
     _, _, p = plan(env)
     assert p.renew_cert and not p.cert_reasons
     until = row["cert_not_after"][:10]
-    assert f"  * Let's-Encrypt-Zertifikat erneuern (läuft am {until} ab)" in p.render()
+    assert f"  * Renew Let's Encrypt certificate (expires on {until})" in p.render()
     host_before = dict(env.npm.hosts[row["npm_host_id"]])
     ctx, _, res = apply(env)
     assert res == "applied"
@@ -244,7 +244,7 @@ def test_adopt_switches_to_own_le_certificate_and_keeps_the_hand_made_one(env):
 def test_hand_made_host_with_le_domain_is_a_conflict(env):
     use_le(env)
     env.npm.add_manual_host(["app.pub.example"])
-    with pytest.raises(ConflictError, match="Übernahme nur via 'ingressctl adopt'"):
+    with pytest.raises(ConflictError, match="adoption only via 'ingressctl adopt'"):
         apply(env)
     assert env.npm.le_issued == [] and env.npm.certs == {}
 

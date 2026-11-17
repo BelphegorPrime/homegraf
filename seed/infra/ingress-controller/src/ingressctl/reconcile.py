@@ -1,13 +1,13 @@
-"""Plan und Apply: Abgleich von ServiceSpecs mit NPM und Infisical.
+"""Plan and apply: reconcile ServiceSpecs with NPM and Infisical.
 
-Grundsätze:
-- Nur Ressourcen mit eindeutiger Besitzzuordnung im State werden verändert; fremde Hosts mit gleicher
-  Domain führen zum Abbruch vor jeder Mutation.
-- Nach jedem externen Seiteneffekt wird der Fortschritt in `operations` gesichert. Ein Wiederanlauf gleicht
-  zuerst den Live-Zustand ab (Marker im NPM-Zertifikatsnamen, Infisical-Metadatum), statt blind neu anzulegen.
-- Neues Zertifikat: ausstellen -> prüfen -> als neues NPM-Objekt hochladen -> Host umschalten -> HTTPS prüfen;
-  bei Fehlschlag zurück auf das alte Zertifikat. Alte Objekte werden erst danach und nur ohne Referenzen gelöscht.
-- Fehlende Manifeste sind nie ein Löschsignal.
+Principles:
+- Only resources with an unambiguous ownership record in the state are changed; foreign hosts with the same
+  domain abort before any mutation.
+- After every external side effect the progress is saved in `operations`. A re-run first reconciles the live
+  state (marker in the NPM certificate name, Infisical metadata) instead of blindly creating anew.
+- New certificate: issue -> validate -> upload as a new NPM object -> switch the host -> verify HTTPS;
+  on failure back to the previous certificate. Old objects are deleted only afterwards and only without references.
+- Missing manifests are never a signal to delete.
 """
 from __future__ import annotations
 
@@ -43,9 +43,9 @@ class Context:
     checker: Checker
     clock: callable = lambda: dt.datetime.now(dt.timezone.utc)
     source_repo: str | None = None
-    # DNS-01 von Let's Encrypt: Zugangsdaten des Providers, nie protokolliert
+    # DNS-01 with Let's Encrypt: the provider's credentials, never logged
     le_dns_credentials: str | None = None
-    # NPM antwortet auf PUT/POST, bevor nginx den Reload abgeschlossen hat -> Prüfung mehrfach versuchen
+    # NPM answers PUT/POST before nginx has finished the reload -> retry the check
     verify_attempts: int = 6
     verify_delay: float = 2.0
 
@@ -58,7 +58,7 @@ class Context:
 class ServicePlan:
     spec: ServiceSpec
     create_host: bool = False
-    host_changes: dict = field(default_factory=dict)   # Feld -> (live, soll)
+    host_changes: dict = field(default_factory=dict)   # field -> (live, desired)
     cert_reasons: list[str] = field(default_factory=list)
     drift: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
@@ -77,7 +77,7 @@ class ServicePlan:
         lines += [f"  BLOCKER {b}" for b in self.blockers]
         lines += [f"  DRIFT   {d}" for d in self.drift]
         if self.create_host:
-            lines.append("  + Proxy Host anlegen")
+            lines.append("  + Create proxy host")
         for k, (old, new) in self.host_changes.items():
             if k == "advanced_config":
                 lines.append("  ~ advanced_config:")
@@ -86,13 +86,13 @@ class ServicePlan:
             else:
                 lines.append(f"  ~ {k}: {old!r} -> {new!r}")
         for r in self.cert_reasons:
-            lines.append(f"  * Zertifikat ausstellen: {r}")
+            lines.append(f"  * Issue certificate: {r}")
         if self.renew_cert:
             until = f"{self.renew_not_after:%Y-%m-%d}" if self.renew_not_after else "?"
-            lines.append(f"  * Let's-Encrypt-Zertifikat erneuern (läuft am {until} ab)")
+            lines.append(f"  * Renew Let's Encrypt certificate (expires on {until})")
         lines += [f"  i {n}" for n in self.notes]
         if self.noop and not self.blockers:
-            lines.append("  = keine Änderung")
+            lines.append("  = no change")
         return "\n".join(lines)
 
 
@@ -126,19 +126,19 @@ def _static_blockers(ctx: Context, spec: ServiceSpec) -> list[str]:
     b = []
     npm = ctx.inv.npm_instances.get(spec.npm_instance)
     if npm is None or not npm.api_url or not npm.tls_address:
-        b.append(f"NPM-Instanz '{spec.npm_instance}' ist in inventory/ingress.yaml nicht vollständig konfiguriert")
+        b.append(f"NPM instance '{spec.npm_instance}' is not fully configured in inventory/ingress.yaml")
     missing = ctx.inv.issuers[spec.issuer_ref].missing()
     if missing:
-        b.append(f"Issuer '{spec.issuer_ref}' unvollständig: {', '.join(missing)}")
+        b.append(f"Issuer '{spec.issuer_ref}' is incomplete: {', '.join(missing)}")
     if spec.dns_challenge and ctx.npm and not ctx.le_dns_credentials:
-        b.append("LETSENCRYPT_DNS_CREDENTIALS fehlt")
+        b.append("LETSENCRYPT_DNS_CREDENTIALS is missing")
     if spec.upstream_host is None:
-        b.append(f"Upstream-Server '{spec.upstream_server}' hat keine bestätigte Adresse in inventory/servers.yaml")
+        b.append(f"Upstream server '{spec.upstream_server}' has no confirmed address in inventory/servers.yaml")
     return b
 
 
 def _parse_expires(value) -> dt.datetime | None:
-    """NPM liefert expires_on als 'YYYY-MM-DD HH:MM:SS' (ältere Versionen mit T/Z); ohne Zone = UTC."""
+    """NPM returns expires_on as 'YYYY-MM-DD HH:MM:SS' (older versions with T/Z); no zone = UTC."""
     if not value:
         return None
     text = str(value).strip().replace("Z", "+00:00").replace(" ", "T", 1)
@@ -151,16 +151,16 @@ def _parse_expires(value) -> dt.datetime | None:
 
 def _plan_le_certificate(ctx: Context, spec: ServiceSpec, st: dict | None, live_cert: dict | None,
                          p: ServicePlan) -> None:
-    """Let's Encrypt: kein PEM über die API -> kein Fingerprint-Vergleich; NPM erneuert selbst, hier der Vorlauf."""
+    """Let's Encrypt: no PEM over the API -> no fingerprint comparison; NPM renews itself, tracked here."""
     cert_id = st.get("npm_cert_id") if st else None
     if not cert_id:
-        p.cert_reasons.append("kein eigenes Zertifikat vorhanden")
+        p.cert_reasons.append("no certificate of our own yet")
         return
     if live_cert is None:
-        p.cert_reasons.append(f"NPM-Zertifikat {cert_id} fehlt")
+        p.cert_reasons.append(f"NPM certificate {cert_id} is missing")
         return
     if st.get("policy_hash") != spec.policy_hash():
-        p.cert_reasons.append("Domains, Issuer oder Challenge geändert")
+        p.cert_reasons.append("Domains, issuer or challenge changed")
         return
     expires = _parse_expires(live_cert.get("expires_on"))
     if expires is not None and expires - ctx.clock() < dt.timedelta(days=spec.renew_before_days):
@@ -178,65 +178,65 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
     st = ctx.state.get(spec.resource_id)
     if spec.lifecycle == "absent":
         if st and st.get("npm_host_id"):
-            p.blockers.append("lifecycle: absent ist noch nicht implementiert (Etappe G); keine Änderung")
+            p.blockers.append("lifecycle: absent is not implemented yet (stage G); no change")
         else:
-            p.notes.append("lifecycle: absent und keine verwaltete Ressource")
+            p.notes.append("lifecycle: absent and no managed resource")
         return p
     p.blockers += _static_blockers(ctx, spec)
 
     owned_id = st.get("npm_host_id") if st else None
     owned = next((h for h in live_hosts if h.get("id") == owned_id), None) if owned_id else None
     if owned_id and owned is None:
-        p.drift.append(f"verwalteter NPM-Host {owned_id} existiert nicht mehr")
+        p.drift.append(f"managed NPM host {owned_id} no longer exists")
     p.create_host = owned is None
 
     owned_elsewhere = {r["npm_host_id"] for r in ctx.state.all()
                        if r.get("npm_host_id") and r["resource_id"] != spec.resource_id}
     if p.create_host and ctx.state.open_op(spec.resource_id, OP_HOST):
-        # Ein früherer Lauf brach nach POST /proxy-hosts ab. NPM lässt keine doppelten Domains zu; ein nicht
-        # zugeordneter Host mit exakt diesen Domains stammt daher aus diesem Versuch und wird fortgeführt.
+        # An earlier run aborted after POST /proxy-hosts. NPM does not allow duplicate domains; a host
+        # that is not assigned and carries exactly these domains therefore comes from that attempt.
         p.resume_host_id = next((h["id"] for h in live_hosts if h.get("id") not in owned_elsewhere
                                  and sorted(d.lower() for d in h.get("domain_names") or []) == list(spec.domains)), None)
         if p.resume_host_id:
-            p.notes.append(f"setzt unterbrochenes Anlegen fort (NPM-Host {p.resume_host_id})")
+            p.notes.append(f"resuming an interrupted host creation (NPM host {p.resume_host_id})")
 
     for h in live_hosts:
         if h.get("id") in (owned_id, p.resume_host_id):
             continue
         clash = host_matches_domains(h, spec.domains)
         if clash:
-            p.blockers.append(f"Domain(s) {sorted(clash)} gehören zu NPM-Host {h.get('id')}, der nicht "
-                              f"{spec.resource_id} zugeordnet ist (Übernahme nur via 'ingressctl adopt')")
+            p.blockers.append(f"Domain(s) {sorted(clash)} belong to NPM host {h.get('id')}, which is not "
+                              f"assigned to {spec.resource_id} (adoption only via 'ingressctl adopt')")
     for other in ctx.state.all():
         if other["resource_id"] == spec.resource_id or other["npm_instance"] != spec.npm_instance:
             continue
         clash = set(json.loads(other["domains"] or "[]")) & set(spec.domains)
         if clash and other.get("npm_host_id"):
-            p.blockers.append(f"Domain(s) {sorted(clash)} sind im State an {other['resource_id']} vergeben")
+            p.blockers.append(f"Domain(s) {sorted(clash)} are already assigned to {other['resource_id']} in the state")
 
     cert_id = st.get("npm_cert_id") if st else None
     live_cert = live_certs.get(cert_id) if cert_id else None
     if ctx.inv.issuers[spec.issuer_ref].type == "letsencrypt":
         _plan_le_certificate(ctx, spec, st, live_cert, p)
     elif not cert_id:
-        p.cert_reasons.append("kein eigenes Zertifikat vorhanden")
+        p.cert_reasons.append("no certificate of our own yet")
     elif live_cert is None or live_cert.get("info") is None:
-        p.cert_reasons.append(f"NPM-Zertifikat {cert_id} fehlt oder ist unlesbar")
+        p.cert_reasons.append(f"NPM certificate {cert_id} is missing or unreadable")
     else:
         info = live_cert["info"]
         if st.get("cert_fingerprint") and info.fingerprint != st["cert_fingerprint"]:
-            p.cert_reasons.append("NPM-Zertifikat weicht vom zuletzt ausgerollten ab")
+            p.cert_reasons.append("NPM certificate differs from the last deployed one")
         if st.get("policy_hash") != spec.policy_hash():
-            p.cert_reasons.append("Domains, Issuer oder Laufzeit geändert")
+            p.cert_reasons.append("Domains, issuer or lifetime changed")
         if certs.needs_renewal(info, spec.renew_before_days, ctx.clock()):
-            p.cert_reasons.append(f"läuft am {info.not_after:%Y-%m-%d} ab (Vorlauf "
-                                  f"{certs.renewal_lead(info, spec.renew_before_days).days} Tage)")
+            p.cert_reasons.append(f"expires on {info.not_after:%Y-%m-%d} (lead time "
+                                  f"{certs.renewal_lead(info, spec.renew_before_days).days} days)")
 
     if owned is not None:
         want = desired_host(spec, cert_id if live_cert else owned.get("certificate_id"))
         for k in MANAGED_HOST_FIELDS:
             if k == "certificate_id" and p.cert_reasons:
-                continue  # wird mit dem neuen Zertifikat ohnehin gesetzt
+                continue  # set with the new certificate anyway
             if _norm(k, owned.get(k)) != _norm(k, want[k]):
                 p.host_changes[k] = (owned.get(k), want[k])
         current_advanced = owned.get("advanced_config") or ""
@@ -246,8 +246,8 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
             if current_advanced != wanted_advanced:
                 if not is_managed_config(current_advanced):
                     p.blockers.append(
-                        f"NPM-Host {owned.get('id')}: advanced_config enthält fremde Konfiguration "
-                        f"(kein '{MANAGED_MARKER}'-Marker); Übernahme nur von Hand")
+                        f"NPM host {owned.get('id')}: advanced_config contains foreign configuration "
+                        f"(no '{MANAGED_MARKER}' marker); adoption only by hand")
                 else:
                     p.host_changes["advanced_config"] = (current_advanced, wanted_advanced)
         elif current_advanced:
@@ -255,7 +255,7 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
             if remaining != current_advanced:
                 p.host_changes["advanced_config"] = (current_advanced, remaining)
         if st and st.get("manifest") == spec.to_json() and p.host_changes:
-            p.drift += [f"in NPM manuell geändert: {k}" for k in p.host_changes]
+            p.drift += [f"changed manually in NPM: {k}" for k in p.host_changes]
     return p
 
 
@@ -267,7 +267,7 @@ def _git_is_ancestor(root: pathlib.Path, a: str, b: str) -> bool:
 
 
 def check_commit_order(ctx: Context, spec: ServiceSpec, commit: str | None, allow_rollback: bool) -> str | None:
-    """None = fortfahren, sonst Grund zum Überspringen (verspäteter/älterer Lauf)."""
+    """None = continue, otherwise the reason to skip (late/older run)."""
     st = ctx.state.get(spec.resource_id)
     last = st.get("reconciled_commit") if st else None
     if not commit or not last or commit == last or ctx.root is None:
@@ -278,8 +278,8 @@ def check_commit_order(ctx: Context, spec: ServiceSpec, commit: str | None, allo
         log.event("apply", "rollback-requested", service=spec.resource_id, from_commit=last, to_commit=commit)
         return None
     if _git_is_ancestor(ctx.root, commit, last):
-        return f"Commit {commit[:12]} ist älter als bereits angewendeter {last[:12]} (verspätetes Ereignis)"
-    return f"Commit {commit[:12]} ist kein Nachfolger von {last[:12]}; nur mit --allow-rollback"
+        return f"Commit {commit[:12]} is older than the already applied {last[:12]} (late event)"
+    return f"Commit {commit[:12]} is not a descendant of {last[:12]}; only with --allow-rollback"
 
 
 def ensure_certificate(ctx: Context, spec: ServiceSpec) -> dict:
@@ -295,7 +295,7 @@ def ensure_certificate(ctx: Context, spec: ServiceSpec) -> dict:
         state.close_op(op, "abandoned")
         op = None
     if op and state.load_pending_key(op["op_id"]) is None:
-        state.close_op(op, "abandoned")  # Schlüssel verloren: Ausstellung ist unbrauchbar
+        state.close_op(op, "abandoned")  # key lost: the issuance is unusable
         op = None
     if op is None:
         op = state.start_op(spec.resource_id, OP_ISSUE, {"policy": spec.policy_hash(), "domains": list(spec.domains)})
@@ -313,7 +313,7 @@ def ensure_certificate(ctx: Context, spec: ServiceSpec) -> dict:
         if bundle is None:
             raise PendingIssuance(op["data"]["request_id"])
     else:
-        if op["step"] == "requesting":  # vorheriger Lauf brach während der Anfrage ab
+        if op["step"] == "requesting":  # the previous run aborted during the request
             ids = inf.find_by_metadata(issuer.project_id, issuer.application_id, INFISICAL_OP_KEY, op["op_id"])
             if ids:
                 bundle = inf.get_certificate(ids[0])
@@ -343,7 +343,7 @@ def ensure_certificate(ctx: Context, spec: ServiceSpec) -> dict:
     npm_cert_id = op["data"].get("npm_cert_id")
     if npm_cert_id and npm.get_certificate(npm_cert_id) is None:
         npm_cert_id = None
-    if not npm_cert_id:  # evtl. von einem abgebrochenen Lauf angelegt: über den eindeutigen Marker wiederfinden
+    if not npm_cert_id:  # maybe created by an aborted run: find it again via the unique marker
         npm_cert_id = next((c["id"] for c in npm.list_certificates() if c.get("nice_name") == nice_name), None)
     if not npm_cert_id:
         state.step(op, "npm_creating")
@@ -357,9 +357,9 @@ def ensure_certificate(ctx: Context, spec: ServiceSpec) -> dict:
 
 
 def _le_resume_candidate(ctx: Context, spec: ServiceSpec) -> dict | None:
-    """Zertifikat eines abgebrochenen LE-POST: NPM überschreibt nice_name, daher über Domains und Nutzung suchen.
+    """Certificate of an aborted LE POST: NPM overwrites nice_name, so search by domains and usage.
 
-    Nur nach `npm_requesting` und nie, wenn eine State-Zeile es schon beansprucht oder ein Host es benutzt.
+    Only after `npm_requesting`, and never when a state row already claims it or a host uses it.
     """
     npm = ctx.npm[spec.npm_instance]
     claimed = {r.get("npm_cert_id") for r in ctx.state.all() if r.get("npm_cert_id")}
@@ -375,7 +375,7 @@ def _le_resume_candidate(ctx: Context, spec: ServiceSpec) -> dict | None:
 
 
 def _ensure_le_certificate(ctx: Context, spec: ServiceSpec) -> dict:
-    """NPM-managed Let's Encrypt: ein POST stellt aus, kein PEM in der Antwort -> info bleibt None."""
+    """NPM-managed Let's Encrypt: one POST issues, no PEM in the response -> info stays None."""
     issuer = ctx.inv.issuers[spec.issuer_ref]
     npm = ctx.npm[spec.npm_instance]
     state = ctx.state
@@ -400,12 +400,12 @@ def _ensure_le_certificate(ctx: Context, spec: ServiceSpec) -> dict:
     if not cert_id:
         if not spec.dns_challenge:
             results = npm.test_http_challenge(list(spec.domains))
-            blocked = {d: results.get(d, "keine Antwort") for d in spec.domains if results.get(d) != "ok"}
+            blocked = {d: results.get(d, "no response") for d in spec.domains if results.get(d) != "ok"}
             if blocked:
-                state.close_op(op, "blocked")  # nichts angelegt: nächster Lauf beginnt mit frischer Operation
+                state.close_op(op, "blocked")  # nothing created: the next run starts a fresh operation
                 detail = ", ".join(f"{d}: {r}" for d, r in sorted(blocked.items()))
-                raise IngressError(f"HTTP-01-Prüfung für {', '.join(spec.domains)} fehlgeschlagen ({detail}); "
-                                   "Port 80 aus dem Internet erreichbar machen oder "
+                raise IngressError(f"HTTP-01 check for {', '.join(spec.domains)} failed ({detail}); "
+                                   "make port 80 reachable from the internet or set "
                                    "certificate.dns_challenge: true")
         state.step(op, "npm_requesting")
         created = npm.create_letsencrypt_certificate(
@@ -429,11 +429,11 @@ def _chain_without_leaf(chain_pem: str | None, leaf_fp: str) -> str | None:
 
 def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deployed_commit: str | None = None,
                   allow_rollback: bool = False, skip_upstream_check: bool = False) -> str:
-    """Muss unter npm_lock(spec.npm_instance) laufen. Liefert 'noop', 'applied' oder 'skipped'."""
+    """Must hold npm_lock(spec.npm_instance). Returns 'noop', 'applied' or 'skipped'."""
     log.set_context(service=spec.resource_id, commit=commit)
     state, npm = ctx.state, ctx.npm[spec.npm_instance]
     if deployed_commit and commit and deployed_commit != commit:
-        raise IngressError(f"Komodo hat {deployed_commit[:12]} ausgerollt, Manifest stammt aus {commit[:12]}")
+        raise IngressError(f"Komodo deployed {deployed_commit[:12]}, but the manifest is from {commit[:12]}")
     reason = check_commit_order(ctx, spec, commit, allow_rollback)
     if reason:
         log.event("apply", "skipped", reason=reason)
@@ -455,7 +455,7 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
                 source_repo=ctx.source_repo)
     if deployed_commit:
         base["deployed_commit"] = deployed_commit
-    state.upsert(spec.resource_id, **base)  # Domain-Reservierung unter der Sperre
+    state.upsert(spec.resource_id, **base)  # domain reservation while holding the lock
 
     if plan.noop:
         state.upsert(spec.resource_id, reconciled_commit=commit, manifest=spec.to_json(), last_result="noop",
@@ -477,7 +477,7 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
     cert_id = new_cert["npm_cert_id"] if new_cert else old_cert_id
     renewed = npm.renew_certificate(cert_id) if (is_le and plan.renew_cert and not plan.cert_reasons) else None
     if is_le:
-        # Die API liefert kein PEM: kein Soll-Fingerprint; verglichen wird mit dem, was die Prüfung sieht.
+        # The API returns no PEM: no expected fingerprint; the comparison uses what the check sees.
         expected_fp = None
     else:
         expected_fp = new_cert["info"].fingerprint if new_cert else st.get("cert_fingerprint")
@@ -510,7 +510,7 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
             log.event("host", "updated", npm_host_id=host_id, fields=sorted(changes))
 
     npm_cfg = ctx.inv.npm_instances[spec.npm_instance]
-    # Let's Encrypt: System-Trust-Store, sofern der Issuer kein eigenes Bundle vorgibt.
+    # Let's Encrypt: system trust store, unless the issuer provides its own bundle.
     ca_bundle = issuer.ca_bundle if (issuer.ca_bundle or not is_le) else None
     observed_fp = None
     for attempt in range(1, ctx.verify_attempts + 1):
@@ -521,7 +521,7 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
             if not res.ok:
                 failures.append(res.error)
             elif expected_fp and res.fingerprint != expected_fp:
-                failures.append(f"{domain}: NPM präsentiert nicht das erwartete Zertifikat")
+                failures.append(f"{domain}: NPM does not present the expected certificate")
             else:
                 observed_fp = res.fingerprint
         if not failures:
@@ -533,8 +533,8 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
         msg = "; ".join(failures)
         if new_cert and host_existed and old_cert_id:
             npm.update_proxy_host(st["npm_host_id"], {"certificate_id": old_cert_id, "ssl_forced": want["ssl_forced"]})
-            msg += f" -> Host zurück auf vorheriges Zertifikat {old_cert_id}"
-            # Neues Objekt bleibt im State der offenen Operation referenziert und wird beim nächsten Lauf wiederverwendet.
+            msg += f" -> host switched back to previous certificate {old_cert_id}"
+            # The new object stays referenced in the open operation and is reused on the next run.
         state.upsert(spec.resource_id, last_result="error", last_error=msg[:1000])
         log.event("verify", "failed", error=msg)
         raise IngressError(msg)
@@ -576,30 +576,30 @@ def apply_service(ctx: Context, spec: ServiceSpec, *, commit: str | None, deploy
                 npm.delete_certificate(old_cert_id)
                 log.event("cleanup", "ok", npm_cert_id=old_cert_id)
             else:
-                log.event("cleanup", "kept", npm_cert_id=old_cert_id, reason="noch referenziert")
+                log.event("cleanup", "kept", npm_cert_id=old_cert_id, reason="still referenced")
         except AdapterError as e:
             log.event("cleanup", "failed", npm_cert_id=old_cert_id, error=str(e))
     return "applied"
 
 
-# --- Übernahme und Recovery -----------------------------------------------------------------------
+# --- Adoption and recovery ------------------------------------------------------------------------
 
 def adopt(ctx: Context, spec: ServiceSpec, npm_host_id: int) -> None:
-    """Explizite Übernahme eines bestehenden NPM-Hosts (nur bei exakt gleichen Domains)."""
+    """Explicit adoption of an existing NPM host (only with exactly matching domains)."""
     npm = ctx.npm[spec.npm_instance]
     host = npm.get_proxy_host(npm_host_id)
     if host is None:
-        raise IngressError(f"NPM-Host {npm_host_id} existiert nicht")
+        raise IngressError(f"NPM host {npm_host_id} does not exist")
     if sorted(d.lower() for d in host.get("domain_names") or []) != list(spec.domains):
-        raise ConflictError(f"Host {npm_host_id} hat Domains {host.get('domain_names')}, Manifest {list(spec.domains)}")
+        raise ConflictError(f"Host {npm_host_id} has domains {host.get('domain_names')}, manifest {list(spec.domains)}")
     for r in ctx.state.all():
         if r.get("npm_host_id") == npm_host_id and r["resource_id"] != spec.resource_id:
-            raise ConflictError(f"Host {npm_host_id} ist bereits {r['resource_id']} zugeordnet")
+            raise ConflictError(f"Host {npm_host_id} is already assigned to {r['resource_id']}")
     st = ctx.state.get(spec.resource_id)
     if st and st.get("npm_host_id") and st["npm_host_id"] != npm_host_id:
-        raise ConflictError(f"{spec.resource_id} besitzt bereits Host {st['npm_host_id']}")
+        raise ConflictError(f"{spec.resource_id} already owns host {st['npm_host_id']}")
     ctx.state.snapshot(spec.resource_id, "adopt", host)
-    # Das bisherige Zertifikat gehört uns nicht: npm_cert_id bleibt leer -> nächster apply stellt ein eigenes aus.
+    # The existing certificate is not ours: npm_cert_id stays empty -> the next apply issues our own.
     ctx.state.upsert(spec.resource_id, namespace=spec.namespace, service_id=spec.service_id, stack_id=spec.stack_id,
                      npm_instance=spec.npm_instance, domains=spec.domains, npm_host_id=npm_host_id,
                      last_result="adopted", last_error=None)
@@ -607,13 +607,13 @@ def adopt(ctx: Context, spec: ServiceSpec, npm_host_id: int) -> None:
 
 
 def recover(ctx: Context, spec: ServiceSpec, npm_host_id: int, npm_cert_id: int | None) -> None:
-    """State-Wiederherstellung über explizites Mapping; prüft Domains und Zertifikatsmarker."""
+    """State recovery via an explicit mapping; checks domains and the certificate marker."""
     npm = ctx.npm[spec.npm_instance]
     adopt(ctx, spec, npm_host_id)
     if npm_cert_id is not None:
         cert = npm.get_certificate(npm_cert_id)
         if cert is None or not str(cert.get("nice_name", "")).startswith(f"{CERT_NAME_PREFIX}{spec.resource_id}:"):
-            raise ConflictError(f"NPM-Zertifikat {npm_cert_id} trägt nicht den Marker von {spec.resource_id}")
+            raise ConflictError(f"NPM certificate {npm_cert_id} does not carry the marker of {spec.resource_id}")
         info = cert["info"]
         ctx.state.upsert(spec.resource_id, npm_cert_id=npm_cert_id, cert_fingerprint=info.fingerprint if info else None,
                          cert_sans=info.sans if info else None,

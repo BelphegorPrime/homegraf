@@ -113,7 +113,7 @@ export function Repositories({ onNew }: { onNew?: () => void }) {
   const repos = useRepos();
   return (
     <div className="list">
-      <PageHeader title="Repositories">repositories of operator's Forgejo owner and how far each is wired for factory.</PageHeader>
+      <PageHeader title="Repositories">{"The repositories of the operator's Forgejo owner and how far each is wired for the factory."}</PageHeader>
       <Section title="Repositories">
         <RepositoriesView repos={repos.data?.repos ?? []} error={repos.isError ? repos.error.message : undefined} loading={repos.isPending} onNew={onNew} />
       </Section>

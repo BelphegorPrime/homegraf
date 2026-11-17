@@ -1,43 +1,109 @@
 """LABEL_ROUTES of ForgeHands direct mode: which agent profile a Forgejo label or event starts, and its limits.
 
 OpenHands takes the agent profile as an id, not a name (`POST /api/conversations` rejects a name with HTTP 422), so `label_routes()` takes
-the ids that `GET /api/agent-profiles` lists. The agents step does not create the profiles yet (#25), so nothing calls it: setup.sh and the
-wizard template leave `LABEL_ROUTES` empty and direct mode off until the ids exist.
+the ids that `GET /api/agent-profiles` lists. The factory reconciles the profiles first and publishes these routes in its runtime file.
 
-Four routes start on a label. `ai:changes` starts on a pull request label, and the keys `ci:failure`, `ci:success`, `epic:done` and
-`pr:conflict` are synthetic: they start on the CI, epic and branch-conflict events, so they need no repository label.
+The routes use the reference installation's tiers: `cheap` for the worker routes, `smart` for the planner, the reviewers, the escalation
+target and the conflict round, and `free` for the fallback routes. `ai:changes` and `ci:failure` escalate their last round to
+`ai:escalate`; while their tier is out of quota they fall back to `ai:changes-free` and `ci:failure-free`, and `ai:ready` to
+`ai:ready-free`. Those routes need no label: nobody triggers them from an issue, so they exist only when the `worker-free` profile has an
+id.
+
+Four routes start on a label. `ai:changes` starts on a pull request label, and the keys `ci:failure`, `ci:success`, `epic:done`,
+`pr:conflict` and `sensitive:review` are synthetic: they start on the CI, epic, branch-conflict and protected-path events, so they need
+no repository label.
 """
 from __future__ import annotations
+from dataclasses import dataclass, replace
 import json
 
-# label -> (agent profile name, tier, max_iterations, the event that fires it; empty for a label)
-LABELS = (
-    ("ai:plan", "planner", "planner", 80, ""),
-    ("ai:ready", "worker", "worker", 120, ""),
-    ("ai:escalate", "worker-strong", "worker-strong", 120, ""),
-    ("ai:review", "reviewer", "reviewer", 60, ""),
-    ("ai:changes", "worker", "worker", 120, "pull_request"),
-    ("ci:failure", "worker", "worker", 120, "ci_failure"),
-    ("ci:success", "reviewer", "reviewer", 60, "ci_success"),
-    ("epic:done", "reviewer", "reviewer", 60, "epic_done"),
-    ("pr:conflict", "worker", "worker", 120, "conflict"),
+FALLBACK_PROFILE = "worker-free"
+ROUND_KINDS = ("pull_request", "ci_failure", "conflict")
+
+
+@dataclass(frozen=True)
+class Route:
+    profile: str
+    tier: str
+    max_iterations: int | None = None
+    on: str = ""
+    fallback_to: str = ""
+    escalate_to: str = ""
+
+
+# route -> agent profile name, tier, iteration limit, event that fires it (empty for a label) and the routes it falls back or escalates to
+ROUTES = (
+    ("ai:plan", Route("planner", "smart", 80)),
+    ("ai:ready", Route("worker", "cheap", 120, fallback_to="ai:ready-free")),
+    ("ai:ready-free", Route(FALLBACK_PROFILE, "free")),
+    ("ai:escalate", Route("worker-strong", "smart", 120)),
+    ("ai:review", Route("reviewer", "smart", 60)),
+    ("ai:changes", Route("worker", "cheap", 120, on="pull_request", fallback_to="ai:changes-free",
+                         escalate_to="ai:escalate")),
+    ("ai:changes-free", Route(FALLBACK_PROFILE, "free")),
+    ("ci:failure", Route("worker", "cheap", 120, on="ci_failure", fallback_to="ci:failure-free",
+                         escalate_to="ai:escalate")),
+    ("ci:failure-free", Route(FALLBACK_PROFILE, "free")),
+    ("ci:success", Route("reviewer", "smart", 60, on="ci_success")),
+    ("epic:done", Route("reviewer", "smart", 60, on="epic_done")),
+    ("pr:conflict", Route("worker-strong", "smart", 120, on="conflict")),
+    ("sensitive:review", Route("sensitive-reviewer", "smart", 60, on="sensitive_review")),
 )
 
 
+def _select(profile_ids: dict[str, str]) -> tuple[tuple[str, Route], ...]:
+    """The routes that can exist: the fallback routes need the `worker-free` profile, the others every profile they name."""
+    has_free = bool(profile_ids.get(FALLBACK_PROFILE))
+    selected = []
+    for label, route in ROUTES:
+        if route.profile == FALLBACK_PROFILE and not has_free:
+            continue
+        selected.append((label, route if has_free else replace(route, fallback_to="")))
+    return tuple(selected)
+
+
+def _validate(routes: dict[str, dict]) -> None:
+    """The checks ForgeHands makes at start: every target exists, one fallback hop, escalation only on a round route."""
+    for label, route in routes.items():
+        target = route.get("fallback_to")
+        if target is None:
+            continue
+        if target == label or target not in routes:
+            raise ValueError(f"{label}: fallback_to must name another route")
+        if "fallback_to" in routes[target]:
+            raise ValueError(f"{label}: fallback_to must name a route without a fallback_to of its own")
+    for label, route in routes.items():
+        target = route.get("escalate_to")
+        if target is None:
+            continue
+        if route.get("on") not in ROUND_KINDS:
+            raise ValueError(f"{label}: escalate_to only applies to a round route")
+        if target == label or target not in routes:
+            raise ValueError(f"{label}: escalate_to must name another route")
+
+
 def label_routes(profile_ids: dict[str, str]) -> str:
-    """The LABEL_ROUTES value built from the profile ids; an id for every profile is required, a name would fail every run."""
+    """The LABEL_ROUTES value built from the profile ids; an id for every profile the routes use is required, a name would fail every run."""
     for name, profile_id in profile_ids.items():
         if not isinstance(name, str) or not name.strip():
             raise ValueError("an agent profile name is blank")
         if not isinstance(profile_id, str) or not profile_id.strip():
             raise ValueError(f"the agent profile id for {name} is blank")
-    missing = sorted({name for _, name, _, _, _ in LABELS if not profile_ids.get(name)})
+    selected = _select(profile_ids)
+    missing = sorted({route.profile for _, route in selected if not profile_ids.get(route.profile)})
     if missing:
         raise ValueError(f"no agent profile id for {', '.join(missing)}")
     routes = {}
-    for label, name, tier, iterations, event in LABELS:
-        route = {"profile": profile_ids[name], "tier": tier, "max_iterations": iterations}
-        if event:
-            route["on"] = event
-        routes[label] = route
+    for label, route in selected:
+        entry = {"profile": profile_ids[route.profile], "tier": route.tier}
+        if route.max_iterations is not None:
+            entry["max_iterations"] = route.max_iterations
+        if route.on:
+            entry["on"] = route.on
+        if route.fallback_to:
+            entry["fallback_to"] = route.fallback_to
+        if route.escalate_to:
+            entry["escalate_to"] = route.escalate_to
+        routes[label] = entry
+    _validate(routes)
     return json.dumps(routes, separators=(",", ":"))

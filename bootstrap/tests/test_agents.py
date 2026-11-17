@@ -7,36 +7,47 @@ import subprocess
 import tempfile
 import unittest
 
-from hgboot.agents import LABELS, label_routes
+from hgboot.agents import _validate, label_routes
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PROFILE_IDS = {"planner": "11111111-1111-1111-1111-111111111111",
                "worker": "22222222-2222-2222-2222-222222222222",
                "worker-strong": "33333333-3333-3333-3333-333333333333",
-               "reviewer": "44444444-4444-4444-4444-444444444444"}
+               "reviewer": "44444444-4444-4444-4444-444444444444",
+               "sensitive-reviewer": "55555555-5555-5555-5555-555555555555",
+               "worker-free": "66666666-6666-6666-6666-666666666666"}
+WITHOUT_FREE = {name: profile_id for name, profile_id in PROFILE_IDS.items() if name != "worker-free"}
+ROUTE_KEYS = {"ai:plan", "ai:ready", "ai:ready-free", "ai:escalate", "ai:review", "ai:changes",
+              "ai:changes-free", "ci:failure", "ci:failure-free", "ci:success", "epic:done",
+              "pr:conflict", "sensitive:review"}
 EXPECTED_ROUTES = {
-    "ai:plan": {"profile": PROFILE_IDS["planner"], "tier": "planner", "max_iterations": 80},
-    "ai:ready": {"profile": PROFILE_IDS["worker"], "tier": "worker", "max_iterations": 120},
-    "ai:escalate": {"profile": PROFILE_IDS["worker-strong"], "tier": "worker-strong", "max_iterations": 120},
-    "ai:review": {"profile": PROFILE_IDS["reviewer"], "tier": "reviewer", "max_iterations": 60},
-    "ai:changes": {"profile": PROFILE_IDS["worker"], "tier": "worker", "max_iterations": 120,
-                   "on": "pull_request"},
-    "ci:failure": {"profile": PROFILE_IDS["worker"], "tier": "worker", "max_iterations": 120,
-                   "on": "ci_failure"},
-    "ci:success": {"profile": PROFILE_IDS["reviewer"], "tier": "reviewer", "max_iterations": 60,
+    "ai:plan": {"profile": PROFILE_IDS["planner"], "tier": "smart", "max_iterations": 80},
+    "ai:ready": {"profile": PROFILE_IDS["worker"], "tier": "cheap", "max_iterations": 120,
+                 "fallback_to": "ai:ready-free"},
+    "ai:ready-free": {"profile": PROFILE_IDS["worker-free"], "tier": "free"},
+    "ai:escalate": {"profile": PROFILE_IDS["worker-strong"], "tier": "smart", "max_iterations": 120},
+    "ai:review": {"profile": PROFILE_IDS["reviewer"], "tier": "smart", "max_iterations": 60},
+    "ai:changes": {"profile": PROFILE_IDS["worker"], "tier": "cheap", "max_iterations": 120,
+                   "on": "pull_request", "fallback_to": "ai:changes-free", "escalate_to": "ai:escalate"},
+    "ai:changes-free": {"profile": PROFILE_IDS["worker-free"], "tier": "free"},
+    "ci:failure": {"profile": PROFILE_IDS["worker"], "tier": "cheap", "max_iterations": 120,
+                   "on": "ci_failure", "fallback_to": "ci:failure-free", "escalate_to": "ai:escalate"},
+    "ci:failure-free": {"profile": PROFILE_IDS["worker-free"], "tier": "free"},
+    "ci:success": {"profile": PROFILE_IDS["reviewer"], "tier": "smart", "max_iterations": 60,
                    "on": "ci_success"},
-    "epic:done": {"profile": PROFILE_IDS["reviewer"], "tier": "reviewer", "max_iterations": 60,
+    "epic:done": {"profile": PROFILE_IDS["reviewer"], "tier": "smart", "max_iterations": 60,
                   "on": "epic_done"},
-    "pr:conflict": {"profile": PROFILE_IDS["worker"], "tier": "worker", "max_iterations": 120,
+    "pr:conflict": {"profile": PROFILE_IDS["worker-strong"], "tier": "smart", "max_iterations": 120,
                     "on": "conflict"},
+    "sensitive:review": {"profile": PROFILE_IDS["sensitive-reviewer"], "tier": "smart",
+                         "max_iterations": 60, "on": "sensitive_review"},
 }
 
 
 class LabelRoutesTests(unittest.TestCase):
-    def test_all_nine_direct_mode_routes_use_the_profile_ids_and_limits(self):
+    def test_all_thirteen_routes_use_the_profile_ids_tiers_and_limits(self):
         routes = json.loads(label_routes(PROFILE_IDS))
-        self.assertEqual(set(routes), {"ai:plan", "ai:ready", "ai:escalate", "ai:review", "ai:changes",
-                                       "ci:failure", "ci:success", "epic:done", "pr:conflict"})
+        self.assertEqual(set(routes), ROUTE_KEYS)
         self.assertEqual(routes, EXPECTED_ROUTES)
         self.assertEqual(set(route["profile"] for route in routes.values()), set(PROFILE_IDS.values()))
 
@@ -46,13 +57,37 @@ class LabelRoutesTests(unittest.TestCase):
     def test_only_the_follow_up_and_synthetic_routes_name_an_event(self):
         routes = json.loads(label_routes(PROFILE_IDS))
         self.assertEqual({label for label, route in routes.items() if "on" in route},
-                         {"ai:changes", "ci:failure", "ci:success", "epic:done", "pr:conflict"})
+                         {"ai:changes", "ci:failure", "ci:success", "epic:done", "pr:conflict", "sensitive:review"})
         self.assertEqual(routes["ai:changes"]["on"], "pull_request")
         self.assertEqual(routes["ci:failure"]["on"], "ci_failure")
         self.assertEqual(routes["ci:success"]["on"], "ci_success")
         self.assertEqual(routes["epic:done"]["on"], "epic_done")
         self.assertEqual(routes["pr:conflict"]["on"], "conflict")
-        self.assertEqual(routes["pr:conflict"]["profile"], PROFILE_IDS["worker"])
+        self.assertEqual(routes["sensitive:review"]["on"], "sensitive_review")
+
+    def test_the_worker_routes_name_a_free_fallback_and_rounds_escalate_to_the_strong_worker(self):
+        routes = json.loads(label_routes(PROFILE_IDS))
+        self.assertEqual({label: route["fallback_to"] for label, route in routes.items() if "fallback_to" in route},
+                         {"ai:ready": "ai:ready-free", "ai:changes": "ai:changes-free",
+                          "ci:failure": "ci:failure-free"})
+        for label in ("ai:ready-free", "ai:changes-free", "ci:failure-free"):
+            self.assertEqual(routes[label], {"profile": PROFILE_IDS["worker-free"], "tier": "free"})
+        for label in ("ai:changes", "ci:failure"):
+            self.assertEqual(routes[label]["escalate_to"], "ai:escalate")
+        self.assertEqual(routes["ai:escalate"]["profile"], PROFILE_IDS["worker-strong"])
+        self.assertEqual(routes["ai:escalate"]["tier"], "smart")
+
+    def test_a_conflict_round_runs_on_the_strong_worker_on_the_smart_tier(self):
+        routes = json.loads(label_routes(PROFILE_IDS))
+        self.assertEqual(routes["pr:conflict"]["profile"], PROFILE_IDS["worker-strong"])
+        self.assertEqual(routes["pr:conflict"]["tier"], "smart")
+
+    def test_without_a_worker_free_id_there_are_no_fallback_routes_and_no_fallback_to(self):
+        routes = json.loads(label_routes(WITHOUT_FREE))
+        self.assertEqual(set(routes), ROUTE_KEYS - {"ai:ready-free", "ai:changes-free", "ci:failure-free"})
+        self.assertEqual({label for label, route in routes.items() if "fallback_to" in route}, set())
+        self.assertNotIn(PROFILE_IDS["worker-free"], json.dumps(routes))
+        self.assertEqual(routes["ai:changes"]["escalate_to"], "ai:escalate")
 
     def test_a_profile_without_an_id_is_an_error_not_a_name(self):
         ids = dict(PROFILE_IDS)
@@ -60,10 +95,16 @@ class LabelRoutesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reviewer"):
             label_routes(ids)
 
+    def test_a_missing_sensitive_reviewer_id_is_an_error(self):
+        ids = dict(PROFILE_IDS)
+        del ids["sensitive-reviewer"]
+        with self.assertRaisesRegex(ValueError, "sensitive-reviewer"):
+            label_routes(ids)
+
     def test_a_blank_profile_id_is_an_error_not_a_name(self):
         ids = dict(PROFILE_IDS)
-        ids["reviewer"] = "   "
-        with self.assertRaisesRegex(ValueError, "reviewer"):
+        ids["worker-free"] = "   "
+        with self.assertRaisesRegex(ValueError, "worker-free"):
             label_routes(ids)
 
     def test_a_blank_role_name_is_an_error(self):
@@ -72,15 +113,39 @@ class LabelRoutesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "name"):
             label_routes(ids)
 
-    def test_one_tier_per_route_and_the_strong_tier_is_the_escalation(self):
-        tiers = {label: tier for label, _, tier, _, _ in LABELS}
-        self.assertEqual(tiers["ai:escalate"], "worker-strong")
-        self.assertEqual(tiers["ci:failure"], "worker")
-        self.assertEqual(tiers["ci:success"], "reviewer")
-        self.assertEqual(tiers["epic:done"], "reviewer")
-        self.assertEqual(tiers["pr:conflict"], "worker")
-        self.assertEqual(len(tiers), 9)
-        self.assertEqual(set(tiers.values()), {"planner", "worker", "worker-strong", "reviewer"})
+    def test_the_reference_tiers_are_cheap_for_workers_smart_for_the_strong_side_and_free_for_fallbacks(self):
+        tiers = {label: route["tier"] for label, route in json.loads(label_routes(PROFILE_IDS)).items()}
+        self.assertEqual({label for label, tier in tiers.items() if tier == "cheap"},
+                         {"ai:ready", "ai:changes", "ci:failure"})
+        self.assertEqual({label for label, tier in tiers.items() if tier == "free"},
+                         {"ai:ready-free", "ai:changes-free", "ci:failure-free"})
+        self.assertEqual({label for label, tier in tiers.items() if tier == "smart"},
+                         ROUTE_KEYS - {"ai:ready", "ai:changes", "ci:failure",
+                                       "ai:ready-free", "ai:changes-free", "ci:failure-free"})
+        self.assertEqual(set(tiers.values()), {"cheap", "smart", "free"})
+
+
+class RouteValidationTests(unittest.TestCase):
+    """The rules ForgeHands enforces when it loads LABEL_ROUTES."""
+
+    def test_a_fallback_to_an_unknown_route_is_an_error(self):
+        with self.assertRaisesRegex(ValueError, "fallback_to must name another route"):
+            _validate({"ai:ready": {"profile": "id", "tier": "cheap", "fallback_to": "ai:ready-free"}})
+
+    def test_a_fallback_route_must_not_have_a_fallback_of_its_own(self):
+        with self.assertRaisesRegex(ValueError, "without a fallback_to of its own"):
+            _validate({"ai:ready": {"profile": "id", "tier": "cheap", "fallback_to": "ai:ready-free"},
+                       "ai:ready-free": {"profile": "id", "tier": "free", "fallback_to": "ai:ready"}})
+
+    def test_escalation_to_an_unknown_route_is_an_error(self):
+        with self.assertRaisesRegex(ValueError, "escalate_to must name another route"):
+            _validate({"ai:changes": {"profile": "id", "tier": "cheap", "on": "pull_request",
+                                      "escalate_to": "ai:escalate"}})
+
+    def test_escalation_from_a_route_that_is_not_a_round_is_an_error(self):
+        with self.assertRaisesRegex(ValueError, "only applies to a round route"):
+            _validate({"ai:ready": {"profile": "id", "tier": "cheap", "escalate_to": "ai:escalate"},
+                       "ai:escalate": {"profile": "id", "tier": "smart"}})
 
 
 class GeneratedDefaultsTests(unittest.TestCase):

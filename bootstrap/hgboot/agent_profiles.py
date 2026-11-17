@@ -39,6 +39,8 @@ LLM_CHEAP = "cheap"
 # #25 trims the worker to these two skills; the same pair is the ceiling for every role, so no role
 # inherits the full default catalog (about 35 skills and 58k prompt tokens on a trivial task).
 TRIMMED_SKILLS = ("agent-canvas-environment", "code-review")
+# Condense after 100 events, as the live installation does, to keep the context of every step smaller.
+CONDENSER_MAX_SIZE = 100
 REASON_MAX = 200
 
 
@@ -56,6 +58,11 @@ ROLES = (
     Role("reviewer", LLM_STRONG, "reviewer.md"),
     Role("sensitive-reviewer", LLM_STRONG, "sensitive-reviewer.md"),
 )
+
+
+def _condenser_max_size(profile: dict):
+    condenser = profile.get("condenser")
+    return condenser.get("max_size") if isinstance(condenser, dict) else None
 
 
 class AgentProfiles:
@@ -204,6 +211,11 @@ class AgentProfiles:
         profile["system_message_suffix"] = prompt
         profile["public_skills"] = list(TRIMMED_SKILLS)
         profile["mcp_server_refs"] = []
+        condenser = base.get("condenser")
+        if isinstance(condenser, dict):
+            profile["condenser"] = dict(condenser, max_size=CONDENSER_MAX_SIZE)
+        else:
+            profile.pop("condenser", None)
         return profile
 
     @staticmethod
@@ -212,7 +224,8 @@ class AgentProfiles:
                 and profile.get("llm_profile_ref") == desired["llm_profile_ref"]
                 and profile.get("system_message_suffix") == desired["system_message_suffix"]
                 and profile.get("public_skills") == desired["public_skills"]
-                and profile.get("mcp_server_refs") == [])
+                and profile.get("mcp_server_refs") == []
+                and _condenser_max_size(profile) == _condenser_max_size(desired))
 
     @staticmethod
     def _prompt(role: Role, directory: pathlib.Path) -> str:

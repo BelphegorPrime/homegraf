@@ -6,8 +6,8 @@ import unittest
 import urllib.parse
 import uuid
 
-from hgboot.agent_profiles import (LLM_CHEAP, LLM_STRONG, ROLES, TRIMMED_SKILLS, AgentProfiles,
-                                   STATE_SECTION)
+from hgboot.agent_profiles import (CONDENSER_MAX_SIZE, LLM_CHEAP, LLM_STRONG, ROLES, TRIMMED_SKILLS,
+                                   AgentProfiles, STATE_SECTION)
 from hgboot.factory_config import FactoryConfig
 from hgboot.state import State
 from hgboot.steps import StepError
@@ -276,6 +276,8 @@ class AgentProfilesTest(unittest.TestCase):
             self.assertEqual(stored["system_message_suffix"], prompt)
             self.assertEqual(stored["public_skills"], list(TRIMMED_SKILLS))
             self.assertEqual(stored["mcp_server_refs"], [])
+            self.assertEqual(stored["condenser"],
+                             {"condenser_kind": "llm_summarizing", "enabled": True, "max_size": 100})
             self.assertEqual(stored["secret_refs"], ["forgejo-token"])
             self.assertEqual(stored["tools"], [{"name": "terminal", "params": {}}])
             self.assertEqual(stored["tool_concurrency_limit"], 10)
@@ -339,6 +341,39 @@ class AgentProfilesTest(unittest.TestCase):
         self.assertEqual(self.fake.writes, [])
         for role, profile_id in first.items():
             self.assertEqual(lost.get(STATE_SECTION, role), profile_id)
+
+    def test_a_240_event_condenser_is_corrected_to_100_and_read_back(self):
+        self.assertEqual(CONDENSER_MAX_SIZE, 100)
+        ids = self.run_profiles()
+        self.fake.agents["worker"]["condenser"] = {
+            "condenser_kind": "llm_summarizing", "enabled": True, "max_size": 240, "keep_first": 4}
+        self.fake.writes.clear()
+
+        self.assertEqual(self.run_profiles(), ids)
+
+        expected = {"condenser_kind": "llm_summarizing", "enabled": True, "max_size": 100, "keep_first": 4}
+        self.assertEqual({path for _, path, _ in self.fake.writes}, {"/api/agent-profiles/worker"})
+        self.assertEqual(self.fake.written("/api/agent-profiles/worker")[0][2]["condenser"], expected)
+        self.assertEqual(self.fake.agents["worker"]["condenser"], expected)
+
+        self.fake.writes.clear()
+        self.assertEqual(self.run_profiles(), ids)
+        self.assertEqual(self.fake.writes, [])
+
+    def test_a_base_profile_without_a_condenser_gets_no_condenser(self):
+        self.fake.agents["default"].pop("condenser")
+
+        self.run_profiles()
+
+        for role in ROLES:
+            body = self.fake.written(f"/api/agent-profiles/{role.name}")[0][2]
+            self.assertNotIn("condenser", body)
+            self.assertNotIn("condenser", self.fake.agents[role.name])
+        self.fake.writes.clear()
+
+        self.run_profiles()
+
+        self.assertEqual(self.fake.writes, [])
 
     def test_only_drifted_managed_fields_are_written(self):
         ids = self.run_profiles()

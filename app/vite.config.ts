@@ -10,5 +10,5 @@ export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL("./src/web", import.meta.url)) } },
   build: { outDir: "../../dist/web", emptyOutDir: true },
   server: { proxy: { "/api": "http://localhost:8080" } },
-  test: { root: ".", include: ["src/**/*.test.ts"] },
+  test: { root: ".", include: ["src/**/*.test.{ts,tsx}"] },
 });

@@ -1,4 +1,4 @@
-"""Kommandozeile. Exit-Codes: 0 ok, 1 Fehler/Blocker, 2 Erneuerung fehlgeschlagen und Ablauf naht, 3 ausstehend."""
+"""Command line. Exit codes: 0 ok, 1 error/blocker, 2 renewal failed and expiry is near, 3 pending."""
 from __future__ import annotations
 
 import argparse
@@ -23,13 +23,13 @@ from .state import State
 
 
 def _secret(name: str) -> str:
-    """Secret aus NAME_FILE (bevorzugt, z. B. Docker-Secret) oder NAME lesen."""
+    """Read the secret from NAME_FILE (preferred, e.g. a Docker secret) or NAME."""
     path = os.environ.get(f"{name}_FILE")
     if path:
         return pathlib.Path(path).read_text().strip()
     value = os.environ.get(name)
     if not value:
-        raise IngressError(f"{name} bzw. {name}_FILE ist nicht gesetzt")
+        raise IngressError(f"{name} or {name}_FILE is not set")
     return value
 
 
@@ -38,7 +38,7 @@ def _api_verify():
 
 
 def _secret_optional(name: str) -> str | None:
-    """Wie _secret, aber ohne Fehler: fehlende DNS-Zugangsdaten werden als Blocker gemeldet."""
+    """Like _secret, but without an error: missing DNS credentials are reported as a blocker."""
     path = os.environ.get(f"{name}_FILE")
     if path:
         return pathlib.Path(path).read_text().strip()
@@ -75,7 +75,7 @@ def _select(specs: list[ServiceSpec], stacks: list[str] | None) -> list[ServiceS
         return specs
     unknown = set(stacks) - {s.stack_id for s in specs}
     for u in sorted(unknown):
-        log.event("select", "no-manifest", stack=u)  # Stack ohne ingress.yaml: nichts zu tun, nichts zu löschen
+        log.event("select", "no-manifest", stack=u)  # stack without an ingress.yaml: nothing to do, nothing to delete
     return [s for s in specs if s.stack_id in stacks]
 
 
@@ -85,7 +85,7 @@ def cmd_validate(args) -> int:
     try:
         specs = load_all(root, inv)
     except ManifestError as e:
-        print(f"FEHLER\n{e}", file=sys.stderr)
+        print(f"ERROR\n{e}", file=sys.stderr)
         return 1
     ctx = Context(root=root, inv=inv, state=None, npm={}, issuers={}, checker=None)
     gaps = 0
@@ -93,7 +93,7 @@ def cmd_validate(args) -> int:
         for b in _static_blockers(ctx, s):
             gaps += 1
             print(f"WARN  {s.resource_id}: {b}", file=sys.stderr)
-    print(f"ingressctl validate: {len(specs)} Services, {gaps} offene Konfigurationslücken", file=sys.stderr)
+    print(f"ingressctl validate: {len(specs)} services, {gaps} open configuration gaps", file=sys.stderr)
     return 1 if (args.strict and gaps) else 0
 
 
@@ -113,7 +113,7 @@ def cmd_plan(args) -> int:
         print(p.render())
     for row in ctx.state.all():
         if row["resource_id"] not in {s.resource_id for s in load_all(root, inv)}:
-            print(f"{row['resource_id']}\n  i verwaltet, aber ohne Manifest: keine Aktion (Löschen nur über lifecycle: absent)")
+            print(f"{row['resource_id']}\n  i managed, but without a manifest: no action (deletion only via lifecycle: absent)")
     return 1 if blocked else 0
 
 
@@ -134,17 +134,17 @@ def _run_apply(ctx: Context, specs: list[ServiceSpec], **kw) -> dict:
 
 
 def _checkout_commit(root: pathlib.Path) -> str:
-    """Commit des Checkouts; Komodo hat ihn per Repo-Pull auf den Server gebracht."""
+    """Commit of the checkout; Komodo brought it to the server with a repo pull."""
     res = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
     if res.returncode != 0:
-        raise IngressError(f"{root} ist kein Git-Checkout; --commit angeben")
+        raise IngressError(f"{root} is not a git checkout; pass --commit")
     return res.stdout.strip()
 
 
 def cmd_apply(args) -> int:
     root = pathlib.Path(args.root).resolve()
     if not args.all and not args.stack:
-        raise IngressError("--stack oder --all angeben")
+        raise IngressError("--stack or --all is required")
     args.commit = args.commit or _checkout_commit(root)
     inv = load_inventory(root)
     log.set_context(repo=",".join(inv.controller.get("allowed_repos") or []), commit=args.commit)
@@ -162,7 +162,7 @@ def cmd_apply(args) -> int:
 
 
 def cmd_renew(args) -> int:
-    """Erneuert anhand der zuletzt erfolgreich angewendeten Manifeste aus dem State (nicht Branch-HEAD)."""
+    """Renews from the manifests last applied successfully in the state (not the branch HEAD)."""
     root = pathlib.Path(args.root).resolve() if args.root else None
     inv = load_inventory(pathlib.Path(args.inventory_root).resolve())
     state = State(_state_dir())
@@ -178,7 +178,7 @@ def cmd_renew(args) -> int:
     print(json.dumps(results, indent=2, ensure_ascii=False))
     failed = [k for k, v in results.items() if v.startswith("error")]
     if failed:
-        # Fehlgeschlagene Erneuerung bei nahem Ablauf -> Exit 2 (Komodo-Alert über failure_alert der Procedure)
+        # renewal failed and expiry is near -> exit 2 (Komodo alert via the procedure's failure_alert)
         return 2
     return 0
 
@@ -198,22 +198,22 @@ def cmd_status(args) -> int:
 
 
 def cmd_forget(args) -> int:
-    """State-Eintrag einer Ressource entfernen, deren NPM-Host nicht mehr existiert (z. B. manuell gelöscht)."""
+    """Drop the state entry of a resource whose NPM host no longer exists (e.g. deleted by hand)."""
     root = pathlib.Path(args.root).resolve()
     inv = load_inventory(root)
     state = State(_state_dir())
     row = state.get(args.resource)
     if row is None:
-        raise IngressError(f"{args.resource} ist nicht im State")
+        raise IngressError(f"{args.resource} is not in the state")
     if any(s.resource_id == args.resource for s in load_all(root, inv)):
-        raise IngressError(f"{args.resource} ist noch in einem Manifest deklariert; erst das Manifest entfernen")
+        raise IngressError(f"{args.resource} is still declared in a manifest; remove the manifest first")
     npm_cfg = inv.npm_instances[row["npm_instance"]]
     client = NpmClient(npm_cfg.api_url, _secret("NPM_IDENTITY"), _secret("NPM_SECRET"), verify=_api_verify())
     client.login()
-    for label, exists in (("Host", client.get_proxy_host(row["npm_host_id"]) if row["npm_host_id"] else None),
-                          ("Zertifikat", client.get_certificate(row["npm_cert_id"]) if row["npm_cert_id"] else None)):
+    for label, exists in (("host", client.get_proxy_host(row["npm_host_id"]) if row["npm_host_id"] else None),
+                          ("certificate", client.get_certificate(row["npm_cert_id"]) if row["npm_cert_id"] else None)):
         if exists:
-            raise IngressError(f"NPM-{label} von {args.resource} existiert noch; erst dort entfernen")
+            raise IngressError(f"NPM {label} of {args.resource} still exists; remove it there first")
     with npm_lock(state.dir, row["npm_instance"]):
         state.forget(args.resource)
     log.event("forget", "ok", service=args.resource)
@@ -221,18 +221,18 @@ def cmd_forget(args) -> int:
 
 
 def cmd_remove(args) -> int:
-    """NPM-Host und Zertifikat eines verwalteten Service löschen, den kein Manifest mehr deklariert; dann den State.
+    """Delete the NPM host and certificate of a managed service that no manifest declares anymore; then the state.
 
-    Teil von Etappe G (lifecycle: absent) als expliziter Befehl: gelöscht wird nur, was laut State zu dieser
-    Ressource gehört (Host-ID mit exakt den Domains aus dem State, Zertifikat ohne weitere Nutzer)."""
+    Part of stage G (lifecycle: absent) as an explicit command: only what belongs to this resource according to the
+    state is deleted (the host ID with exactly the domains from the state, the certificate without further users)."""
     root = pathlib.Path(args.root).resolve()
     inv = load_inventory(root)
     state = State(_state_dir())
     row = state.get(args.resource)
     if row is None:
-        raise IngressError(f"{args.resource} ist nicht im State")
+        raise IngressError(f"{args.resource} is not in the state")
     if any(s.resource_id == args.resource for s in load_all(root, inv)):
-        raise IngressError(f"{args.resource} ist noch in einem Manifest deklariert; erst das Manifest entfernen")
+        raise IngressError(f"{args.resource} is still declared in a manifest; remove the manifest first")
     npm_cfg = inv.npm_instances[row["npm_instance"]]
     client = NpmClient(npm_cfg.api_url, _secret("NPM_IDENTITY"), _secret("NPM_SECRET"), verify=_api_verify())
     client.login()
@@ -242,14 +242,14 @@ def cmd_remove(args) -> int:
         if host:
             live = {d.lower() for d in host.get("domain_names") or []}
             if live != domains:
-                raise IngressError(f"NPM-Host {host['id']} hat {sorted(live)}, der State {sorted(domains)}; nichts gelöscht")
+                raise IngressError(f"NPM host {host['id']} has {sorted(live)}, the state {sorted(domains)}; nothing deleted")
             client.delete_proxy_host(host["id"])
             log.event("remove", "host-deleted", service=args.resource, npm_host_id=host["id"])
         cert = client.get_certificate(row["npm_cert_id"]) if row["npm_cert_id"] else None
         if cert:
             users = client.certificate_users(cert["id"])
             if users:
-                raise IngressError(f"NPM-Zertifikat {cert['id']} wird noch von {users} Host(s) genutzt; nicht gelöscht")
+                raise IngressError(f"NPM certificate {cert['id']} is still used by {users} host(s); nothing deleted")
             client.delete_certificate(cert["id"])
             log.event("remove", "cert-deleted", service=args.resource, npm_cert_id=cert["id"])
         state.forget(args.resource)
@@ -260,7 +260,7 @@ def cmd_remove(args) -> int:
 def _spec_by_resource(root: pathlib.Path, inv, resource: str) -> ServiceSpec:
     spec = next((s for s in load_all(root, inv) if s.resource_id == resource), None)
     if spec is None:
-        raise IngressError(f"{resource} ist in keinem Manifest deklariert")
+        raise IngressError(f"{resource} is not declared in any manifest")
     return spec
 
 
@@ -291,64 +291,64 @@ def main(argv=None) -> int:
     ap.add_argument("--version", action="version", version=__version__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("validate", help="Manifeste offline prüfen (keine Credentials)")
+    p = sub.add_parser("validate", help="check manifests offline (no credentials)")
     p.add_argument("--root", default=".")
-    p.add_argument("--strict", action="store_true", help="Konfigurationslücken als Fehler werten")
+    p.add_argument("--strict", action="store_true", help="treat configuration gaps as errors")
     p.set_defaults(func=cmd_validate)
 
-    p = sub.add_parser("plan", help="Live-Zustand lesen und Änderungen anzeigen (ohne Mutation)")
+    p = sub.add_parser("plan", help="read the live state and show changes (without mutating)")
     p.add_argument("--root", default=".")
     p.add_argument("--commit")
     p.add_argument("--stack", action="append")
     p.set_defaults(func=cmd_plan)
 
-    p = sub.add_parser("apply", help="Manifeste ausgewählter Stacks anwenden")
+    p = sub.add_parser("apply", help="apply the manifests of the selected stacks")
     p.add_argument("--root", default=".")
-    p.add_argument("--commit", help="Commit des Manifests (Standard: HEAD des Checkouts unter --root)")
+    p.add_argument("--commit", help="commit of the manifests (default: HEAD of the checkout below --root)")
     p.add_argument("--stack", action="append")
-    p.add_argument("--all", action="store_true", help="alle Manifeste im Repo (Komodo-Procedure ingress-apply)")
-    p.add_argument("--deployed-commit", help="von Komodo tatsächlich ausgerollter Commit (muss --commit entsprechen)")
+    p.add_argument("--all", action="store_true", help="all manifests in the repo (Komodo procedure ingress-apply)")
+    p.add_argument("--deployed-commit", help="commit Komodo actually rolled out (must match --commit)")
     p.add_argument("--allow-rollback", action="store_true")
     p.add_argument("--skip-upstream-check", action="store_true")
     p.set_defaults(func=cmd_apply)
 
-    p = sub.add_parser("renew", help="Zertifikate aller ausgerollten Services prüfen und rechtzeitig erneuern")
+    p = sub.add_parser("renew", help="check the certificates of all rolled-out services and renew them in time")
     p.add_argument("--all-deployed", action="store_true", required=True)
-    p.add_argument("--inventory-root", default=".", help="Checkout mit inventory/ (Adressen der NPM-/Issuer-APIs)")
-    p.add_argument("--root", help="Checkout für Commit-Reihenfolgeprüfung (optional)")
+    p.add_argument("--inventory-root", default=".", help="checkout with inventory/ (addresses of the NPM/issuer APIs)")
+    p.add_argument("--root", help="checkout for the commit sequence check (optional)")
     p.set_defaults(func=cmd_renew)
 
-    p = sub.add_parser("status", help="Betriebsstatus anzeigen")
+    p = sub.add_parser("status", help="show the operating status")
     p.add_argument("--namespace")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("adopt", help="bestehenden NPM-Host explizit übernehmen (Snapshot wird gespeichert)")
+    p = sub.add_parser("adopt", help="explicitly adopt an existing NPM host (a snapshot is stored)")
     p.add_argument("--root", default=".")
     p.add_argument("--resource", required=True, help="<namespace>/<service-id>")
     p.add_argument("--npm-host-id", type=int, required=True)
     p.set_defaults(func=cmd_adopt)
 
-    p = sub.add_parser("forget", help="State-Eintrag entfernen, dessen NPM-Host nicht mehr existiert")
+    p = sub.add_parser("forget", help="drop a state entry whose NPM host no longer exists")
     p.add_argument("--root", default=".")
     p.add_argument("--resource", required=True, help="<namespace>/<service-id>")
     p.set_defaults(func=cmd_forget)
 
-    p = sub.add_parser("remove", help="NPM-Host + Zertifikat eines nicht mehr deklarierten Service löschen")
+    p = sub.add_parser("remove", help="delete the NPM host + certificate of a service that is no longer declared")
     p.add_argument("--root", default=".")
     p.add_argument("--resource", required=True, help="<namespace>/<service-id>")
     p.set_defaults(func=cmd_remove)
 
-    p = sub.add_parser("recover", help="State nach Verlust über explizites Mapping wiederherstellen")
+    p = sub.add_parser("recover", help="restore the state after a loss from an explicit mapping")
     p.add_argument("--root", default=".")
-    p.add_argument("--mapping", required=True, help="YAML-Liste [{resource, npm_host_id, npm_cert_id}]")
+    p.add_argument("--mapping", required=True, help="YAML list [{resource, npm_host_id, npm_cert_id}]")
     p.set_defaults(func=cmd_recover)
 
     args = ap.parse_args(argv)
     try:
         return args.func(args)
     except ManifestError as e:
-        print(f"FEHLER\n{e}", file=sys.stderr)
+        print(f"ERROR\n{e}", file=sys.stderr)
         return 1
     except IngressError as e:
         log.event(args.cmd, "error", error=str(e))

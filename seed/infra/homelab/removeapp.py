@@ -189,7 +189,7 @@ def remove_routing(app_id: str) -> bool:
                 break
             ui.ok(f"ingressctl is busy (update-all is applying the merge), trying again in {BUSY_WAIT} s ({attempt}/{RETRIES})")
             time.sleep(BUSY_WAIT)
-        if "nicht im State" in out:
+        if "is not in the state" in out:
             ui.ok(f"{resource}: ingressctl manages nothing for it (already removed or never routed)")
         elif rc == 0:
             ui.ok(f"{resource}: NPM host and certificate deleted")

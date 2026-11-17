@@ -188,7 +188,7 @@ class Komodo:
         u = self.finish(self.call("execute", "RunStackService", {"stack": INGRESS_STACK, "service": "ingressctl", "command": argv,
                                                                   "no_deps": True, "no_tty": True}), f"ingressctl {argv[0]}", seconds=900)
         out = "".join((lg.get("stdout") or "") + (lg.get("stderr") or "") for lg in u.get("logs") or [])
-        return not ('"result": "error"' in out or "BLOCKER" in out or "FEHLER" in out), out
+        return not ('"result": "error"' in out or "BLOCKER" in out or "ERROR" in out), out
 
     def ensure_ingress_sync(self) -> None:
         """A procedure that only applies the ingress.yaml files, every 15 minutes. A failing stack deploy stops update-all before its

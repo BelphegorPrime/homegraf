@@ -172,6 +172,7 @@ describe("create routes", () => {
     const store = userStore(join(mkdtempSync(join(tmpdir(), "homegraf-")), "users.json"));
     await store.add("alice", "alice has apps rights", ["apps:create"]);
     await store.add("bob", "bob can only look", []);
+    await store.add("carol", "carol may expose hosts", ["apps:create", "hosts:expose"]);
     const app = signedInReads(
       createApp({
         loadGraph: async () => {
@@ -266,5 +267,35 @@ describe("create routes", () => {
     const { app } = await build();
     expect((await app.request("/api/apps/jobs/nope")).status).toBe(404);
     expect((await app.request("/api/apps/jobs/nope/events")).status).toBe(404);
+  });
+
+  it("refuses a fully public host without the confirmation or hosts:expose, and starts nothing", async () => {
+    const { post, calls } = await build();
+    const full = { ...demo, image: "x:1", containerPort: 80, publicFullHost: true };
+    const unconfirmed = await post(full, basic("admin", "pw-1234"));
+    expect(unconfirmed.status).toBe(400);
+    expect(await unconfirmed.json()).toEqual({ error: "a fully public host needs confirmPublicFullHost: true" });
+    const forbidden = await post({ ...full, confirmPublicFullHost: true }, basic("alice", "alice has apps rights"));
+    expect(forbidden.status).toBe(403);
+    expect((await forbidden.json()).error).toMatch(/alice may not do this \(needs hosts:expose\)/);
+    expect(calls).toEqual([]);
+  });
+
+  it("passes --public-full-host for a user who may expose hosts", async () => {
+    const { app, post, calls } = await build();
+    const res = await post(
+      { ...demo, image: "x:1", containerPort: 80, publicFullHost: true, confirmPublicFullHost: true },
+      basic("carol", "carol may expose hosts"),
+    );
+    expect(res.status).toBe(202);
+    const { jobId } = await res.json();
+    await (await app.request(`/api/apps/jobs/${jobId}/events`)).text();
+    expect(calls.find((c) => c.cmd === "python3")!.args).toContain("--public-full-host");
+  });
+
+  it("accepts public paths from a user with apps:create", async () => {
+    const { post } = await build();
+    const res = await post({ ...demo, image: "x:1", containerPort: 80, public: { paths: ["/hook"] } }, basic("alice", "alice has apps rights"));
+    expect(res.status).toBe(202);
   });
 });

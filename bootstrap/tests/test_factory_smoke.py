@@ -42,6 +42,10 @@ class FakeFactory:
         self.protected_merged = False
         self.protected_wip = False
         self.escalate_normal = False
+        self.conversation = True
+        self.pr_author = "homegraf-agent"
+        self.merge_author = "homegraf-agent"
+        self.approval_actor = "homegraf-agent"
         self.now = 0.0
 
     # -- clock injection --------------------------------------------------------------------
@@ -71,7 +75,7 @@ class FakeFactory:
         number = issue["number"]
         if self.stall:
             return
-        if polls == 1:
+        if polls == 1 and self.conversation:
             repo["comments"][number] = [{"id": self.next_id(), "user": {"login": "homegraf-agent"},
                                          "body": "Working in http://openhands.local:8000/conversations/abc123"
                                                  "?access_token=conversation-secret"}]
@@ -80,7 +84,8 @@ class FakeFactory:
                 "id": self.next_id(), "number": number, "state": "open", "draft": True,
                 "title": f"WIP: {issue['title']}", "body": f"Closes #{number}",
                 "head": {"ref": f"ai/issue-{number}", "sha": f"sha{number}"},
-                "labels": [], "merged": False, "merged_at": None}
+                "labels": [], "merged": False, "merged_at": None,
+                "user": {"login": self.pr_author}}
         pull = repo["pulls"].get(number)
         if pull is None:
             return
@@ -91,22 +96,30 @@ class FakeFactory:
         if polls >= 4 and not (issue["kind"] == "protected" and self.protected_wip):
             pull["draft"] = False
             pull["title"] = pull["title"].removeprefix("WIP: ")
-            pull["labels"] = [{"name": "ai:approved"}]
+            if not pull["labels"]:
+                pull["labels"] = [{"name": "ai:approved"}]
+                issue["timeline"].append({"type": "label", "user": {"login": self.approval_actor},
+                                          "label": {"name": "ai:approved"}})
             repo["reviews"][number] = [{"id": self.next_id(), "state": "APPROVED", "body": "approved"}]
         if self.escalate_normal and issue["kind"] == "normal" and polls >= 3:
             issue["labels"].add("ai:escalate")
         merged = polls >= 5 if issue["kind"] != "protected" else (self.protected_merged and polls >= 6)
         if merged:
-            pull.update({"merged": True, "merged_at": "2026-01-01T00:00:00Z", "state": "closed"})
+            pull.update({"merged": True, "merged_at": "2026-01-01T00:00:00Z", "state": "closed",
+                         "merged_by": {"login": self.merge_author}})
             issue["state"] = "closed"
+            issue["timeline"].append({"type": "close", "user": {"login": "homegraf-agent"}})
 
     def issue_view(self, repo: dict, issue: dict) -> dict:
         return {"number": issue["number"], "title": issue["title"], "body": issue["body"], "state": issue["state"],
                 "labels": [{"name": name} for name in sorted(issue["labels"])]}
 
     def pull_view(self, repo: dict, pull: dict) -> dict:
-        view = {k: pull[k] for k in ("number", "state", "draft", "title", "body", "head", "labels", "merged", "merged_at")}
+        view = {k: pull[k] for k in ("number", "state", "draft", "title", "body", "head", "labels", "merged",
+                                     "merged_at", "user")}
         view["merged"] = bool(pull["merged"])
+        if pull.get("merged_by"):
+            view["merged_by"] = pull["merged_by"]
         return view
 
     # -- HTTP --------------------------------------------------------------------------------
@@ -194,6 +207,8 @@ class FakeFactory:
                 by_id = {label["id"]: label["name"] for label in repo["labels"].values()}
                 issue = {"number": number, "title": req.json["title"], "body": req.json["body"], "state": "open",
                          "labels": {by_id[i] for i in req.json.get("labels") or []}, "polls": 0,
+                         "timeline": [{"type": "label", "user": {"login": "owner"}, "label": {"name": by_id[i]}}
+                                      for i in req.json.get("labels") or []],
                          "kind": "protected" if "protected" in req.json["title"] else
                                  ("later" if "added later" in req.json["body"] else "normal")}
                 repo["issues"][number] = issue
@@ -212,9 +227,14 @@ class FakeFactory:
                     return 200, self.issue_view(repo, issue)
                 if issue_parts[2] == "comments":
                     return 200, repo["comments"].get(number, [])
+                if issue_parts[2] == "timeline":
+                    return 200, issue["timeline"]
                 if issue_parts[2] == "labels" and req.method == "POST":
                     by_id = {label["id"]: label["name"] for label in repo["labels"].values()}
-                    issue["labels"] |= {by_id[i] for i in req.json["labels"]}
+                    added = {by_id[i] for i in req.json["labels"]}
+                    issue["labels"] |= added
+                    issue["timeline"] += [{"type": "label", "user": {"login": "owner"}, "label": {"name": name}}
+                                          for name in sorted(added)]
                     return 200, self.issue_view(repo, issue)
             if rest == "pulls":
                 return 200, [self.pull_view(repo, pull) for pull in repo["pulls"].values()]
@@ -430,6 +450,34 @@ class ProtectedCaseTests(SmokeTest):
         self.assertFalse(report.passed)
         self.assertIn("protected path stalled", report.render())
         self.assertIn("draft", report.render())
+
+
+class IdentityTests(SmokeTest):
+    """The agent acts as its own Forgejo user: its pull request, labels and merge must carry that login."""
+
+    def test_a_pull_request_opened_by_the_human_fails_the_smoke(self):
+        self.fake.pr_author = "owner"
+        report = self.smoke().run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("attributed to owner, not the agent homegraf-agent", report.render())
+
+    def test_a_merge_performed_by_the_human_fails_the_smoke(self):
+        self.fake.merge_author = "owner"
+        report = self.smoke().run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("the merge is attributed to owner", report.render())
+
+    def test_a_verdict_label_applied_by_the_human_fails_the_protected_case(self):
+        self.fake.approval_actor = "owner"
+        report = self.smoke().run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("the ai:approved label is attributed to owner", report.render())
+
+    def test_the_normal_case_needs_the_agent_to_have_started_a_conversation(self):
+        self.fake.conversation = False
+        report = self.smoke(timeout=60).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("stalled at issue closed", report.render())
 
 
 class TimeoutTests(SmokeTest):

@@ -205,6 +205,9 @@ class Observation:
     review: bool = False
     merged: bool = False
     closed: bool = False
+    pr_author: str = ""
+    merge_author: str = ""
+    label_actors: dict = field(default_factory=dict)
 
     @property
     def draft(self) -> bool:
@@ -583,6 +586,11 @@ class Smoke:
         observation.pr = pr
         observation.pr_labels = tuple(label.get("name", "") for label in pr.get("labels") or [] if isinstance(label, dict))
         observation.merged = bool(pr.get("merged") or pr.get("merged_at"))
+        author = pr.get("user") if isinstance(pr.get("user"), dict) else {}
+        observation.pr_author = str(author.get("login") or "")
+        merger = pr.get("merged_by") if isinstance(pr.get("merged_by"), dict) else {}
+        observation.merge_author = str(merger.get("login") or pr.get("merged_by") or "")
+        observation.label_actors = self._label_actors(repository, [number, pr.get("number")])
         head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
         sha = head.get("sha")
         if sha:
@@ -607,12 +615,39 @@ class Smoke:
                 return pull
         return None
 
+    def _label_actors(self, repository: str, numbers) -> dict:
+        """Who applied each label, from the issue timelines: the agent must own its verdicts."""
+        actors: dict = {}
+        for number in dict.fromkeys(n for n in numbers if isinstance(n, int)):
+            for event in self.api.paged(f"/repos/{repository}/issues/{number}/timeline"):
+                if not isinstance(event, dict) or event.get("type") != "label" or event.get("removed"):
+                    continue
+                label = event.get("label") if isinstance(event.get("label"), dict) else {}
+                user = event.get("user") if isinstance(event.get("user"), dict) else {}
+                name, login = label.get("name"), user.get("login")
+                if name and login:
+                    actors.setdefault(name, []).append(login)
+        return actors
+
+    def _identity(self, observation: Observation, number: int) -> None:
+        agent = self.factory.agent_login
+        if observation.pr and observation.pr_author and observation.pr_author != agent:
+            raise SmokeFailure(f"#{number}: the pull request is attributed to {observation.pr_author}, not the agent {agent}")
+        if observation.merged and observation.merge_author and observation.merge_author != agent:
+            raise SmokeFailure(f"#{number}: the merge is attributed to {observation.merge_author}, not the agent {agent}")
+        for name in observation.pr_labels:
+            actors = observation.label_actors.get(name) or []
+            others = sorted({login for login in actors if login != agent})
+            if others:
+                raise SmokeFailure(f"#{number}: the {name} label is attributed to {', '.join(others)}, not the agent {agent}")
+
     def _track_merged(self, number: int) -> Observation:
         repository = self.report.repository
         deadline = self.clock() + self.timeout
         while True:
             observation = self._observe(repository, number)
-            if observation.merged and observation.closed and observation.ci and observation.review:
+            self._identity(observation, number)
+            if observation.merged and observation.closed and observation.ci and observation.review and observation.conversation:
                 return observation
             if observation.pr and str(observation.pr.get("state") or "") == "closed" and not observation.merged:
                 raise SmokeFailure(f"#{number}: the pull request was closed without a merge ({observation.chain()})")
@@ -627,6 +662,7 @@ class Smoke:
         settled = 0
         while True:
             observation = self._observe(repository, number)
+            self._identity(observation, number)
             if observation.merged:
                 raise SmokeFailure(f"#{number}: the protected path was merged; it must stay open for a human merge")
             if observation.pr and str(observation.pr.get("state") or "") == "closed":

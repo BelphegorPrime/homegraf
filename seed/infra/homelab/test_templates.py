@@ -298,7 +298,8 @@ def test_a_template_with_routes_routes_its_sidecar_and_keeps_its_secrets(agent):
     assert app.routes == [{"service": "openhands", "domain": "openhands.lab.example", "port": 8000,
                            "websockets": True, "health_path": "/health", "statuses": [200]}]
     assert set(app.secrets) == {"FORGEJO_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_SECRET", "OPENHANDS_WEBHOOK_URL",
-                                "FORGEJO_TOKEN", "LOCAL_BACKEND_API_KEY", "OH_SECRET_KEY", "FORGEHANDS_GATEWAY_API_KEY"}
+                                "FORGEJO_TOKEN", "LOCAL_BACKEND_API_KEY", "OH_SECRET_KEY", "FORGEHANDS_GATEWAY_API_KEY",
+                                "STATUS_TOKEN"}
     assert "ALLOWED_REPOS: owner/repository" in app.compose           # an input of the form, not a secret
     env = yaml.safe_load(app.compose)["services"]["agents"]["environment"]
     assert env["OPENHANDS_API_URL"] == "" and env["LABEL_ROUTES"] == ""  # webhook mode: a fresh app has no profile ids
@@ -336,7 +337,21 @@ def test_the_agents_template_pins_a_supported_forgehands_release(agent):
     name, _, version = image.rpartition(":")
     assert name == "ghcr.io/belphegorprime/forgehands"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", version), version
-    assert tuple(int(part) for part in version[1:].split(".")) >= (0, 3, 1)   # the first release with these routes
+    assert tuple(int(part) for part in version[1:].split(".")) >= (0, 4, 2)   # tiers, fallback/escalation, security review
+
+
+def test_the_agents_template_has_the_0_4_settings_and_no_tier_budgets(agent):
+    app = _agents(agent)
+    env = yaml.safe_load(app.compose)["services"]["agents"]["environment"]
+    assert "TIER_WEEKLY_BUDGETS" not in app.compose
+    assert env["SPLIT_LABEL"] == "ai:plan"
+    assert int(env["REMIND_AFTER_DAYS"]) == 2
+    assert int(env["ERROR_RETRIES"]) == 1
+    assert (int(env["QUOTA_HOLD_MAX_HOURS"]), int(env["QUOTA_GIVE_UP_HOURS"])) == (8, 24)
+    assert int(env["APPROVAL_GRACE_SECONDS"]) == 90
+    assert env["REPO_WEIGHTS"] == ""
+    assert env["STATUS_TOKEN"] == "${STATUS_TOKEN}"
+    assert app.secrets["STATUS_TOKEN"] and app.secrets["STATUS_TOKEN"] not in app.compose
 
 
 def test_the_agents_round_settings_are_operator_inputs_named_by_forgehands(agent):
@@ -396,7 +411,7 @@ def test_the_agents_form_keeps_every_credential_out_of_the_generated_compose(age
     assert env["FORGEHANDS_GATEWAY_API_KEY"] == "${FORGEHANDS_GATEWAY_API_KEY}"
     assert env["FORGEJO_TOKEN"] == "${FORGEJO_TOKEN}"                 # the agent's token, from the secret store
     assert env["FORGEJO_WEBHOOK_SECRET"] == "${FORGEJO_WEBHOOK_SECRET}"
-    for name in ("FORGEHANDS_GATEWAY_API_KEY", "FORGEJO_TOKEN", "FORGEJO_WEBHOOK_SECRET"):
+    for name in ("FORGEHANDS_GATEWAY_API_KEY", "FORGEJO_TOKEN", "FORGEJO_WEBHOOK_SECRET", "STATUS_TOKEN"):
         assert app.secrets[name] and app.secrets[name] not in app.compose   # a value never lands in the compose file
     assert not [value for value in env.values() if isinstance(value, str) and value in app.secrets.values()]
 
@@ -484,7 +499,7 @@ def test_the_agents_first_run_points_at_the_automated_hgboot_path(agent):
     text = _agents(agent).first_run
     assert "hgboot" in text and "FORGEHANDS_BOOTSTRAP=1" in text
     required = _factory_inputs_the_bootstrap_requires()
-    assert {"FORGEHANDS_OPENHANDS_API_URL", "OPENHANDS_LOCAL_BACKEND_API_KEY", "FORGEHANDS_FORGEJO_AGENT_TOKEN"} <= set(required)
+    assert {"FORGEHANDS_OPENHANDS_API_URL", "OPENHANDS_LOCAL_BACKEND_API_KEY", "FORGEHANDS_FORGEJO_WEBHOOK_SECRET"} <= set(required)
     for name in required:
         assert name in text, name                       # a missing input makes the opt-in fail closed
     assert "FORGEHANDS_MERGE_POLICY" in text             # the operator's policy, not a file of the repository

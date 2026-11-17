@@ -260,7 +260,7 @@ class ComposeContractTests(unittest.TestCase):
         image = next(line.strip() for line in self.forgehands if line.strip().startswith("image:"))
         self.assertIn("${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:v", image)
         version = re.search(r"forgehands:(v[0-9.]+)\}", image).group(1)
-        self.assertGreaterEqual(tuple(int(part) for part in version[1:].split(".")), (0, 2, 15))
+        self.assertGreaterEqual(tuple(int(part) for part in version[1:].split(".")), (0, 4, 2))
 
     def test_forgehands_release_knows_the_human_login(self):
         image = next(line.strip() for line in self.forgehands if line.strip().startswith("image:"))
@@ -271,7 +271,8 @@ class ComposeContractTests(unittest.TestCase):
     def test_the_launcher_starts_the_original_image_command(self):
         joined = "\n".join(self.forgehands)
         self.assertIn('entrypoint: ["node", "/factory/forgehands-entrypoint.mjs"]', joined)
-        self.assertIn('command: ["docker-entrypoint.sh", "node", "src/index.mjs"]', joined)
+        self.assertIn('command: ["node", "src/index.ts"]', joined)
+        self.assertNotIn("src/index.mjs", joined)
         mounts = volumes(self.forgehands)
         self.assertIn("./scripts/forgehands-entrypoint.mjs:/factory/forgehands-entrypoint.mjs:ro", mounts)
 
@@ -306,9 +307,18 @@ class ComposeContractTests(unittest.TestCase):
             "MAX_RUN_MINUTES": "${FORGEHANDS_MAX_RUN_MINUTES:-120}",
             "MAX_ROUNDS": "${FORGEHANDS_MAX_ROUNDS:-3}",
             "MERGE_POLICY": "${FORGEHANDS_MERGE_POLICY:-}",
+            "SPLIT_LABEL": "${FORGEHANDS_SPLIT_LABEL:-ai:plan}",
+            "REMIND_AFTER_DAYS": "${FORGEHANDS_REMIND_AFTER_DAYS:-2}",
+            "ERROR_RETRIES": "${FORGEHANDS_ERROR_RETRIES:-1}",
+            "QUOTA_HOLD_MAX_HOURS": "${FORGEHANDS_QUOTA_HOLD_MAX_HOURS:-8}",
+            "QUOTA_GIVE_UP_HOURS": "${FORGEHANDS_QUOTA_GIVE_UP_HOURS:-24}",
+            "APPROVAL_GRACE_SECONDS": "${FORGEHANDS_APPROVAL_GRACE_SECONDS:-90}",
+            "REPO_WEIGHTS": "${FORGEHANDS_REPO_WEIGHTS:-}",
+            "STATUS_TOKEN": "${FORGEHANDS_STATUS_TOKEN:-}",
         }
         for name, value in expected.items():
             self.assertEqual(self.env.get(name), value, name)
+        self.assertNotIn("TIER_WEEKLY_BUDGETS", self.text)
 
     def test_forgehands_gets_only_the_agent_token_not_the_operator_token(self):
         self.assertEqual(self.env["FORGEJO_TOKEN"], "${FORGEHANDS_FORGEJO_AGENT_TOKEN:-}")

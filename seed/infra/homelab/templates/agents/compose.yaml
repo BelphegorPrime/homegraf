@@ -30,12 +30,15 @@ x-template:
     GET /api/agent-profiles (a name is rejected). The routes cover the issue labels ai:plan, ai:ready, ai:escalate and
     ai:review, and on the pull request of an agent issue "on": "pull_request" (ai:changes), "on": "ci_failure",
     "on": "ci_success", "on": "epic_done" and "on": "conflict". Empty profile ids keep direct mode off.
+    Tiers, the security review route and the worker routes' fallback and escalation are set by the bootstrap's LABEL_ROUTES
+    (follow-up tickets), not by this template; the per-tier weekly budget is gone, so MAX_RUNS_PER_HOUR and a route's
+    max_budget steer cost.
     In both modes the Forgejo webhook (events: issues, pull_request_label, action_run_failure, action_run_success, push;
     secret FORGEJO_WEBHOOK_SECRET) is required. Put a Forgejo token with write:repository and read:user into FORGEJO_TOKEN and set
     ALLOWED_REPOS to the owner/repository pairs the agents may work on (comma separated).
 services:
   app:
-    image: ghcr.io/belphegorprime/forgehands:v0.3.2
+    image: ghcr.io/belphegorprime/forgehands:v0.4.2
     ports:
       - "8080:8080"
     volumes:
@@ -77,6 +80,22 @@ services:
       # the key with each repository in ALLOWED_REPOS; * matches within a folder, ** across folders.
       MERGE_POLICY: '{"owner/repository": {"deny": [".forgejo/**", ".github/**", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", ".agents/**", ".claude/**", "compose.yaml", "**/compose.yaml", "setup.sh", "scripts/**", "infra/**", "stacks/**"]}}'
       MERGE_METHOD: merge
+      # A worker ticket that ran out of iterations or time goes to the planner with this label.
+      SPLIT_LABEL: ai:plan
+      # Days before ForgeHands reminds HUMAN_LOGIN of a pull request that waits for him.
+      REMIND_AFTER_DAYS: "2"
+      # Restarts of a run that ended in error; 0 switches it off.
+      ERROR_RETRIES: "1"
+      # Out of quota: hold a tier back at most this many hours at a time.
+      QUOTA_HOLD_MAX_HOURS: "8"
+      # Out of quota: give a job up once its quota has been out this many hours.
+      QUOTA_GIVE_UP_HOURS: "24"
+      # An approval label without a verdict comment is looked at once more after this many seconds.
+      APPROVAL_GRACE_SECONDS: "90"
+      # JSON repository -> weight for sharing starts across repositories, for example {"owner/repository": 2}.
+      REPO_WEIGHTS: ""
+      # Bearer token for /status, /status.json and /metrics (at least 16 characters). Never a value here.
+      STATUS_TOKEN: ${STATUS_TOKEN}
       # The strong and cheap LLM profiles the factory creates in Canvas (bootstrap/hgboot/factory_config.py);
       # its key comes from Infisical like every other secret.
       FORGEHANDS_STRONG_MODEL: vendor/strong-model

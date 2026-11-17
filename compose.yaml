@@ -589,7 +589,7 @@ services:
   forgehands:
     # Releases before 0.2.19 do not know HUMAN_LOGIN, so their handover comments carry no @<login> mention and a human never gets mail.
     # Releases before 0.2.15 lack the pull request rounds and the profile-id routes the factory relies on. Pin the version.
-    image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:v0.3.2}
+    image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:v0.4.2}
     container_name: ${PROJECT_PREFIX:-homegraf}-forgehands
     profiles: [agents]
     restart: unless-stopped
@@ -603,7 +603,8 @@ services:
     # The launcher starts the image's own command unchanged.  With FORGEHANDS_BOOTSTRAP=1 it first waits for the bootstrap's runtime
     # handoff and refuses to start on a missing, partial or invalid file; without the opt-in it never reads that file.
     entrypoint: ["node", "/factory/forgehands-entrypoint.mjs"]
-    command: ["docker-entrypoint.sh", "node", "src/index.mjs"]
+    # Since 0.3.0 the image is TypeScript sources run directly; the Dockerfile's own command is `node src/index.ts`.
+    command: ["node", "src/index.ts"]
     environment:
       FORGEHANDS_BOOTSTRAP: ${FORGEHANDS_BOOTSTRAP:-}
       # Operator-only launcher switches.  A non-empty operator variable keeps its value; the handoff fills what is empty.
@@ -639,7 +640,22 @@ services:
       MAX_RUN_MINUTES: ${FORGEHANDS_MAX_RUN_MINUTES:-120}
       MAX_ROUNDS: ${FORGEHANDS_MAX_ROUNDS:-3}
       MERGE_POLICY: ${FORGEHANDS_MERGE_POLICY:-}
-      TIER_WEEKLY_BUDGETS: ${FORGEHANDS_TIER_WEEKLY_BUDGETS:-}
+      # A worker ticket that ran out of iterations or time goes to the planner with this label.
+      SPLIT_LABEL: ${FORGEHANDS_SPLIT_LABEL:-ai:plan}
+      # Days before ForgeHands reminds HUMAN_LOGIN of a pull request that waits for him.
+      REMIND_AFTER_DAYS: ${FORGEHANDS_REMIND_AFTER_DAYS:-2}
+      # Restarts of a run that ended in error; 0 switches it off.
+      ERROR_RETRIES: ${FORGEHANDS_ERROR_RETRIES:-1}
+      # Out of quota: hold a tier back at most this many hours at a time.
+      QUOTA_HOLD_MAX_HOURS: ${FORGEHANDS_QUOTA_HOLD_MAX_HOURS:-8}
+      # Out of quota: give a job up once its quota has been out this many hours.
+      QUOTA_GIVE_UP_HOURS: ${FORGEHANDS_QUOTA_GIVE_UP_HOURS:-24}
+      # An approval label without a verdict comment is looked at once more after this many seconds.
+      APPROVAL_GRACE_SECONDS: ${FORGEHANDS_APPROVAL_GRACE_SECONDS:-90}
+      # JSON repository -> weight for sharing starts across repositories, for example {"owner/repository": 2}.
+      REPO_WEIGHTS: ${FORGEHANDS_REPO_WEIGHTS:-}
+      # Bearer token for /status, /status.json and /metrics (at least 16 characters). Never a value here.
+      STATUS_TOKEN: ${FORGEHANDS_STATUS_TOKEN:-}
       WORKSPACE_DIR: /workspace
       JOBS_FILE: /app/data/jobs.json
     volumes:

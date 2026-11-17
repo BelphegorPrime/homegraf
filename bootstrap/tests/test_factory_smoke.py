@@ -63,6 +63,8 @@ class FakeFactory:
         self.rounds_exhausted = False
         self.too_many_rounds = False
         self.escalate_followup = False
+        self.no_handover = False
+        self.routine_mention = False
         self.conversations = 0
         self.now = 0.0
 
@@ -179,6 +181,11 @@ class FakeFactory:
                 "body": f"Working in http://openhands.local:8000/conversations/abc123{suffix}"
                         "?access_token=conversation-secret"}
 
+    def _agent_comment(self, repo: dict, number: int, body: str, marker: str) -> None:
+        comments = repo["comments"].setdefault(number, [])
+        if not any(marker in comment["body"] for comment in comments):
+            comments.append({"id": self.next_id(), "user": {"login": "homegraf-agent"}, "body": body})
+
     def _advance(self, repo: dict, issue: dict, polls: int) -> None:
         number = issue["number"]
         if polls == 1 and self.conversation:
@@ -205,6 +212,14 @@ class FakeFactory:
                 issue["timeline"].append({"type": "label", "user": {"login": self.approval_actor},
                                           "label": {"name": "ai:approved"}})
             repo["reviews"][number] = [{"id": self.next_id(), "state": "APPROVED", "body": "approved"}]
+            if issue["kind"] == "protected" and not self.no_handover:
+                self._agent_comment(repo, number, "The change is approved and green. @owner, "
+                                                  "over to you for the human review and merge.",
+                                    "human review and merge")
+            elif issue["kind"] in ("normal", "later"):
+                said = (f"@owner, the change on #{number} is ready." if self.routine_mention
+                        else "The change is ready for review; CI is green.")
+                self._agent_comment(repo, number, "Routine progress: " + said, "Routine progress")
         if self.escalate_normal and issue["kind"] == "normal" and polls >= 3:
             issue["labels"].add("ai:escalate")
         merged = polls >= 5 if issue["kind"] != "protected" else (self.protected_merged and polls >= 6)
@@ -614,12 +629,34 @@ class NormalCaseTests(SmokeTest):
         self.assertTrue(Observation(labels=(), pr={"draft": True, "title": "x", "state": "open"}).draft)
         self.assertFalse(Observation(labels=(), pr={"title": "x", "state": "open"}).draft)
 
+    def test_a_routine_comment_that_mentions_the_human_fails_the_smoke(self):
+        self.fake.routine_mention = True
+        report = self.smoke().run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("a routine comment mentions @owner: it would mail the human", report.render())
+
+    def test_only_a_whole_login_mention_mails_the_human(self):
+        from hgboot.factory_smoke import _mentions
+        self.assertTrue(_mentions("@owner please merge", "owner"))
+        self.assertTrue(_mentions("ping @OWNER, please merge", "owner"))
+        self.assertFalse(_mentions("@owner2 please merge", "owner"))
+        self.assertFalse(_mentions("write to me@owner", "owner"))
+        self.assertFalse(_mentions("@owner.example", "owner"))
+        self.assertFalse(_mentions("@owner.", "owner"))
+
 
 class ProtectedCaseTests(SmokeTest):
     def test_the_protected_pull_request_has_to_settle_approved_green_open_and_without_wip(self):
         report = self.smoke().run(REPO, REPO)
         self.assertTrue(report.passed, report.render())
         self.assertIn("approved, green, open, without WIP:", report.render())
+        self.assertIn("handover mentions @owner", report.render())
+
+    def test_a_protected_case_without_a_handover_mention_fails_the_smoke(self):
+        self.fake.no_handover = True
+        report = self.smoke().run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("no handover comment mentions @owner", report.render())
 
     def test_a_merged_protected_pull_request_fails_the_smoke(self):
         self.fake.protected_merged = True

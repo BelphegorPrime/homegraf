@@ -214,6 +214,7 @@ class Observation:
     pr_author: str = ""
     merge_author: str = ""
     label_actors: dict = field(default_factory=dict)
+    agent_comments: tuple[str, ...] = ()
 
     @property
     def draft(self) -> bool:
@@ -248,6 +249,13 @@ def _sanitize(value: str, secrets=()) -> str:
         if isinstance(secret, str) and secret:
             text = text.replace(secret, "[redacted]")
     return _clean_urls(text)[:300]
+
+
+def _mentions(body: str, human: str) -> bool:
+    """A comment mails the human only on a whole-login @mention, in any case."""
+    if not human:
+        return False
+    return bool(re.search(r"(?<![\w.-])@" + re.escape(human) + r"(?![\w.-])", body, re.I))
 
 
 def _clean_urls(text: str) -> str:
@@ -530,6 +538,7 @@ class Smoke:
                 "closes this issue, and let CI and the reviewer finish.")
         number = self._open_issue(plan.repository, "normal", body, ready_at_creation=True)
         observation = self._track_merged(number)
+        self._assert_no_routine_mention(observation, number)
         strong = " with the strong tier (reference)" if "ai:escalate" in observation.labels else ""
         self.report.add("normal path", "passed", f"{observation.chain()}{strong}" + _conversation(observation))
 
@@ -542,6 +551,7 @@ class Smoke:
         number = self._open_issue(plan.repository, "ready later", body, ready_at_creation=False)
         self._add_labels(plan.repository, number, ("ai:ready",))
         observation = self._track_merged(number)
+        self._assert_no_routine_mention(observation, number)
         self.report.add("ai:ready added later", "passed", observation.chain())
 
     def _protected_case(self, plan: Plan) -> None:
@@ -553,8 +563,11 @@ class Smoke:
                 "it open for a human review and merge.")
         number = self._open_issue(plan.repository, "protected path", body, ready_at_creation=True)
         observation = self._track_protected(number)
+        human = self.factory.human_login
+        if not any(_mentions(comment, human) for comment in observation.agent_comments):
+            raise SmokeFailure(f"#{number}: no handover comment mentions @{human}")
         self.report.add("protected path", "passed",
-                        "approved, green, open, without WIP: " + observation.chain())
+                        f"handover mentions @{human}, approved, green, open, without WIP: " + observation.chain())
 
     def _epic_cases(self, plan: Plan) -> None:
         epic, children = self._epic_plan_case(plan)
@@ -840,16 +853,26 @@ class Smoke:
             raise StepError(f"{repository}: Forgejo did not answer issue #{number}")
         labels = tuple(label.get("name", "") for label in issue.get("labels") or [] if isinstance(label, dict))
         comments = self.api.paged(f"/repos/{repository}/issues/{number}/comments")
+        agent = self.factory.agent_login
         conversation = ""
+        agent_comments: list[str] = []
+        seen: set = set()
         for comment in comments:
+            if not isinstance(comment, dict):
+                continue
             user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
             body = str(comment.get("body") or "")
-            if user.get("login") == self.factory.agent_login and "conversation" in body.lower():
+            if user.get("login") != agent:
+                continue
+            identity = comment.get("id") if comment.get("id") is not None else body
+            if identity not in seen:
+                seen.add(identity)
+                agent_comments.append(body)
+            if not conversation and "conversation" in body.lower():
                 conversation = _first_url(body)
-                if conversation:
-                    break
         observation = Observation(labels=labels, conversation=conversation,
-                                  closed=str(issue.get("state") or "open") == "closed")
+                                  closed=str(issue.get("state") or "open") == "closed",
+                                  agent_comments=tuple(agent_comments))
         pulls = self.api.json("GET", f"/repos/{repository}/pulls?state=all&limit={PAGE_SIZE}")
         pr = self._find_pull(pulls if isinstance(pulls, list) else [], number)
         if pr is None:
@@ -859,6 +882,20 @@ class Smoke:
             pr = detail
         observation.pr = pr
         observation.pr_labels = tuple(label.get("name", "") for label in pr.get("labels") or [] if isinstance(label, dict))
+        pull_number = pr.get("number")
+        if isinstance(pull_number, int) and pull_number != number:
+            for comment in self.api.paged(f"/repos/{repository}/issues/{pull_number}/comments"):
+                if not isinstance(comment, dict):
+                    continue
+                user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
+                if user.get("login") != agent:
+                    continue
+                body = str(comment.get("body") or "")
+                identity = comment.get("id") if comment.get("id") is not None else body
+                if identity not in seen:
+                    seen.add(identity)
+                    agent_comments.append(body)
+            observation.agent_comments = tuple(agent_comments)
         observation.merged = bool(pr.get("merged") or pr.get("merged_at"))
         author = pr.get("user") if isinstance(pr.get("user"), dict) else {}
         observation.pr_author = str(author.get("login") or "")
@@ -918,6 +955,11 @@ class Smoke:
     def _agent_owns_labels(self, observation: Observation) -> bool:
         agent = self.factory.agent_login
         return all(agent in (observation.label_actors.get(name) or ()) for name in observation.pr_labels)
+
+    def _assert_no_routine_mention(self, observation: Observation, number: int) -> None:
+        human = self.factory.human_login
+        if any(_mentions(comment, human) for comment in observation.agent_comments):
+            raise SmokeFailure(f"#{number}: a routine comment mentions @{human}: it would mail the human")
 
     def _track_merged(self, number: int, watch=None) -> Observation:
         repository = self.report.repository

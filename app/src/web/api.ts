@@ -9,6 +9,7 @@ import type {
   PendingCreation,
   PendingRemoval,
   RemovableApp,
+  RepoInfo,
   RootCaInfo,
   SsoSession,
   StatusSnapshot,
@@ -111,6 +112,10 @@ export const useRootCa = () => useQuery({ queryKey: ["ca"], queryFn: () => getJs
 
 /** The hosts ingressctl manages, with whether each redirects HTTP to HTTPS. */
 export const useHosts = () => useQuery({ queryKey: ["hosts"], queryFn: () => getJson<HostInfo[]>("/api/hosts"), refetchInterval: 60_000 });
+
+/** The owner's repositories with their factory status (an error while Forgejo or its settings are not usable). */
+export const useRepos = () =>
+  useQuery({ queryKey: ["repos"], queryFn: () => getJson<{ repos: RepoInfo[] }>("/api/repos"), retry: false, refetchInterval: 60_000 });
 
 /** POST as `user`; resolves with the job to follow, or throws the server's message. */
 export async function startJob(path: string, body: unknown, session: Session): Promise<string> {

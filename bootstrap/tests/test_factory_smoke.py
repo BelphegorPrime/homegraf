@@ -660,6 +660,53 @@ class CommandTests(SmokeTest):
         self.assertTrue(self.writes())
 
 
+class IncludeEpicFlagTests(SmokeTest):
+    def test_the_flag_parses_and_defaults_to_false(self):
+        options = factory_smoke.parse_args(["--repo", REPO, "--confirm-scratch", REPO, "--include-epic"])
+        self.assertTrue(options.include_epic)
+        options = factory_smoke.parse_args(["--repo", REPO, "--confirm-scratch", REPO])
+        self.assertFalse(options.include_epic)
+
+    def test_a_repeated_flag_is_a_usage_error(self):
+        with self.assertRaises(factory_smoke.UsageError):
+            factory_smoke.parse_args(["--repo", REPO, "--confirm-scratch", REPO, "--include-epic", "--include-epic"])
+
+    def test_the_help_output_lists_the_flag(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(hgmain.main(["factory-smoke", "--help"]), 0)
+        self.assertIn("--include-epic", out.getvalue())
+
+    def test_the_warning_names_the_extra_tokens_before_the_first_write(self):
+        messages = []
+
+        def capture(step, message):
+            self.assertEqual(self.writes(), [], "the token warning came after a write")
+            messages.append(message)
+
+        original = factory_smoke.warn
+        factory_smoke.warn = capture
+        self.addCleanup(setattr, factory_smoke, "warn", original)
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(len(messages), 1)
+        self.assertIn("one epic with three children plus a follow-up issue", messages[0])
+        self.assertIn("several times the tokens", messages[0])
+        self.assertTrue(self.writes())
+        self.assertIn("epic scenarios: skipped (not implemented yet)", report.render())
+
+    def test_without_the_flag_the_report_has_no_epic_stage(self):
+        report = self.smoke().run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertNotIn("epic scenarios", report.render())
+
+    def test_preflight_with_the_flag_writes_nothing_and_says_what_would_be_added(self):
+        report = self.smoke(preflight_only=True, include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed)
+        self.assertEqual(self.writes(), [])
+        self.assertIn("epic scenarios would be added", report.render())
+
+
 class WiringTests(SmokeTest):
     def test_main_routes_the_subcommand_and_help_writes_nothing(self):
         out = io.StringIO()

@@ -107,7 +107,7 @@ SEED_FILES = (
 )
 
 USAGE = """\
-usage: python -m hgboot factory-smoke --repo OWNER/REPO --confirm-scratch OWNER/REPO [--keep] [--preflight]
+usage: python -m hgboot factory-smoke --repo OWNER/REPO --confirm-scratch OWNER/REPO [--keep] [--preflight] [--include-epic]
 
 Runs the agent factory end to end in one named scratch repository and reports the stages.
 
@@ -115,6 +115,7 @@ Runs the agent factory end to end in one named scratch repository and reports th
   --confirm-scratch OWNER/REPO the same repository, repeated: the guard against a wrong target
   --keep                       keep the repository and its issues and list them as retained
   --preflight                  read-only: check the target, write nothing and spend no tokens
+  --include-epic               also add the ordered-epic and bounded follow-up scenarios; spends extra model tokens
   --timeout SECONDS            bound on each wait (default 1800)
   --interval SECONDS           poll interval (default 15)
   -h, --help                   show this help
@@ -181,6 +182,7 @@ class Options:
     confirm: str = ""
     keep: bool = False
     preflight: bool = False
+    include_epic: bool = False
     timeout: float = DEFAULT_TIMEOUT
     interval: float = DEFAULT_INTERVAL
     help: bool = False
@@ -269,6 +271,12 @@ def parse_args(argv: list[str]) -> Options:
         argument = argv[index]
         if argument in ("-h", "--help"):
             return Options(help=True)
+        if argument == "--include-epic":
+            if argument in flags:
+                raise UsageError("--include-epic is given more than once")
+            flags.add(argument)
+            index += 1
+            continue
         if argument in ("--keep", "--preflight"):
             flags.add(argument)
             index += 1
@@ -294,7 +302,7 @@ def parse_args(argv: list[str]) -> Options:
     timeout = _seconds(values.get("--timeout"), DEFAULT_TIMEOUT, "--timeout")
     interval = _seconds(values.get("--interval"), DEFAULT_INTERVAL, "--interval")
     return Options(repo=repo, confirm=confirm, keep="--keep" in flags, preflight="--preflight" in flags,
-                   timeout=timeout, interval=interval)
+                   include_epic="--include-epic" in flags, timeout=timeout, interval=interval)
 
 
 def _seconds(value, default: float, name: str) -> float:
@@ -370,12 +378,13 @@ class Smoke:
 
     def __init__(self, factory, cfg, state, *, token: str, http=request, sleep=time.sleep,
                  clock=time.monotonic, timeout: float = DEFAULT_TIMEOUT, interval: float = DEFAULT_INTERVAL,
-                 keep: bool = False, preflight_only: bool = False):
+                 keep: bool = False, preflight_only: bool = False, include_epic: bool = False):
         self.factory, self.cfg, self.state = factory, cfg, state
         self.token = token
         self.http, self.sleep, self.clock = http, sleep, clock
         self.timeout, self.interval = timeout, interval
         self.keep, self.preflight_only = keep, preflight_only
+        self.include_epic = include_epic
         self.api = _Api(cfg, token, http=http)
         self.secrets = (token, getattr(factory, "forgejo_webhook_secret", ""))
         self.run_token = uuid.uuid4().hex[:8]
@@ -428,16 +437,25 @@ class Smoke:
         plan = self.preflight(repository, confirm)
         if self.preflight_only:
             action = "reuse" if plan.existing else "create"
-            self.report.add("preflight", "read-only", f"would {action} {plan.repository}; nothing written, no tokens spent")
+            detail = f"would {action} {plan.repository}; nothing written, no tokens spent"
+            if self.include_epic:
+                detail += "; epic scenarios would be added"
+            self.report.add("preflight", "read-only", detail)
             return self.report
-        warn(STEP, "this run creates issues that start agent runs: every run spends model tokens. "
+        warning = ("this run creates issues that start agent runs: every run spends model tokens. "
                    "It uses the operator's existing token and widens no allowlist, policy or permission.")
+        if self.include_epic:
+            warning += (" The epic scenarios create one epic with three children plus a follow-up issue and "
+                        "spend several times the tokens of the base smoke.")
+        warn(STEP, warning)
         try:
             self._ensure_repository(plan)
             self._configure(plan)
             self._normal_case(plan)
             self._later_ready_case(plan)
             self._protected_case(plan)
+            if self.include_epic:
+                self._epic_cases(plan)
         except (SmokeFailure, SmokeTimeout) as exc:
             self.report.passed = False
             self.report.add("result", "failed", str(exc))
@@ -533,6 +551,9 @@ class Smoke:
         observation = self._track_protected(number)
         self.report.add("protected path", "passed",
                         "approved, green, open, without WIP: " + observation.chain())
+
+    def _epic_cases(self, plan: Plan) -> None:
+        self.report.add("epic scenarios", "skipped", "not implemented yet")
 
     def _open_issue(self, repository: str, slug: str, body: str, *, ready_at_creation: bool) -> int:
         title = f"Factory smoke: {slug} [{self.run_token}]"
@@ -751,7 +772,7 @@ def command(argv: list[str], env=os.environ) -> int:
         print("error: the operator's Forgejo token is missing from the state: run the Forgejo seed first", file=sys.stderr)
         return 2
     smoke = Smoke(factory, cfg, state, token=token, keep=options.keep, preflight_only=options.preflight,
-                  timeout=options.timeout, interval=options.interval)
+                  include_epic=options.include_epic, timeout=options.timeout, interval=options.interval)
     try:
         report = smoke.run(options.repo, options.confirm)
     except SmokeRefused as exc:

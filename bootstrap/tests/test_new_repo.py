@@ -24,9 +24,12 @@ ORG = "lab-team"
 NAME = "repository"
 REPO = f"{OWNER}/{NAME}"
 BRANCH = "main"
-# Forgejo stores `issues` as the whole issue group and returns the events sorted; `push` stays `push`.
+# issues and pull_request are stored as their whole groups.
 EXPANDED_EVENTS = ("action_run_failure", "action_run_success", "issue_assign", "issue_comment", "issue_label",
-                   "issue_milestone", "issues", "pull_request_label", "push")
+                   "issue_milestone", "issues", "pull_request", "pull_request_assign", "pull_request_comment",
+                   "pull_request_label", "pull_request_milestone", "pull_request_review_approved",
+                   "pull_request_review_comment", "pull_request_review_rejected", "pull_request_review_request",
+                   "pull_request_sync", "push")
 
 
 class FakeNewRepoForgejo:

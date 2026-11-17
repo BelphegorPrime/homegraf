@@ -15,6 +15,20 @@
   "automerge": false,
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
+  "github-actions": {
+    "managerFilePatterns": ["/(^|/)\\.github/workflows/[^/]+\\.ya?ml$/", "/(^|/)\\.forgejo/workflows/[^/]+\\.ya?ml$/"]
+  },
+  "docker-compose": {
+    "managerFilePatterns": ["/(^|/)(?:docker-)?compose[^/]*\\.ya?ml$/", "/(^|/)[^/]+\\.compose\\.ya?ml$/"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Versions pinned in scripts with a '# renovate:' comment",
+      "managerFilePatterns": ["/(^|/)compose-wrap\\.sh$/"],
+      "matchStrings": ["#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)\\s*\\n\\s*\\w+=(?<currentValue>\\S+)"]
+    }
+  ],
   "packageRules": [
     {
       "description": "One grouped pull request per week and manager for non-major updates",

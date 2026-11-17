@@ -91,6 +91,14 @@ class _AgentStore:
         return list(stored) if isinstance(stored, list) else []
 
 
+def mailer_warning(env, human_login) -> str | None:
+    """Warn, never fail, when Forgejo cannot mail a mention of the human."""
+    if str(env.get("FORGEJO_MAILER_ENABLED", "")).strip().lower() in ("true", "1", "yes"):
+        return None
+    return (f"Forgejo mailer looks unconfigured (FORGEJO_MAILER_ENABLED is not true): a mention of {human_login} "
+            "will not be mailed. If you configure [mailer] in app.ini instead, ignore this.")
+
+
 def run(factory, cfg, state, env=os.environ, *, http=request, sleep=time.sleep,
         mirror_attempts: int = 30) -> FactoryReport | None:
     """Reconcile everything and publish the ready handoff last.  The caller parses FactoryConfig first."""
@@ -104,6 +112,9 @@ def run(factory, cfg, state, env=os.environ, *, http=request, sleep=time.sleep,
         _validate_contract(factory, env)
         _validate_runtime_dir(factory.runtime_dir)
         mirror = _preflight(factory, cfg, state, operator_token, http, mirror_attempts, sleep)
+        message = mailer_warning(env, factory.human_login)
+        if message:
+            warn(STEP, message)
 
         stage = "agent user"
         token, login = _ensure_agent(factory, cfg, store, operator_token, http)

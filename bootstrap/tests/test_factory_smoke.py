@@ -16,7 +16,7 @@ import shutil
 import tempfile
 import unittest
 from unittest import mock
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 from hgboot import factory_smoke, main as hgmain
 from hgboot.factory_config import FactoryConfig
@@ -57,6 +57,7 @@ class FakeFactory:
         self.no_epic_closure = False
         self.human_closes_epic = False
         self.planner_repeats = False
+        self.second_pr = False
         self.now = 0.0
 
     # -- clock injection --------------------------------------------------------------------
@@ -93,6 +94,8 @@ class FakeFactory:
             self._epic_step(repo, issue)
         elif issue["kind"] == "child":
             self._child_step(repo, issue)
+        elif issue["kind"] == "followup":
+            self._followup_step(repo, issue)
         else:
             self._advance(repo, issue, issue["polls"])
 
@@ -105,6 +108,27 @@ class FakeFactory:
             return
         issue["work"] = issue.get("work", 0) + 1
         self._advance(repo, issue, issue["work"])
+
+    def _followup_step(self, repo: dict, issue: dict) -> None:
+        self._advance(repo, issue, issue["polls"])
+        pull = repo["pulls"].get(issue["number"])
+        if pull is None or issue["polls"] != 3:
+            return
+        pull["labels"].append({"name": "ai:changes"})
+        issue["timeline"].append({"type": "label", "user": {"login": "homegraf-agent"},
+                                  "label": {"name": "ai:changes"}})
+        pull["head"]["sha"] = f"sha{issue['number']}b"
+        repo["statuses"][pull["head"]["sha"]] = [
+            {"context": "ci / seed (pull_request)", "state": "success"},
+            {"context": "ci / seed (push)", "state": "success"}]
+        if self.second_pr:
+            other = issue["number"] + 1000
+            repo["pulls"][other] = {
+                "id": self.next_id(), "number": other, "state": "open", "draft": False,
+                "title": f"Follow-up {issue['title']}", "body": "",
+                "head": {"ref": f"ai/issue-{issue['number']}-2", "sha": f"sha{issue['number']}c"},
+                "labels": [], "merged": False, "merged_at": None, "created_at": self.stamp(),
+                "user": {"login": self.pr_author}}
 
     def _epic_step(self, repo: dict, issue: dict) -> None:
         children = [child for child in repo["issues"].values() if child.get("epic") == issue["number"]]
@@ -279,6 +303,10 @@ class FakeFactory:
                 if req.method == "PATCH":
                     repo["protections"][rule].update(req.json)
                 return 200, repo["protections"][rule]
+            if rest.startswith("branches/"):
+                branch = unquote(rest[len("branches/"):])
+                exists = any(pull["head"]["ref"] == branch for pull in repo["pulls"].values())
+                return (200, {"name": branch}) if exists else (404, {"message": "not found"})
             if rest.startswith("contents/"):
                 file_path = rest[len("contents/"):]
                 if req.method == "GET":
@@ -300,13 +328,16 @@ class FakeFactory:
             if rest == "issues" and req.method == "POST":
                 number = len(repo["issues"]) + 1
                 by_id = {label["id"]: label["name"] for label in repo["labels"].values()}
+                labels = {by_id[i] for i in req.json.get("labels") or []}
+                kind = ("followup" if "follow-up" in req.json["title"] else
+                        "epic" if "ai:plan" in labels else
+                        "protected" if "protected" in req.json["title"] else
+                        "later" if "added later" in req.json["body"] else "normal")
                 issue = {"number": number, "title": req.json["title"], "body": req.json["body"], "state": "open",
-                         "labels": {by_id[i] for i in req.json.get("labels") or []}, "polls": 0,
-                         "timeline": [{"type": "label", "user": {"login": "owner"}, "label": {"name": by_id[i]}}
-                                      for i in req.json.get("labels") or []],
-                         "kind": "epic" if "ai:plan" in {by_id[i] for i in req.json.get("labels") or []} else
-                                 ("protected" if "protected" in req.json["title"] else
-                                  ("later" if "added later" in req.json["body"] else "normal"))}
+                         "labels": labels, "polls": 0,
+                         "timeline": [{"type": "label", "user": {"login": "owner"}, "label": {"name": name}}
+                                      for name in labels],
+                         "kind": kind}
                 repo["issues"][number] = issue
                 if "ai:plan" in issue["labels"]:
                     self._plan(repo, issue)
@@ -905,7 +936,7 @@ class EpicGraphTests(SmokeTest):
         self.assertEqual(self.fake.repos[REPO]["issues"], {})
         self.assertEqual(self.fake.repos[REPO]["dependencies"], {})
         deletes = [request.path.split("?")[0] for request in self.srv.requests if request.method == "DELETE"]
-        self.assertEqual(len(deletes), 7)
+        self.assertEqual(len(deletes), 8)
         self.assertTrue(all("/issues/" in path for path in deletes))
 
 
@@ -933,14 +964,14 @@ class EpicRunTests(SmokeTest):
         self.assertTrue(report.passed, report.render())
         self.assertEqual(self.fake.repos[REPO]["issues"], {})
         deletes = [request.path.split("?")[0] for request in self.srv.requests if request.method == "DELETE"]
-        self.assertEqual(len(deletes), 7)
+        self.assertEqual(len(deletes), 8)
 
     def test_the_smoke_writes_to_the_epic_only_at_creation_and_cleanup(self):
         self.fake.seed()
         report = self.smoke(include_epic=True).run(REPO, REPO)
         self.assertTrue(report.passed, report.render())
         deletes = [request for request in self.writes() if request.method == "DELETE"]
-        self.assertEqual(len(deletes), 7)
+        self.assertEqual(len(deletes), 8)
         epic = int(deletes[3].path.rsplit("/", 1)[1])       # cleanup follows the creation order
         created = [request for request in self.writes() if request.path.endswith("/issues")
                    and "epic planning" in request.json["body"]]
@@ -1016,6 +1047,31 @@ class EpicRunTests(SmokeTest):
         self.assertTrue(report.passed, report.render())
         self.assertNotIn("epic order", report.render())
         self.assertNotIn("epic closure", report.render())
+
+
+class FollowupCaseTests(SmokeTest):
+    def test_the_followup_round_passes_on_the_same_pull_request_and_branch(self):
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertIn("follow-up: passed (same pull request and branch, merged)", report.render())
+
+    def test_a_second_pull_request_fails_the_smoke(self):
+        self.fake.second_pr = True
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("a follow-up opened a second pull request or branch", report.render())
+
+    def test_without_the_flag_no_followup_write_happens(self):
+        report = self.smoke().run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertFalse([request for request in self.srv.requests
+                          if "smoke-epic" in request.path or "/branches/" in request.path])
+
+    def test_cleanup_deletes_the_followup_issue(self):
+        self.fake.seed()
+        report = self.smoke(include_epic=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(self.fake.repos[REPO]["issues"], {})
 
 
 class CheckEpicGraphTests(unittest.TestCase):

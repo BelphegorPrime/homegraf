@@ -121,6 +121,7 @@ export const PERMISSIONS = {
   "apps:create": "Create apps (opens a pull request)",
   "apps:remove": "Remove apps (destroys the stack, opens a pull request, then removes routing and secrets)",
   "hosts:edit": "Change a host's routing options, e.g. redirect HTTP to HTTPS (opens a pull request)",
+  "hosts:expose": "Make a host reachable from the internet without a path restriction (needs a separate confirmation)",
   "stacks:deploy": "Redeploy a stack (pull and up through Komodo)",
   "secrets:manage": "See the names of a stack's secrets, set, generate and delete them",
   "users:manage": "Manage users and their permissions",

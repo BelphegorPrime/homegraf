@@ -193,6 +193,7 @@ describe("coming back from the provider", () => {
       "apps:create",
       "apps:remove",
       "hosts:edit",
+      "hosts:expose",
       "stacks:deploy",
       "secrets:manage",
       "users:manage",

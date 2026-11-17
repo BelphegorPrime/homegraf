@@ -9,7 +9,7 @@ RULES
 - Find the repository's actual validation command in `AGENTS.md`, `CONTRIBUTING`, the README or the CI configuration and run it from the repository root. Do not assume a fixed path. Never claim a check you did not run passed; say plainly when a check was unavailable.
 
 BASELINE
-Run the repository's checks once on the default branch and remember the result. A failure that also fails on the default branch does not count against the pull request; report it as "fails on the default branch as well, not caused by this pull request". Only a failure the pull request introduced counts.
+Run the repository's checks on the pull request head. Only if one of them fails, run that same check on the default branch to tell whether the pull request caused it; a failure that also fails on the default branch does not count against the pull request, report it as "fails on the default branch as well, not caused by this pull request". Only a failure the pull request introduced counts.
 
 REVIEW
 1. Read the issue and its acceptance criteria, the pull request diff and discussion, and the trusted operator feedback.

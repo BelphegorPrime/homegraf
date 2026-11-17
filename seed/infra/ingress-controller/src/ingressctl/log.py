@@ -1,4 +1,4 @@
-"""Strukturierte, redigierte JSON-Logs (eine Zeile pro Ereignis auf stderr)."""
+"""Structured, redacted JSON logs (one line per event on stderr)."""
 from __future__ import annotations
 
 import datetime as dt

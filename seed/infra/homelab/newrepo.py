@@ -14,6 +14,9 @@ Environment: FORGEJO_TOKEN (operator token, write access; never printed), FORGEJ
 of `origin`), FORGEHANDS_FORGEJO_WEBHOOK_URL (the endpoint Forgejo calls, e.g.
 http://forgehands:8080/webhooks/forgejo) and FORGEHANDS_FORGEJO_WEBHOOK_SECRET. A missing one fails with exit 1 and
 names it.
+
+--wire adds the second half of the epic: the repository is added to ALLOWED_REPOS and MERGE_POLICY of the stack that
+runs ForgeHands (wirerepo.py), and that change goes to a branch and a pull request. Nothing is deployed here.
 """
 from __future__ import annotations
 
@@ -30,6 +33,7 @@ from types import SimpleNamespace
 import forgejo
 import repoprofiles
 import ui
+import wirerepo
 
 HERE = pathlib.Path(__file__).resolve().parent
 CODE = HERE.parents[1]                                          # where the tools are (seed/, or /opt/homegraf in the image)
@@ -60,6 +64,7 @@ class Plan:
     server: str
     visibility: str
     description: str
+    wiring: wirerepo.Wiring | None = None  # the --wire edit of the ForgeHands stack; None without --wire
 
 
 def _setting(name: str) -> str:
@@ -168,8 +173,9 @@ def collect(preset: dict) -> Plan:
             forgehands_endpoint=_setting(ENDPOINT_ENV), webhook_secret=_setting(SECRET_ENV))
     except ValueError as exc:
         raise SystemExit(f"new-repo: {exc}") from None
+    wiring = wirerepo.plan(request.full_name) if preset.get("wire") else None
     return Plan(request=request, module=module, profile=profile, server=server, visibility=visibility,
-                description=description)
+                description=description, wiring=wiring)
 
 
 @contextlib.contextmanager
@@ -186,20 +192,38 @@ def _quiet():
             os.environ["HGBOOT_QUIET"] = previous
 
 
+def _wire_json(wiring: wirerepo.Wiring) -> dict:
+    return {"stack": wiring.path.relative_to(ROOT).as_posix(), "repository": wiring.repository,
+            "allowed_repos_added": not wiring.allowed_here, "merge_policy_added": not wiring.policy_here}
+
+
 def _plan_json(plan: Plan) -> dict:
-    return {"applied": False, "repository": plan.request.full_name, "visibility": plan.visibility,
-            "description": plan.description, "default_branch": plan.request.branch,
-            "agent_login": plan.request.agent_login, "profile": plan.profile.name,
-            "files": sorted(plan.request.files), "labels": sorted(plan.module.LABELS),
-            "hook": {"url": plan.request.endpoint, "events": list(plan.module.AGENT_EVENTS)}}
+    document = {"applied": False, "repository": plan.request.full_name, "visibility": plan.visibility,
+                "description": plan.description, "default_branch": plan.request.branch,
+                "agent_login": plan.request.agent_login, "profile": plan.profile.name,
+                "files": sorted(plan.request.files), "labels": sorted(plan.module.LABELS),
+                "hook": {"url": plan.request.endpoint, "events": list(plan.module.AGENT_EVENTS)}}
+    if plan.wiring is not None:
+        document["wire"] = _wire_json(plan.wiring)
+    return document
 
 
-def _result_json(result) -> dict:
-    return {"applied": True, "repository": result.repository, "repository_status": result.repository_status,
-            "collaborator": result.collaborator, "collaborator_status": result.collaborator_status,
-            "default_branch": result.default_branch, "commit": result.commit, "files": list(result.files),
-            "labels_created": list(result.labels_created), "labels_updated": list(result.labels_updated),
-            "hook_status": result.hook_status, "hook_events": list(result.hook_events)}
+def _result_json(result, pull: str | None = None) -> dict:
+    document = {"applied": True, "repository": result.repository, "repository_status": result.repository_status,
+                "collaborator": result.collaborator, "collaborator_status": result.collaborator_status,
+                "default_branch": result.default_branch, "commit": result.commit, "files": list(result.files),
+                "labels_created": list(result.labels_created), "labels_updated": list(result.labels_updated),
+                "hook_status": result.hook_status, "hook_events": list(result.hook_events)}
+    if pull is not None:
+        document["wire"] = {"pull_request": pull}
+    return document
+
+
+def _print_wire(wiring: wirerepo.Wiring) -> None:
+    where = wiring.path.relative_to(ROOT).as_posix()
+    adds = [name for name, here in (("ALLOWED_REPOS", wiring.allowed_here), ("MERGE_POLICY", wiring.policy_here)) if not here]
+    print(f"  wire          {where}" + (f": {', '.join(adds)} + {wiring.repository}" if adds
+                                        else f": {wiring.repository} is already there"))
 
 
 def _print_plan(plan: Plan) -> None:
@@ -214,7 +238,9 @@ def _print_plan(plan: Plan) -> None:
     print(f"  labels        {len(plan.module.LABELS)}: {', '.join(sorted(plan.module.LABELS))}")
     print(f"  webhook       {request.endpoint}")
     print(f"                {', '.join(plan.module.AGENT_EVENTS)}")
-    print("\nNothing was created: rerun with --yes to create the repository and its first commit.")
+    if plan.wiring is not None:
+        _print_wire(plan.wiring)
+    print("\nNothing was created or changed: rerun with --yes to create the repository and its first commit.")
 
 
 def _print_result(result) -> None:
@@ -242,8 +268,14 @@ def run(preset: dict) -> bool:
             result = plan.request.run()
     except (plan.module.StepError, ValueError) as exc:
         raise SystemExit(f"new-repo: {exc}") from None
+    pull = None
+    if plan.wiring is not None:
+        pull = wirerepo.deliver(plan.wiring.repository)
     if preset.get("json"):
-        print(json.dumps(_result_json(result), indent=2, sort_keys=True))
+        print(json.dumps(_result_json(result, pull), indent=2, sort_keys=True))
     else:
         _print_result(result)
+        if plan.wiring is not None:
+            _print_wire(plan.wiring)
+            print(f"  pull request  {pull}" if pull else f"  pull request  none: {plan.wiring.repository} is already wired")
     return True

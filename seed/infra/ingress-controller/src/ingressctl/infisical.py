@@ -1,14 +1,14 @@
-"""Adapter für Infisical Certificate Management (geprüft gegen infisical/infisical v0.167.2).
+"""Adapter for Infisical Certificate Management (verified against infisical/infisical v0.167.2).
 
-Vertrag (siehe docs/discovery.md, Quelle: backend/src des Tags v0.167.2):
+Contract (see docs/discovery.md, source: backend/src of tag v0.167.2):
 - POST /api/v1/auth/universal-auth/login {clientId, clientSecret} -> {accessToken, expiresIn}
 - POST /api/v1/cert-manager/certificates {profileId, applicationId, csr, attributes:{ttl}, metadata}
   -> {certificate: {certificate, certificateChain, issuingCaCertificate, serialNumber, certificateId} | null,
-      certificateRequestId}; certificate == null bedeutet ausstehend.
-- GET /api/v1/cert-manager/certificates/certificate-requests/{id} (Status ausstehender Anfragen)
+      certificateRequestId}; certificate == null means pending.
+- GET /api/v1/cert-manager/certificates/certificate-requests/{id} (status of pending requests)
 - POST /api/v1/projects/{projectId}/certificates/search {metadata:[{key,value}], status, applicationId, limit}
-- GET /api/v1/cert-manager/certificates/{id}/certificate (PEM ohne Schlüssel)
-Wir verwenden ausschließlich den CSR-Weg: der private Schlüssel verlässt den Management-Server nie.
+- GET /api/v1/cert-manager/certificates/{id}/certificate (PEM without key)
+We use the CSR path exclusively: the private key never leaves the management server.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class InfisicalClient:
                          json={"clientId": self.client_id, "clientSecret": self._secret}).json()
         token = body.get("accessToken")
         if not token:
-            raise AdapterError(SYSTEM, "Login-Antwort ohne accessToken")
+            raise AdapterError(SYSTEM, "login response without accessToken")
         self.session.headers["Authorization"] = f"Bearer {token}"
 
     def issue_from_csr(self, *, profile_id: str, application_id: str, csr_pem: str, ttl_days: int,
@@ -59,12 +59,12 @@ class InfisicalClient:
         return _bundle(cert)
 
     def get_request(self, request_id: str) -> dict | None:
-        """Bundle, wenn die ausstehende Anfrage inzwischen ausgestellt wurde, sonst None."""
+        """Bundle if the pending request has been issued meanwhile, otherwise None."""
         body = self._req("GET", f"/api/v1/cert-manager/certificates/certificate-requests/{request_id}").json()
         cert_id = body.get("certificateId") or (body.get("certificate") or {}).get("id")
         status = str(body.get("status", "")).lower()
         if status in ("rejected", "failed"):
-            raise AdapterError(SYSTEM, f"Zertifikatsanfrage {request_id} abgelehnt ({status})")
+            raise AdapterError(SYSTEM, f"certificate request {request_id} rejected ({status})")
         if not cert_id:
             return None
         return self.get_certificate(cert_id)
@@ -75,7 +75,7 @@ class InfisicalClient:
         return _bundle(body)
 
     def find_by_metadata(self, project_id: str, application_id: str, key: str, value: str) -> list[str]:
-        """IDs aktiver Zertifikate mit Metadatum key=value (Wiederfinden nach Timeout)."""
+        """IDs of active certificates with metadata key=value (to find them again after a timeout)."""
         body = self._req("POST", f"/api/v1/projects/{project_id}/certificates/search", mutating=False, json={
             "metadata": [{"key": key, "value": value}], "status": "active", "applicationId": application_id,
             "limit": 100,
@@ -84,7 +84,7 @@ class InfisicalClient:
 
 
 def _bundle(cert: dict) -> dict:
-    """Nur Zertifikatsdaten übernehmen; ein eventuell mitgeliefertes privateKey-Feld wird verworfen."""
+    """Take only certificate data; a privateKey field that may be included is discarded."""
     return {
         "certificate": cert.get("certificate"),
         "certificate_chain": cert.get("certificateChain"),

@@ -1,4 +1,4 @@
-"""IP-Allowlist-Presets: abrufen, streng prüfen und den letzten guten Stand im State halten."""
+"""IP allowlist presets: fetch, validate strictly, and keep the last good copy in the state."""
 from __future__ import annotations
 
 import ipaddress
@@ -29,7 +29,7 @@ PRESETS: dict[str, Preset] = {
 def fetch_preset(session: requests.Session, name: str) -> tuple[str, ...]:
     preset = PRESETS.get(name)
     if preset is None:
-        raise PresetError(f"unbekanntes Preset '{name}'")
+        raise PresetError(f"unknown preset '{name}'")
     try:
         resp = http.request(session, "github", "GET", preset.url, mutating=False,
                             headers={"Accept": "application/vnd.github+json", "User-Agent": "ingressctl"},
@@ -37,34 +37,34 @@ def fetch_preset(session: requests.Session, name: str) -> tuple[str, ...]:
     except AdapterError as exc:
         raise PresetError(str(exc)) from None
     if resp.status_code != 200:
-        raise PresetError(f"preset {name}: unerwarteter HTTP-Status {resp.status_code}")
+        raise PresetError(f"preset {name}: unexpected HTTP status {resp.status_code}")
     try:
         body = resp.json()
     except ValueError:
-        raise PresetError(f"preset {name}: Antwort ist kein JSON") from None
+        raise PresetError(f"preset {name}: response is not JSON") from None
     if not isinstance(body, dict):
-        raise PresetError(f"preset {name}: Antwort ist kein JSON-Objekt")
+        raise PresetError(f"preset {name}: response is not a JSON object")
     if preset.key not in body:
-        raise PresetError(f"preset {name}: Schlüssel '{preset.key}' fehlt")
+        raise PresetError(f"preset {name}: key '{preset.key}' is missing")
     entries = body[preset.key]
     if not isinstance(entries, list):
-        raise PresetError(f"preset {name}: '{preset.key}' ist keine Liste")
+        raise PresetError(f"preset {name}: '{preset.key}' is not a list")
     if not entries:
-        raise PresetError(f"preset {name}: '{preset.key}' ist leer")
+        raise PresetError(f"preset {name}: '{preset.key}' is empty")
     if len(entries) > MAX_ENTRIES:
-        raise PresetError(f"preset {name}: mehr als {MAX_ENTRIES} Einträge")
+        raise PresetError(f"preset {name}: more than {MAX_ENTRIES} entries")
     networks = set()
     for entry in entries:
         if not isinstance(entry, str):
-            raise PresetError(f"preset {name}: Eintrag {entry!r} ist kein String")
+            raise PresetError(f"preset {name}: entry {entry!r} is not a string")
         try:
             network = ipaddress.ip_network(entry, strict=True)
         except ValueError:
-            raise PresetError(f"preset {name}: '{entry}' ist kein IPv4-/IPv6-Netz") from None
+            raise PresetError(f"preset {name}: '{entry}' is not an IPv4/IPv6 network") from None
         if not network.is_global:
-            raise PresetError(f"preset {name}: '{entry}' ist kein globales Netz")
+            raise PresetError(f"preset {name}: '{entry}' is not a global network")
         if network.prefixlen < MIN_PREFIX[network.version]:
-            raise PresetError(f"preset {name}: '{entry}' ist zu weit gefasst")
+            raise PresetError(f"preset {name}: '{entry}' is too broad")
         networks.add(str(network))
     return tuple(sorted(networks))
 
@@ -87,8 +87,8 @@ def resolve_presets(state: State, names, session: requests.Session, *, persist: 
                 res.errors[name] = str(exc)
                 continue
             res.cidrs[name] = tuple(stored["cidrs"])
-            res.notes.append(f"preset {name}: Abruf fehlgeschlagen ({exc}); "
-                             f"nutze letzten guten Stand vom {stored['fetched_at']}")
+            res.notes.append(f"preset {name}: fetch failed ({exc}); "
+                             f"using last good copy from {stored['fetched_at']}")
             log.event("preset", "stale", preset=name, error=str(exc))
             continue
         stored = state.get_preset(name)
@@ -96,7 +96,7 @@ def resolve_presets(state: State, names, session: requests.Session, *, persist: 
         if stored is not None and previous != fetched:
             added = sorted(set(fetched) - set(previous))
             removed = sorted(set(previous) - set(fetched))
-            res.notes.append(f"preset {name}: Liste geändert (+{','.join(added)}, -{','.join(removed)})")
+            res.notes.append(f"preset {name}: list changed (+{','.join(added)}, -{','.join(removed)})")
         if persist and (stored is None or previous != fetched):
             state.save_preset(name, fetched, PRESETS[name].url)
         res.cidrs[name] = fetched

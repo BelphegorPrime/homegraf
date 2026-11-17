@@ -1,12 +1,12 @@
-"""HTTP-Fakes für NPM 2.16.0 und Infisical v0.167.2.
+"""HTTP fakes for NPM 2.16.0 and Infisical v0.167.2.
 
-Bilden das aus dem Quellcode verifizierte Verhalten nach (docs/discovery.md), nicht die Annahmen von ingressctl:
-- NPM: doppelte Domains -> 400; Upload überschreibt Dateien ohne Reload; nginx liest Zertifikate erst bei
-  Create/Update/Enable eines aktiven Hosts; GET auf Zertifikate enthält meta.certificate_key im Klartext.
-- NPM/Let's Encrypt: eigene Fake-CA, nice_name wird aus den Domains gebildet, kein PEM in meta.certificate,
-  test-http liefert "ok"/"no-host"; meta-Schlüssel außerhalb des NPM-Schemas -> 400.
-- Infisical: CSR wird von einer echten Test-CA signiert; optional ausstehend, kürzere Laufzeit, falsche SANs.
-Fehlerinjektion: `fail_after` führt eine Mutation aus und wirft danach requests.Timeout (unklarer Ausgang).
+Reproduce the behavior verified from the source code (docs/discovery.md), not ingressctl's assumptions:
+- NPM: duplicate domains -> 400; upload overwrites files without a reload; nginx reads certificates only on
+  create/update/enable of an active host; GET on certificates contains meta.certificate_key in plain text.
+- NPM/Let's Encrypt: own fake CA, nice_name is built from the domains, no PEM in meta.certificate,
+  test-http returns "ok"/"no-host"; meta keys outside the NPM schema -> 400.
+- Infisical: the CSR is signed by a real test CA; optionally pending, shorter lifetime, wrong SANs.
+Fault injection: `fail_after` performs a mutation and then raises requests.Timeout (unclear outcome).
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def _fp(pem: str) -> str:
     return x509.load_pem_x509_certificate(pem.encode()).fingerprint(hashes.SHA256()).hex()
 
 
-# meta-Schlüssel aus backend/schema/components/certificate-object.json (additionalProperties: false)
+# meta keys from backend/schema/components/certificate-object.json (additionalProperties: false)
 LE_META_KEYS = frozenset({"certificate", "certificate_key", "dns_challenge", "dns_provider_credentials",
                           "dns_provider", "letsencrypt_certificate", "propagation_seconds", "key_type"})
 
@@ -73,8 +73,8 @@ class FakeNpm:
     def __init__(self):
         self.hosts: dict[int, dict] = {}
         self.certs: dict[int, dict] = {}
-        self.cert_files: dict[int, str] = {}       # /data/custom_ssl/npm-<id>/fullchain.pem (Leaf)
-        self.presented: dict[str, str] = {}        # Domain -> Fingerprint, Stand des letzten nginx-Reloads
+        self.cert_files: dict[int, str] = {}       # /data/custom_ssl/npm-<id>/fullchain.pem (leaf)
+        self.presented: dict[str, str] = {}        # domain -> fingerprint, state of the last nginx reload
         self.ids = itertools.count(1)
         self.mutations = 0
         self.reachable = True
@@ -82,8 +82,8 @@ class FakeNpm:
         self.user_email = "bot@test"
         self.http01_ok = True
         self.le_ca = FakeCa(cn="Fake LE R3")
-        self.le_issued: list[list[str]] = []       # Domains je erfolgreicher LE-Ausstellung
-        self.le_requests: list[dict] = []          # letzte LE-Create-Bodies (für Durchreich-Tests)
+        self.le_issued: list[list[str]] = []       # domains per successful LE issuance
+        self.le_requests: list[dict] = []          # last LE create bodies (for pass-through tests)
 
     def add_manual_host(self, domains, forward_host="10.0.0.9", port=80):
         hid = next(self.ids)
@@ -107,7 +107,7 @@ class FakeNpm:
         return None
 
     def _sign_le(self, cid: int) -> dict:
-        """Signiert ein Leaf und speichert nur expires_on; das certbot-Ergebnis ist in NPM reine Antwortdaten."""
+        """Sign a leaf and store only expires_on; in NPM the certbot result is pure response data."""
         cert = self.certs[cid]
         key = ec.generate_private_key(ec.SECP256R1())
         domains = cert["domain_names"]
@@ -135,14 +135,14 @@ class FakeNpm:
                                               f"{domain}/.well-known/acme-challenge/test-challenge: 404"}}
         cid = next(self.ids)
         self.certs[cid] = {"id": cid, "provider": "letsencrypt",
-                           "nice_name": ", ".join(domains),  # NPM überschreibt jeden gesendeten Namen
+                           "nice_name": ", ".join(domains),  # NPM overwrites every name that is sent
                            "domain_names": domains, "expires_on": None,
                            "meta": {"dns_challenge": bool(meta.get("dns_challenge"))}}
         cert_info = self._sign_le(cid)
         self.le_issued.append(list(domains))
-        self._reload()  # NPM lädt nginx nach der LE-Ausstellung neu
+        self._reload()  # NPM reloads nginx after the LE issuance
         row = self.certs[cid]
-        # NPM hängt das certbot-Ergebnis nur an die Create-Antwort (und den Audit-Log), nicht an die Zeile.
+        # NPM attaches the certbot result only to the create response (and the audit log), not to the row.
         return 201, {**row, "meta": {**row["meta"], "letsencrypt_certificate": cert_info}}
 
     def handle(self, method, path, query, headers, body):
@@ -160,7 +160,7 @@ class FakeNpm:
     def _route(self, method, path, query, headers, body):
         p = path.removeprefix("/api")
         if p == "/tokens" and method == "POST":
-            self.mutations -= 1  # Login zählt nicht als Mutation
+            self.mutations -= 1  # login does not count as a mutation
             return 200, {"token": "jwt-test", "expires": "2099-01-01T00:00:00Z"}
         if headers.get("Authorization") != "Bearer jwt-test":
             return 401, {"error": {"code": 401, "message": "Unauthorized"}}
@@ -225,7 +225,7 @@ class FakeNpm:
             if m.group(2):
                 parts = _multipart(headers, body)
                 cert = parts["certificate"].decode()
-                self.cert_files[cid] = cert  # kein Reload!
+                self.cert_files[cid] = cert  # no reload!
                 self.certs[cid]["meta"] = {"certificate": cert, "certificate_key": parts["certificate_key"].decode()}
                 return 200, {"certificate": cert, "certificate_key": parts["certificate_key"].decode()}
             if method == "DELETE":
@@ -262,7 +262,7 @@ class FakeCa:
              .issuer_name(self.cert.subject).public_key(public_key).serial_number(x509.random_serial_number())
              .not_valid_before(nb).not_valid_after(nb + dt.timedelta(days=days))
              .add_extension(x509.SubjectAlternativeName([x509.DNSName(s) for s in sans]), critical=False)
-             # wie die echten Infisical-Zertifikate: Python >= 3.13 prüft mit VERIFY_X509_STRICT (verlangt AKI)
+             # like the real Infisical certificates: Python >= 3.13 verifies with VERIFY_X509_STRICT (requires AKI)
              .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(self.key.public_key()), critical=False)
              .add_extension(x509.SubjectKeyIdentifier.from_public_key(public_key), critical=False))
         if eku:
@@ -337,20 +337,20 @@ class FakeInfisical:
 
 
 class FakeChecker:
-    """Simuliert die Netzsicht des Management-Servers auf Upstream und NPM:443."""
+    """Simulates the management server's network view of the upstream and NPM:443."""
 
     def __init__(self, npm: FakeNpm):
         self.npm = npm
         self.upstream_ok = True
-        self.ca_bundles: list[str | None] = []  # was ingressctl der Prüfung als Trust-Store übergibt
+        self.ca_bundles: list[str | None] = []  # what ingressctl passes to the check as a trust store
 
     def upstream(self, scheme, host, port, path, accepted):
-        return (self.upstream_ok, "ok" if self.upstream_ok else "Upstream nicht erreichbar")
+        return (self.upstream_ok, "ok" if self.upstream_ok else "upstream unreachable")
 
     def https(self, address, port, domain, path, accepted, ca_bundle):
         from ingressctl.checks import TlsResult
         self.ca_bundles.append(ca_bundle)
         fp = self.npm.presented.get(domain)
         if fp is None:
-            return TlsResult(False, None, None, f"{domain}: kein Zertifikat konfiguriert")
+            return TlsResult(False, None, None, f"{domain}: no certificate configured")
         return TlsResult(True, fp, 200)

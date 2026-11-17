@@ -44,7 +44,7 @@ def test_domains_are_normalized(env):
     (spec,) = env.specs("omniroute")
     assert spec.domains == ("omni.lab.example",)
     assert spec.resource_id == "ai-sandbox/omniroute"
-    assert spec.upstream_host == "10.0.0.20"  # aus inventory/servers.yaml, nicht im Manifest dupliziert
+    assert spec.upstream_host == "10.0.0.20"  # from inventory/servers.yaml, not duplicated in the manifest
 
 
 @pytest.mark.parametrize("raw", ["*.lab.example", "bad_name.lab.example", "localhost", "-x.lab.example", "10.0.0.1"])
@@ -54,7 +54,7 @@ def test_invalid_domains_rejected(raw):
 
 
 def test_idn_is_punycoded():
-    assert normalize_domain("bücher.lab.example") == "xn--bcher-kva.lab.example"
+    assert normalize_domain("café.lab.example") == "xn--caf-dma.lab.example"
 
 
 def test_unknown_field_is_error(env):
@@ -76,7 +76,7 @@ def test_unknown_field_is_error(env):
 def test_namespace_must_match_directory(env):
     text = (env.root / "stacks/nas/seerr/ingress.yaml").read_text().replace("nas-compose", "ai-sandbox")
     (env.root / "stacks/nas/seerr/ingress.yaml").write_text(text)
-    with pytest.raises(ManifestError, match="passt nicht zum Verzeichnis"):
+    with pytest.raises(ManifestError, match="does not match the directory"):
         env.specs()
 
 
@@ -91,14 +91,14 @@ def test_same_domain_in_two_manifests_fails_before_mutation(env):
 def test_unregistered_issuer_rejected(env):
     text = (env.root / "stacks/nas/seerr/ingress.yaml").read_text().replace("homelab-private-ca", "random-ca")
     (env.root / "stacks/nas/seerr/ingress.yaml").write_text(text)
-    with pytest.raises(ManifestError, match="nicht in inventory/ingress.yaml freigegeben"):
+    with pytest.raises(ManifestError, match="is not allowed in inventory/ingress.yaml"):
         env.specs()
 
 
 def test_validity_above_ca_policy_rejected(env):
     text = (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace("validity_days: 90", "validity_days: 200")
     (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
-    with pytest.raises(ManifestError, match="CA-Policy"):
+    with pytest.raises(ManifestError, match="CA policy"):
         env.specs()
 
 
@@ -111,10 +111,10 @@ def test_policy_hash_ignores_upstream(env):
 
 
 def test_public_zone_is_rejected_for_private_ca(env):
-    """*.example.org bleibt bei Let's Encrypt in NPM; die private CA ist nur für *.lab.example."""
+    """*.example.org stays with Let's Encrypt in NPM; the private CA is only for *.lab.example."""
     text = (env.root / "stacks/nas/seerr/ingress.yaml").read_text().replace("seerr.lab.example", "seerr.example.org")
     (env.root / "stacks/nas/seerr/ingress.yaml").write_text(text)
-    with pytest.raises(ManifestError, match="außerhalb"):
+    with pytest.raises(ManifestError, match="are outside"):
         env.specs()
 
 
@@ -185,7 +185,7 @@ def test_public_block_accepts_a_preset(env):
 
 
 def test_from_json_accepts_public_without_allow_presets(env):
-    """Zustandszeilen, die vor dieser Scheibe geschrieben wurden, tragen kein allow_presets."""
+    """State rows written before this slice carry no allow_presets."""
     _set_le_issuer(env, dns_provider="cloudflare")
     _le_manifest(env, cert="issuer_ref: letsencrypt, dns_challenge: true",
                  proxy_extra="      public: {paths: [/a], allow_cidrs: [10.0.0.0/8]}\n")
@@ -258,7 +258,7 @@ def test_letsencrypt_empty_allowed_domains_permits_nothing(env):
     assert not issuer.permits("app.pub.example")
     assert not issuer.permits("anything.example")
     _le_manifest(env)
-    with pytest.raises(ManifestError, match="außerhalb"):
+    with pytest.raises(ManifestError, match="are outside"):
         env.specs("omniroute")
 
 
@@ -276,13 +276,13 @@ def test_letsencrypt_domain_outside_allowed_domains_rejected(env):
     _le_manifest(env)
     env.write("stacks/ai/omniroute/ingress.yaml",
               (env.root / "stacks/ai/omniroute/ingress.yaml").read_text().replace("app.pub.example", "app.lab.example"))
-    with pytest.raises(ManifestError, match="außerhalb"):
+    with pytest.raises(ManifestError, match="are outside"):
         env.specs("omniroute")
 
 
 def test_letsencrypt_validity_days_rejected(env):
     _le_manifest(env, cert="issuer_ref: letsencrypt, validity_days: 90")
-    with pytest.raises(ManifestError, match="Laufzeit fest \\(90 Tage\\)"):
+    with pytest.raises(ManifestError, match="fixes the lifetime \\(90 days\\)"):
         env.specs("omniroute")
 
 
@@ -291,7 +291,7 @@ def test_letsencrypt_renew_before_must_stay_below_90(env):
     (spec,) = env.specs("omniroute")
     assert spec.renew_before_days == 89
     _le_manifest(env, cert="issuer_ref: letsencrypt, renew_before_days: 90")
-    with pytest.raises(ManifestError, match="kleiner als"):
+    with pytest.raises(ManifestError, match="must be smaller than"):
         env.specs("omniroute")
 
 
@@ -300,7 +300,7 @@ def test_dns_challenge_rejected_for_private_ca(env):
         "certificate: {issuer_ref: homelab-private-ca}",
         "certificate: {issuer_ref: homelab-private-ca, dns_challenge: true}")
     (env.root / "stacks/nas/seerr/ingress.yaml").write_text(text)
-    with pytest.raises(ManifestError, match="nur bei einem Let's-Encrypt-Issuer"):
+    with pytest.raises(ManifestError, match="only allowed with a Let's Encrypt issuer"):
         env.specs("seerr")
 
 
@@ -348,13 +348,13 @@ def test_public_block_requires_letsencrypt_issuer(env):
         "      force_https: true\n",
         "      force_https: true\n      public: {paths: [/hook], allow_cidrs: [10.0.0.0/8]}\n")
     (env.root / "stacks/ai/omniroute/ingress.yaml").write_text(text)
-    with pytest.raises(ManifestError, match="proxy.public verlangt einen Let's-Encrypt-Issuer"):
+    with pytest.raises(ManifestError, match="proxy.public requires a Let's Encrypt issuer"):
         env.specs("omniroute")
 
 
 def test_unknown_issuer_type_is_config_error(env):
     _set_le_issuer(env, type="acme")
-    with pytest.raises(ConfigError, match="infisical' oder 'letsencrypt"):
+    with pytest.raises(ConfigError, match="infisical' or 'letsencrypt"):
         load_inventory(env.root)
 
 
@@ -379,7 +379,7 @@ def test_from_json_without_dns_challenge_defaults_false(env):
 
 
 def test_policy_hash_of_existing_omniroute_spec_is_unchanged(env):
-    """Hash aus main vor dieser Änderung: bestehende Specs dürfen keine Neuausstellung sehen."""
+    """Hash from main before this change: existing specs must not see a reissue."""
     (spec,) = env.specs("omniroute")
     assert spec.dns_challenge is False
     assert spec.policy_hash() == "1409215e7ea35e14"

@@ -9,7 +9,7 @@ from ingressctl.public import PublicSpec, parse_public, render_public_config
 LONG_OK = "/" + "a" * 199
 LONG_BAD = "/" + "a" * 200
 
-# Netze wie in presets.PRESETS["github-hooks"]; die Auflösung selbst ist nicht Teil dieser Scheibe.
+# Networks as in presets.PRESETS["github-hooks"]; resolution itself is not part of this slice.
 GITHUB_HOOKS = ["192.30.252.0/22", "2606:50c0::/32"]
 
 
@@ -97,7 +97,7 @@ def test_rejects_bad_structure(raw, match):
 
 @pytest.mark.parametrize("value", [None, [], "x"])
 def test_raw_must_be_an_object(value):
-    with pytest.raises(ManifestError, match="Objekt"):
+    with pytest.raises(ManifestError, match="object"):
         parse_public(value)
 
 
@@ -171,10 +171,10 @@ def test_accepts_cidr_presets(raw, cidrs, presets):
 @pytest.mark.parametrize("value,match", [
     ({"preset": "nope"}, "nope"),
     ({"preset": "github-hooks", "x": 1}, "preset"),
-    ({"preset": 1}, "Preset-Name"),
-    ({"preset": None}, "Preset-Name"),
+    ({"preset": 1}, "preset name"),
+    ({"preset": None}, "preset name"),
     ([{"preset": "nope"}], "nope"),
-    ([{"preset": 1}], "Preset-Name"),
+    ([{"preset": 1}], "preset name"),
     ({}, "preset"),
 ])
 def test_rejects_bad_presets(value, match):
@@ -183,7 +183,7 @@ def test_rejects_bad_presets(value, match):
 
 
 def test_unknown_preset_error_names_the_known_presets():
-    with pytest.raises(ManifestError, match="unbekanntes Preset 'nope' \\(bekannt: github-hooks\\)"):
+    with pytest.raises(ManifestError, match="unknown preset 'nope' \\(known: github-hooks\\)"):
         parse_public({"paths": ["/a"], "allow_cidrs": {"preset": "nope"}})
 
 
@@ -254,9 +254,9 @@ def test_resolved_preset_without_networks_denies_everything():
 
 def test_unresolved_preset_raises():
     spec = parse_public({"paths": ["/a"], "allow_cidrs": {"preset": "github-hooks"}})
-    with pytest.raises(ManifestError, match="proxy\\.public\\.allow_cidrs: preset 'github-hooks' ist nicht aufgelöst"):
+    with pytest.raises(ManifestError, match="proxy\\.public\\.allow_cidrs: preset 'github-hooks' is not resolved"):
         render_public_config(spec)
-    with pytest.raises(ManifestError, match="preset 'github-hooks' ist nicht aufgelöst"):
+    with pytest.raises(ManifestError, match="preset 'github-hooks' is not resolved"):
         render_public_config(spec, {"other": ["10.0.0.0/8"]})
 
 
@@ -356,7 +356,7 @@ def _assert_no_injection(spec: PublicSpec, preset_cidrs=None) -> None:
 
 
 def _assert_no_nested_if(text: str) -> None:
-    """nginx erlaubt kein `if` in einem `if`; jede Direktive steht in einer Zeile."""
+    """nginx does not allow an `if` inside an `if`; every directive stays on one line."""
     for line in text.splitlines():
         assert line.count("if (") <= 1, line
         assert line.count("{") == line.count("}") <= 1, line

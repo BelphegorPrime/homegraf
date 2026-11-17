@@ -1,11 +1,11 @@
-"""Let's-Encrypt-Vertrag von NpmClient gegen FakeNpm (NPM 2.16.0)."""
+"""Let's Encrypt contract of NpmClient against FakeNpm (NPM 2.16.0)."""
 import pytest
 
 from fakes import LE_META_KEYS, FakeNpm, session_for
 from ingressctl.errors import AdapterError
 from ingressctl.npm import NpmClient
 
-# meta-Schlüssel aus backend/schema/components/certificate-object.json; der Fake muss sie akzeptieren.
+# meta keys from backend/schema/components/certificate-object.json; the fake must accept them.
 NPM_SCHEMA_META_KEYS = {
     "certificate": "PEM",
     "certificate_key": "PEM",
@@ -35,15 +35,15 @@ def test_create_le_http01_overwrites_nice_name_and_hides_key_material():
 
     assert out["provider"] == "letsencrypt"
     assert out["domain_names"] == ["a.example.org", "b.example.org"]
-    assert out["nice_name"] == "a.example.org, b.example.org"  # NPM überschreibt nice_name
+    assert out["nice_name"] == "a.example.org, b.example.org"  # NPM overwrites nice_name
     assert out["expires_on"]
     assert out["le_issuer"] == "Fake LE R3"
     assert "PRIVATE KEY" not in repr(out)
     assert "certificate_key" not in out
     assert fake.le_requests[-1]["meta"] == {"dns_challenge": False, "key_type": "ecdsa"}
     assert fake.le_issued == [["a.example.org", "b.example.org"]]
-    assert out["id"] in fake.cert_files  # nach dem Reload kann nginx das Zertifikat präsentieren
-    # Die Zeile speichert nur expires_on; das certbot-Ergebnis hängt NPM an die Create-Antwort.
+    assert out["id"] in fake.cert_files  # after the reload nginx can present the certificate
+    # The row stores only expires_on; NPM attaches the certbot result to the create response.
     assert fake.certs[out["id"]]["meta"] == {"dns_challenge": False}
     assert "letsencrypt_certificate" not in fake.certs[out["id"]]["meta"]
     assert "certificate" not in fake.certs[out["id"]]["meta"]
@@ -125,7 +125,7 @@ def test_renew_le_reissues_and_reloads():
     assert fake.cert_files[out["id"]] != first
     assert renewed["expires_on"] and fake.certs[out["id"]]["expires_on"] == renewed["expires_on"]
     assert renewed["expires_on"] >= first_expiry
-    assert renewed["le_issuer"] is None  # Renew liefert nur expires_on, kein certbot-Ergebnis
+    assert renewed["le_issuer"] is None  # renew returns only expires_on, no certbot result
     assert "letsencrypt_certificate" not in fake.certs[out["id"]]["meta"]
 
 

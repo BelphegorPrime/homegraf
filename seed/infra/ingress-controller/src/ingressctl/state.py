@@ -1,4 +1,4 @@
-"""Persistenter Betriebsstatus (SQLite). Keine Secrets; private Schlüssel liegen nur im Pending-Speicher."""
+"""Persistent operational state (SQLite). No secrets; private keys live only in the pending store."""
 from __future__ import annotations
 
 import datetime as dt
@@ -73,7 +73,7 @@ class State:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
-        # Bestehende Datenbanken aus der Zeit vor proxy.public nachziehen.
+        # Migrate existing databases created before proxy.public.
         if "public_config" not in {r["name"] for r in self.db.execute("PRAGMA table_info(services)")}:
             self.db.execute("ALTER TABLE services ADD COLUMN public_config TEXT")
 
@@ -108,7 +108,7 @@ class State:
         self.db.execute("DELETE FROM operations WHERE resource_id=?", (resource_id,))
         self.db.execute("DELETE FROM services WHERE resource_id=?", (resource_id,))
 
-    # --- operations (Wiederaufnahme unterbrochener Läufe) -----------------------------------------
+    # --- operations (resuming interrupted runs) --------------------------------------------------
     def open_op(self, resource_id: str, kind: str) -> dict | None:
         row = self.db.execute("SELECT * FROM operations WHERE resource_id=? AND kind=? AND status='open' "
                               "ORDER BY started_at DESC LIMIT 1", (resource_id, kind)).fetchone()
@@ -137,7 +137,7 @@ class State:
                         (status, utcnow().isoformat(), op["op_id"]))
         self.drop_pending_key(op["op_id"])
 
-    # --- Pending-Schlüssel ------------------------------------------------------------------------
+    # --- pending keys -----------------------------------------------------------------------------
     def _key_path(self, op_id: str) -> pathlib.Path:
         return self.dir / "pending" / f"{op_id}.key"
 
@@ -156,7 +156,7 @@ class State:
     def drop_pending_key(self, op_id: str) -> None:
         self._key_path(op_id).unlink(missing_ok=True)
 
-    # --- Presets (zuletzt bekannter guter Stand) ---------------------------------------------------
+    # --- presets (last known good copy) -----------------------------------------------------------
     def get_preset(self, name: str) -> dict | None:
         row = self.db.execute("SELECT name, cidrs, source, fetched_at FROM presets WHERE name=?", (name,)).fetchone()
         if not row:
@@ -169,7 +169,7 @@ class State:
                         "fetched_at=excluded.fetched_at",
                         (name, json.dumps(list(cidrs)), source, utcnow().isoformat()))
 
-    # --- Snapshots vor Übernahme ------------------------------------------------------------------
+    # --- snapshots before adoption ----------------------------------------------------------------
     def snapshot(self, resource_id: str, reason: str, npm_host: dict) -> None:
         self.db.execute("INSERT INTO snapshots VALUES (?,?,?,?)",
                         (resource_id, utcnow().isoformat(), reason, json.dumps(npm_host, sort_keys=True)))

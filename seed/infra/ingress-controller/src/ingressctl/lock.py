@@ -1,4 +1,4 @@
-"""Single-Writer-Sperre pro NPM-Instanz (flock auf dem gemeinsamen Statusvolume)."""
+"""Single-writer lock per NPM instance (flock on the shared state volume)."""
 from __future__ import annotations
 
 import contextlib
@@ -23,7 +23,7 @@ def npm_lock(state_dir: pathlib.Path, instance: str, timeout: float = 600.0):
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise IngressError(f"Sperre für NPM-Instanz '{instance}' nicht innerhalb {timeout:.0f}s erhalten")
+                    raise IngressError(f"lock for NPM instance '{instance}' not acquired within {timeout:.0f}s")
                 time.sleep(0.5)
         os.ftruncate(fd, 0)
         os.write(fd, f"{os.getpid()}\n".encode())

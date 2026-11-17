@@ -1,4 +1,4 @@
-"""Laden, Schema-Prüfung, Normalisierung und globale Konfliktprüfung der ingress.yaml-Manifeste."""
+"""Loading, schema validation, normalization and global conflict checks for ingress.yaml manifests."""
 from __future__ import annotations
 
 import hashlib
@@ -16,23 +16,23 @@ from .inventory import Inventory
 from .public import PublicSpec, parse_public
 
 MANIFEST_NAME = "ingress.yaml"
-EXTERNAL_DIR = "external"      # external/ingress.yaml: Dienste außerhalb des Repos
+EXTERNAL_DIR = "external"      # external/ingress.yaml: services outside the repository
 EXTERNAL_STACK = "external"
 _LABEL = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
 
 
 @dataclass(frozen=True)
 class ServiceSpec:
-    resource_id: str          # <namespace>/<service-id>, stabile Besitzkennung
+    resource_id: str          # <namespace>/<service-id>, stable ownership identifier
     namespace: str
     service_id: str
     stack_id: str
     manifest_path: str
     lifecycle: str
     npm_instance: str
-    domains: tuple[str, ...]  # normalisiert, sortiert
+    domains: tuple[str, ...]  # normalized, sorted
     upstream_scheme: str
-    upstream_host: str | None  # aufgelöst; None = Server ohne bestätigte Adresse
+    upstream_host: str | None  # resolved; None = server without a confirmed address
     upstream_server: str | None
     upstream_port: int
     websockets: bool
@@ -46,7 +46,7 @@ class ServiceSpec:
     dns_challenge: bool = False
 
     def policy_hash(self) -> str:
-        """Ändert sich nur bei Werten, die eine Neuausstellung erfordern (nicht beim Upstream)."""
+        """Changes only for values that require a reissue (not for the upstream)."""
         data = {"domains": list(self.domains), "issuer": self.issuer_ref, "validity_days": self.validity_days}
         if self.dns_challenge:
             data["dns_challenge"] = True
@@ -73,16 +73,16 @@ class ServiceSpec:
 def normalize_domain(raw: str) -> str:
     d = raw.strip().rstrip(".").lower()
     if "*" in d:
-        raise ManifestError(f"Wildcard-Domain '{raw}' wird im ersten Umfang nicht unterstützt")
+        raise ManifestError(f"wildcard domain '{raw}' is not supported in the initial scope")
     try:
         d = d.encode("idna").decode("ascii")
     except UnicodeError as e:
-        raise ManifestError(f"ungültiger Hostname '{raw}': {e}") from None
+        raise ManifestError(f"invalid hostname '{raw}': {e}") from None
     labels = d.split(".")
     if len(d) > 253 or len(labels) < 2 or not all(_LABEL.match(lbl) for lbl in labels):
-        raise ManifestError(f"ungültiger Hostname '{raw}'")
+        raise ManifestError(f"invalid hostname '{raw}'")
     if labels[-1].isdigit():
-        raise ManifestError(f"'{raw}' ist keine Domain (IP-Adressen sind nicht zulässig)")
+        raise ManifestError(f"'{raw}' is not a domain (IP addresses are not allowed)")
     return d
 
 
@@ -105,36 +105,36 @@ def parse_manifest(root: pathlib.Path, path: pathlib.Path, inv: Inventory) -> li
     try:
         doc = yaml.safe_load(path.read_text())
     except yaml.YAMLError as e:
-        raise ManifestError(f"{rel}: kein gültiges YAML: {str(e).splitlines()[0]}") from None
+        raise ManifestError(f"{rel}: invalid YAML: {str(e).splitlines()[0]}") from None
     errors = sorted(jsonschema.Draft202012Validator(_schema()).iter_errors(doc), key=lambda e: list(e.absolute_path))
     if errors:
         msgs = [f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message}" for e in errors[:10]]
-        raise ManifestError(f"{rel}: Schemafehler: " + "; ".join(msgs))
+        raise ManifestError(f"{rel}: schema error: " + "; ".join(msgs))
 
     rel_dir = path.parent.relative_to(root).as_posix()
     ns = doc["namespace"]
     expected_ns = inv.namespace_for_path(rel_dir)
     if ns != expected_ns:
-        raise ManifestError(f"{rel}: namespace '{ns}' passt nicht zum Verzeichnis (erwartet '{expected_ns}')")
+        raise ManifestError(f"{rel}: namespace '{ns}' does not match the directory (expected '{expected_ns}')")
 
     specs, ids = [], set()
     for svc in doc["services"]:
         rid = f"{ns}/{svc['id']}"
         if svc["id"] in ids:
-            raise ManifestError(f"{rel}: Service-ID '{svc['id']}' doppelt")
+            raise ManifestError(f"{rel}: service ID '{svc['id']}' is duplicated")
         ids.add(svc["id"])
         if rel_dir == EXTERNAL_DIR:
-            # Dienste ohne Stack im Repo (VMs, Appliances, NAS apps): nur Ingress, kein Deployment
+            # services without a stack in the repo (VMs, appliances, NAS apps): ingress only, no deployment
             if svc["stack"] != EXTERNAL_STACK:
-                raise ManifestError(f"{rel}: {rid}: in {EXTERNAL_DIR}/ muss stack '{EXTERNAL_STACK}' sein")
+                raise ManifestError(f"{rel}: {rid}: in {EXTERNAL_DIR}/ stack '{EXTERNAL_STACK}' is required")
         else:
             stack = inv.stacks.get(svc["stack"])
             if stack is None:
-                raise ManifestError(f"{rel}: {rid}: Stack '{svc['stack']}' fehlt im Inventar")
+                raise ManifestError(f"{rel}: {rid}: stack '{svc['stack']}' is missing from the inventory")
             if stack["path"].rstrip("/") != rel_dir:
-                raise ManifestError(f"{rel}: {rid}: Stack '{svc['stack']}' gehört zu '{stack['path']}', nicht zu '{rel_dir}'")
+                raise ManifestError(f"{rel}: {rid}: stack '{svc['stack']}' belongs to '{stack['path']}', not '{rel_dir}'")
             if stack["namespace"] != ns:
-                raise ManifestError(f"{rel}: {rid}: Stack-Namespace '{stack['namespace']}' != '{ns}'")
+                raise ManifestError(f"{rel}: {rid}: stack namespace '{stack['namespace']}' != '{ns}'")
 
         proxy, up, cert, hc = svc["proxy"], svc["proxy"]["upstream"], svc["certificate"], svc["healthcheck"]
         try:
@@ -143,47 +143,47 @@ def parse_manifest(root: pathlib.Path, path: pathlib.Path, inv: Inventory) -> li
             raise ManifestError(f"{rel}: {rid}: {e}") from None
         domains = [normalize_domain(d) for d in proxy["domains"]]
         if len(set(domains)) != len(domains):
-            raise ManifestError(f"{rel}: {rid}: doppelte Domains nach Normalisierung")
+            raise ManifestError(f"{rel}: {rid}: duplicate domains after normalization")
 
         npm_instance = svc.get("npm_instance") or inv.controller.get("default_npm_instance", "main")
         if npm_instance not in inv.npm_instances:
-            raise ManifestError(f"{rel}: {rid}: unbekannte NPM-Instanz '{npm_instance}'")
+            raise ManifestError(f"{rel}: {rid}: unknown NPM instance '{npm_instance}'")
         issuer = inv.issuers.get(cert["issuer_ref"])
         if issuer is None:
-            raise ManifestError(f"{rel}: {rid}: issuer_ref '{cert['issuer_ref']}' ist nicht in inventory/ingress.yaml freigegeben")
+            raise ManifestError(f"{rel}: {rid}: issuer_ref '{cert['issuer_ref']}' is not allowed in inventory/ingress.yaml")
         is_le = issuer.type == "letsencrypt"
         if public is not None and not is_le:
-            raise ManifestError(f"{rel}: {rid}: proxy.public verlangt einen Let's-Encrypt-Issuer "
-                                f"(Issuer '{issuer.name}')")
+            raise ManifestError(f"{rel}: {rid}: proxy.public requires a Let's Encrypt issuer "
+                                f"(issuer '{issuer.name}')")
         if "dns_challenge" in cert and not is_le:
-            raise ManifestError(f"{rel}: {rid}: certificate.dns_challenge ist nur bei einem "
-                                f"Let's-Encrypt-Issuer zulässig (Issuer '{issuer.name}')")
+            raise ManifestError(f"{rel}: {rid}: certificate.dns_challenge is only allowed with a "
+                                f"Let's Encrypt issuer (issuer '{issuer.name}')")
         outside = [d for d in domains if not issuer.permits(d)]
         if outside:
-            raise ManifestError(f"{rel}: {rid}: {outside} liegen außerhalb von {list(issuer.allowed_domains)} "
-                                f"(Issuer '{issuer.name}')")
+            raise ManifestError(f"{rel}: {rid}: {outside} are outside {list(issuer.allowed_domains)} "
+                                f"(issuer '{issuer.name}')")
         if is_le:
             if "validity_days" in cert:
-                raise ManifestError(f"{rel}: {rid}: validity_days ist bei Let's Encrypt nicht zulässig; "
-                                    "Let's Encrypt legt die Laufzeit fest (90 Tage)")
+                raise ManifestError(f"{rel}: {rid}: validity_days is not allowed with Let's Encrypt; "
+                                    "Let's Encrypt fixes the lifetime (90 days)")
             validity = issuer.max_validity_days
         else:
             validity = cert.get("validity_days", 90)
         renew_before = cert.get("renew_before_days", 30)
         if validity > issuer.max_validity_days:
-            raise ManifestError(f"{rel}: {rid}: validity_days {validity} > CA-Policy {issuer.max_validity_days}")
+            raise ManifestError(f"{rel}: {rid}: validity_days {validity} > CA policy {issuer.max_validity_days}")
         if renew_before >= validity:
-            raise ManifestError(f"{rel}: {rid}: renew_before_days muss kleiner als validity_days sein")
+            raise ManifestError(f"{rel}: {rid}: renew_before_days must be smaller than validity_days")
         dns_challenge = bool(cert.get("dns_challenge", issuer.dns_challenge)) if is_le else False
         if dns_challenge and not issuer.dns_provider:
-            raise ManifestError(f"{rel}: {rid}: dns_challenge erfordert dns_provider beim Issuer '{issuer.name}'")
+            raise ManifestError(f"{rel}: {rid}: dns_challenge requires dns_provider on issuer '{issuer.name}'")
         if is_le and public is not None and public.allow_cidrs and not dns_challenge:
-            raise ManifestError(f"{rel}: {rid}: proxy.public.allow_cidrs verträgt sich nicht mit HTTP-01 von "
-                                "Let's Encrypt (die Validierung würde mit 403 abgewiesen); dns_challenge: true setzen")
+            raise ManifestError(f"{rel}: {rid}: proxy.public.allow_cidrs is incompatible with HTTP-01 from "
+                                "Let's Encrypt (the validation would be rejected with 403); set dns_challenge: true")
 
         server = up.get("server")
         if server is not None and server not in inv.servers:
-            raise ManifestError(f"{rel}: {rid}: Upstream-Server '{server}' fehlt in inventory/servers.yaml")
+            raise ManifestError(f"{rel}: {rid}: upstream server '{server}' is missing from inventory/servers.yaml")
         host = up.get("host") or (inv.server_address(server) if server else None)
 
         specs.append(ServiceSpec(
@@ -199,7 +199,7 @@ def parse_manifest(root: pathlib.Path, path: pathlib.Path, inv: Inventory) -> li
 
 
 def load_all(root: pathlib.Path, inv: Inventory) -> list[ServiceSpec]:
-    """Alle Manifeste im Repo laden und global prüfen (Domains eindeutig pro NPM-Instanz)."""
+    """Load all manifests in the repo and validate them globally (domains unique per NPM instance)."""
     specs, errors = [], []
     for path in find_manifests(root, inv):
         try:
@@ -210,14 +210,14 @@ def load_all(root: pathlib.Path, inv: Inventory) -> list[ServiceSpec]:
     seen_ids: dict[str, str] = {}
     for s in specs:
         if s.resource_id in seen_ids:
-            errors.append(f"{s.resource_id}: doppelt definiert in {seen_ids[s.resource_id]} und {s.manifest_path}")
+            errors.append(f"{s.resource_id}: defined twice in {seen_ids[s.resource_id]} and {s.manifest_path}")
         seen_ids[s.resource_id] = s.manifest_path
         if s.lifecycle != "present":
             continue
         for d in s.domains:
             key = (s.npm_instance, d)
             if key in owners and owners[key] != s.resource_id:
-                errors.append(f"Domain '{d}' wird von {owners[key]} und {s.resource_id} beansprucht")
+                errors.append(f"domain '{d}' is claimed by {owners[key]} and {s.resource_id}")
             owners.setdefault(key, s.resource_id)
     if errors:
         raise ManifestError("\n".join(errors))

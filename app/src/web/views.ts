@@ -1,7 +1,7 @@
 import type { EdgeType, Exposure, Graph, GraphEdge, GraphNode, NodeType } from "../shared/types";
 
 export type ViewId =
-  "catalog" | "hosting" | "network" | "request" | "dependencies" | "platform" | "status" | "certificates" | "new" | "remove" | "stacks" | "users";
+  "catalog" | "hosting" | "network" | "request" | "dependencies" | "platform" | "status" | "certificates" | "new" | "remove" | "stacks" | "repos" | "users";
 
 export interface ViewDef {
   id: ViewId;
@@ -31,6 +31,7 @@ export const VIEWS: ViewDef[] = [
   { id: "new", label: "New app", hint: "Plan a new app: compose, Komodo stack, domain and secrets", kind: "form", icon: "PlusCircle", group: "Manage" },
   { id: "remove", label: "Remove app", hint: "Destroy an app's stack, remove its files, routing and secrets", kind: "form", icon: "Trash2", group: "Manage" },
   { id: "stacks", label: "Stacks", hint: "Redeploy a stack and manage its secrets", kind: "form", icon: "Boxes", group: "Manage" },
+  { id: "repos", label: "Repositories", hint: "Repositories and how far each is wired for the factory", kind: "form", icon: "GitBranch", group: "Manage" },
   { id: "users", label: "Users", hint: "Who may create apps and manage users", kind: "form", icon: "Users", group: "Manage" },
 ];
 

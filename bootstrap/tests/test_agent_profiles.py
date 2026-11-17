@@ -6,8 +6,8 @@ import unittest
 import urllib.parse
 import uuid
 
-from hgboot.agent_profiles import (CONDENSER_MAX_SIZE, LLM_CHEAP, LLM_FREE, LLM_STRONG, ROLE_WORKER_FREE, ROLES,
-                                   TRIMMED_SKILLS, AgentProfiles, STATE_SECTION)
+from hgboot.agent_profiles import (CONDENSER_MAX_SIZE, LLM_CHEAP, LLM_FREE, LLM_STRONG, PUBLIC_SKILLS,
+                                   ROLE_WORKER_FREE, ROLES, AgentProfiles, STATE_SECTION)
 from hgboot.factory_config import FactoryConfig
 from hgboot.state import State
 from hgboot.steps import StepError
@@ -326,44 +326,48 @@ class AgentProfilesTest(unittest.TestCase):
             self.assertEqual(req.headers.get("x-session-api-key"), BACKEND_KEY)
 
     def test_each_role_gets_exactly_its_skill_lists(self):
-        trimmed = ["agent-canvas-environment", "code-review"]
-        review = [*trimmed, "security"]
+        public = ["agent-canvas-environment", "code-review", "security"]
         worker_skills = ["systematic-debugging", "test-driven-development"]
         expected = {
-            "planner": (trimmed, worker_skills),
-            "worker": (trimmed, []),
-            "worker-strong": (trimmed, []),
-            "worker-free": (trimmed, []),
-            "reviewer": (review, worker_skills),
-            "sensitive-reviewer": (review, worker_skills),
+            "planner": (public, worker_skills),
+            "worker": (public, []),
+            "worker-strong": (public, []),
+            "worker-free": (public, []),
+            "reviewer": (public, worker_skills),
+            "sensitive-reviewer": (public, worker_skills),
         }
 
         self.run_profiles(cfg=factory(self.srv.url, free_model=FREE_MODEL))
 
-        for role, (public, disabled) in expected.items():
+        for role, (expected_public, expected_disabled) in expected.items():
             with self.subTest(role=role):
-                self.assertEqual(self.fake.agents[role]["public_skills"], public)
-                self.assertEqual(self.fake.agents[role]["disabled_skills"], disabled)
+                self.assertEqual(self.fake.agents[role]["public_skills"], expected_public)
+                self.assertEqual(self.fake.agents[role]["disabled_skills"], expected_disabled)
                 body = self.fake.written(f"/api/agent-profiles/{role}")[0][2]
-                self.assertEqual(body["public_skills"], public)
-                self.assertEqual(body["disabled_skills"], disabled)
+                self.assertEqual(body["public_skills"], expected_public)
+                self.assertEqual(body["disabled_skills"], expected_disabled)
 
     def test_old_skill_lists_are_rewritten_once_and_the_id_is_kept(self):
         ids = self.run_profiles()
         self.fake.agents["reviewer"].update({"public_skills": list(FULL_SKILLS), "disabled_skills": []})
+        self.fake.agents["planner"]["public_skills"] = ["agent-canvas-environment", "code-review"]
         self.fake.agents["worker"]["disabled_skills"] = ["systematic-debugging", "test-driven-development"]
         self.fake.writes.clear()
 
         self.assertEqual(self.run_profiles(), ids)
 
         self.assertEqual({path for _, path, _ in self.fake.writes},
-                         {"/api/agent-profiles/reviewer", "/api/agent-profiles/worker"})
+                         {"/api/agent-profiles/reviewer", "/api/agent-profiles/planner",
+                          "/api/agent-profiles/worker"})
         self.assertEqual(self.fake.agents["reviewer"]["public_skills"],
                          ["agent-canvas-environment", "code-review", "security"])
         self.assertEqual(self.fake.agents["reviewer"]["disabled_skills"],
                          ["systematic-debugging", "test-driven-development"])
+        self.assertEqual(self.fake.agents["planner"]["public_skills"],
+                         ["agent-canvas-environment", "code-review", "security"])
         self.assertEqual(self.fake.agents["worker"]["disabled_skills"], [])
         self.assertEqual(self.fake.agents["reviewer"]["id"], ids["reviewer"])
+        self.assertEqual(self.fake.agents["planner"]["id"], ids["planner"])
         self.assertEqual(self.fake.agents["worker"]["id"], ids["worker"])
 
         self.fake.writes.clear()
@@ -484,7 +488,7 @@ class AgentProfilesTest(unittest.TestCase):
         self.assertEqual(written, {f"/api/profiles/{LLM_STRONG}", "/api/agent-profiles/worker",
                                    "/api/agent-profiles/reviewer"})
         self.assertEqual(self.fake.agents["worker"]["mcp_server_refs"], [])
-        self.assertEqual(self.fake.agents["worker"]["public_skills"], list(TRIMMED_SKILLS))
+        self.assertEqual(self.fake.agents["worker"]["public_skills"], list(PUBLIC_SKILLS))
         self.assertEqual(self.fake.agents["worker"]["llm_profile_ref"], LLM_CHEAP)
         self.assertEqual(self.fake.agents["reviewer"]["system_message_suffix"],
                          (PROMPTS / "reviewer.md").read_text(encoding="utf-8"))

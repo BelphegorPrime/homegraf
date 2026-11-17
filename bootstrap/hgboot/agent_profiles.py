@@ -39,10 +39,9 @@ DEFAULT_PROFILE = "default"
 LLM_STRONG = "smart"
 LLM_CHEAP = "cheap"
 LLM_FREE = "free"
-# #25 trims the worker to these two skills; the same pair is the ceiling for every role, so no role
-# inherits the full default catalog (about 35 skills and 58k prompt tokens on a trivial task).
-TRIMMED_SKILLS = ("agent-canvas-environment", "code-review")
-REVIEW_SKILLS = (*TRIMMED_SKILLS, "security")
+# Every role allows the same three public skills, so no role inherits the full default catalog (about
+# 35 skills and 58k prompt tokens on a trivial task). The user skills are hidden per role instead.
+PUBLIC_SKILLS = ("agent-canvas-environment", "code-review", "security")
 # The two user skills of the reference installation: workers run them, every other role hides them.
 WORKER_SKILLS = ("systematic-debugging", "test-driven-development")
 # Condense after 100 events, as the live installation does, to keep the context of every step smaller.
@@ -60,13 +59,13 @@ class Role:
 
 
 ROLES = (
-    Role("planner", LLM_STRONG, "planner.md", TRIMMED_SKILLS, WORKER_SKILLS),
-    Role("worker", LLM_CHEAP, "worker.md", TRIMMED_SKILLS, ()),
-    Role("worker-strong", LLM_STRONG, "worker-strong.md", TRIMMED_SKILLS, ()),
-    Role("reviewer", LLM_STRONG, "reviewer.md", REVIEW_SKILLS, WORKER_SKILLS),
-    Role("sensitive-reviewer", LLM_STRONG, "sensitive-reviewer.md", REVIEW_SKILLS, WORKER_SKILLS),
+    Role("planner", LLM_STRONG, "planner.md", PUBLIC_SKILLS, WORKER_SKILLS),
+    Role("worker", LLM_CHEAP, "worker.md", PUBLIC_SKILLS, ()),
+    Role("worker-strong", LLM_STRONG, "worker-strong.md", PUBLIC_SKILLS, ()),
+    Role("reviewer", LLM_STRONG, "reviewer.md", PUBLIC_SKILLS, WORKER_SKILLS),
+    Role("sensitive-reviewer", LLM_STRONG, "sensitive-reviewer.md", PUBLIC_SKILLS, WORKER_SKILLS),
 )
-ROLE_WORKER_FREE = Role("worker-free", LLM_FREE, "worker.md", TRIMMED_SKILLS, ())
+ROLE_WORKER_FREE = Role("worker-free", LLM_FREE, "worker.md", PUBLIC_SKILLS, ())
 
 
 def roles_for(cfg) -> tuple[Role, ...]:

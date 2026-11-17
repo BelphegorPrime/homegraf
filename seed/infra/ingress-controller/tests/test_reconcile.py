@@ -348,19 +348,19 @@ def test_remove_deletes_host_and_cert_after_manifest_is_gone(env, monkeypatch):
     apply(env)
     rid = "ai-sandbox/omniroute"
     args = type("A", (), {"root": str(env.root), "resource": rid})()
-    with pytest.raises(IngressError, match="noch in einem Manifest"):
+    with pytest.raises(IngressError, match="still declared in a manifest"):
         cli.cmd_remove(args)
     (env.root / "stacks/ai/omniroute/ingress.yaml").unlink()
     env.commit()
     row = ctx.state.get(rid)
     env.npm.hosts[row["npm_host_id"]]["domain_names"].append("fremd.lab.example")  # Host wurde manuell erweitert
-    with pytest.raises(IngressError, match="nichts gelöscht"):
+    with pytest.raises(IngressError, match="nothing deleted"):
         cli.cmd_remove(args)
     env.npm.hosts[row["npm_host_id"]]["domain_names"].remove("fremd.lab.example")
     assert cli.cmd_remove(args) == 0
     assert row["npm_host_id"] not in env.npm.hosts and row["npm_cert_id"] not in env.npm.certs
     assert ctx.state.get(rid) is None
-    with pytest.raises(IngressError, match="nicht im State"):
+    with pytest.raises(IngressError, match="is not in the state"):
         cli.cmd_remove(args)
 
 
@@ -373,11 +373,11 @@ def test_forget_requires_gone_host_and_no_manifest(env, monkeypatch):
     monkeypatch.setenv("NPM_SECRET", "x")
     apply(env)
     rid = "ai-sandbox/omniroute"
-    with pytest.raises(IngressError, match="noch in einem Manifest"):
+    with pytest.raises(IngressError, match="still declared in a manifest"):
         cli.cmd_forget(type("A", (), {"root": str(env.root), "resource": rid})())
     (env.root / "stacks/ai/omniroute/ingress.yaml").unlink()
     env.commit()
-    with pytest.raises(IngressError, match="existiert noch"):
+    with pytest.raises(IngressError, match="still exists"):
         cli.cmd_forget(type("A", (), {"root": str(env.root), "resource": rid})())
     row = ctx.state.get(rid)
     del env.npm.hosts[row["npm_host_id"]]

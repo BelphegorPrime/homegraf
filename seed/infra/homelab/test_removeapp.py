@@ -231,6 +231,27 @@ def test_routing_does_not_retry_other_errors(monkeypatch):
     assert len([c for c in calls if "--resource" in c]) == 1
 
 
+def test_routing_treats_the_english_missing_state_as_already_absent(monkeypatch):
+    import run_ingressctl
+    state = json.dumps([{"resource_id": "infrastructure/demo", "stack_id": "demo"}])
+    warns = []
+    def run(argv, echo=True):
+        return (0, state) if "status" in argv else (1, "ERROR\ninfrastructure/demo is not in the state")
+    monkeypatch.setattr(run_ingressctl, "run", run)
+    monkeypatch.setattr(removeapp.ui, "warn", lambda msg: warns.append(msg))
+    assert removeapp.remove_routing("demo") is True
+    assert warns == []
+
+
+def test_routing_reports_another_english_error(monkeypatch):
+    import run_ingressctl
+    state = json.dumps([{"resource_id": "infrastructure/demo", "stack_id": "demo"}])
+    def run(argv, echo=True):
+        return (0, state) if "status" in argv else (1, "ERROR\nsomething else")
+    monkeypatch.setattr(run_ingressctl, "run", run)
+    assert removeapp.remove_routing("demo") is False
+
+
 def test_routing_is_skipped_when_the_installation_has_no_ingressctl_stack(monkeypatch):
     import run_ingressctl
     def run(argv, echo=True):

@@ -142,6 +142,15 @@ class KomodoTests(unittest.TestCase):
         with self.assertRaisesRegex(StepError, "cloning the repository failed at Clone Repo: fatal: could not read Username"):
             self.komodo().run("t")
 
+    def test_run_ingress_decides_by_the_output_not_by_komodo_success(self):
+        komodo = self.komodo()
+        komodo.run("forgejo-token")
+        for output, expected in (('{"result": "ok"}', True), ("ERROR\nnot in the state", False),
+                                 ('{"result": "error"}', False), ("BLOCKER something", False)):
+            with self.subTest(output=output):
+                self.fake.ingressctl = lambda command, output=output: (True, output)
+                self.assertEqual(komodo.run_ingress(["status"]), (expected, output))
+
     def test_the_wrong_password_and_an_agent_that_is_not_ok_are_explained(self):
         self.cfg.admin_password = "not-the-one-at-all"
         with self.assertRaisesRegex(StepError, "very first start only"):

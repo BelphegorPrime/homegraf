@@ -38,7 +38,7 @@ ROUTE_IDS = {
     "sensitive-reviewer": "55555555-5555-5555-5555-555555555555",
     "worker-free": "66666666-6666-6666-6666-666666666666",
 }
-AGENT_EVENTS = {"issues", "pull_request_label", "action_run_failure", "action_run_success", "push"}
+AGENT_EVENTS = {"issues", "pull_request_label", "action_run_failure", "action_run_success", "push", "pull_request"}
 
 
 def page(rows, query, size=50):

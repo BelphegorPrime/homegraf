@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -8,8 +9,18 @@ import type { AddonInfo, HostInfo, PlanResult, PreviewResult, RemovableApp, Mana
 
 const ID = /^[a-z0-9][a-z0-9-]{1,40}$/;
 const VAR = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** The same methods ingressctl allows for a public path. */
+const PUBLIC_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;
+const PUBLIC_PATH = /^\/[A-Za-z0-9._~\-/]*\*?$/;
+/** An IPv4 or IPv6 address with a prefix inside its family's range. */
+function isNetwork(value: string): boolean {
+  const [address, prefix, ...rest] = value.split("/");
+  if (rest.length || !prefix || !/^(0|[1-9]\d{0,2})$/.test(prefix)) return false;
+  const family = isIP(address ?? "");
+  return family !== 0 && Number(prefix) <= (family === 6 ? 128 : 32);
+}
 
-export const planInput = z.object({
+const planInputFields = z.object({
   /** Typed in any case ("EngineX"): it is used in lowercase everywhere. */
   appId: z.string().toLowerCase().regex(ID, "letters, digits and dashes, 2-41 characters"),
   server: z.string().regex(/^[A-Za-z0-9._-]+$/),
@@ -97,7 +108,30 @@ export const planInput = z.object({
   webPort: z.number().int().min(1).max(65535).optional(),
   /** Values the user typed for secrets of the compose file; every other `${VAR}` is generated. Creating only. */
   secretValues: z.record(z.string().regex(VAR), z.string().min(1).max(4096)).default({}),
+  /** Paths of this host the internet may reach; everything else stays private. */
+  public: z
+    .strictObject({
+      paths: z
+        .array(z.string().regex(PUBLIC_PATH, "a path starting with '/', e.g. /hook/abc or /files/*"))
+        .min(1)
+        .max(20)
+        .refine((paths) => !paths.includes("/") && !paths.includes("/*"), { message: "'/' would expose the whole host; list the paths to expose" }),
+      methods: z.array(z.enum(PUBLIC_METHODS)).max(7).optional(),
+      cidrs: z.array(z.string().refine(isNetwork, "an IPv4 or IPv6 network, e.g. 203.0.113.0/24")).max(20).optional(),
+      presets: z
+        .array(z.enum(["github-hooks"]))
+        .max(20)
+        .optional(),
+    })
+    .optional(),
+  /** The whole host without a path restriction: needs the confirmation and hosts:expose. */
+  publicFullHost: z.literal(true).optional(),
+  confirmPublicFullHost: z.boolean().optional(),
 });
+/** Exposure needs routing; listed paths and the whole host exclude each other. */
+export const planInput = planInputFields
+  .refine((i) => i.routing || (!i.public && !i.publicFullHost), { message: "public exposure needs routing", path: ["public"] })
+  .refine((i) => !(i.public && i.publicFullHost), { message: "public paths and publicFullHost cannot be combined", path: ["publicFullHost"] });
 export type PlanInput = z.infer<typeof planInput>;
 
 /** Name of the environment variable that carries the typed value of a secret to the tool (never a command line). */
@@ -138,6 +172,11 @@ export function newAppArgs(i: PlanInput, composeFile?: string, filesDir?: string
     a.push(i.websockets ? "--websockets" : "--no-websockets", i.forceHttps ? "--force-https" : "--no-force-https");
     opt("--health-path", i.healthPath);
     opt("--statuses", i.statuses);
+    for (const p of i.public?.paths ?? []) a.push("--public-path", p);
+    for (const m of i.public?.methods ?? []) a.push("--public-method", m);
+    for (const c of i.public?.cidrs ?? []) a.push("--public-cidr", c);
+    for (const p of i.public?.presets ?? []) a.push("--public-preset", p);
+    if (i.publicFullHost) a.push("--public-full-host");
   }
   return a;
 }

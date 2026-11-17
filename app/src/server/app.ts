@@ -349,7 +349,13 @@ export function createApp({
     async (c) => {
       const parsed = planInput.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) return c.json(invalid(parsed), 400);
-      const by = c.get("principal").name;
+      const principal = c.get("principal");
+      const by = principal.name;
+      if (parsed.data.publicFullHost) {
+        if (!parsed.data.confirmPublicFullHost) return c.json({ error: "a fully public host needs confirmPublicFullHost: true" }, 400);
+        if (!principal.permissions.includes("hosts:expose")) return c.json({ error: `${by} may not do this (needs hosts:expose)` }, 403);
+      }
+      if (parsed.data.public) console.log(`public paths ${parsed.data.public.paths.join(", ")} requested by ${by}`);
       const job = create.applier.start(parsed.data, by, (j) => {
         if (!j.pullRequestUrl) return;
         const domain = parsed.data.routing ? (domainOfLog(j.log) ?? parsed.data.domain) : undefined;

@@ -345,6 +345,16 @@ describe("listing repositories with the factory status", () => {
     expect(await webhook()).toBe(true);
   });
 
+  it("does not accept a hook with the five events from before pull_request", async () => {
+    const f = await forgejo();
+    const app = await build({ settings: f.settings() });
+    const before = FACTORY_EVENTS.filter((e) => e !== "pull_request");
+    expect(before).toHaveLength(5);
+    f.state.hooks = hooksAnswer([hook({ events: before })]);
+    const body = (await (await app.request("/api/repos")).json()) as { repos: { factory: { webhook: unknown } }[] };
+    expect(body.repos[0].factory.webhook).toBe(false);
+  });
+
   it("says unknown for the webhook when no endpoint is configured, and for the allowed list when it is not set", async () => {
     const f = await forgejo();
     const app = await build({ settings: f.settings({ webhookUrl: undefined, allowed: undefined }) });

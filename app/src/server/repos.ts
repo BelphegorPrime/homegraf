@@ -11,7 +11,7 @@ import { toolPath, toolRoot } from "./tools.js";
 /** The labels the factory needs (bootstrap/hgboot/factory_repos.py, LABELS): matched by name only. */
 export const FACTORY_LABELS = ["ai:plan", "ai:ready", "ai:escalate", "ai:review", "ai:changes", "ai:approved", "ai:close"] as const;
 /** The events its ForgeHands hook has to deliver (AGENT_EVENTS there). */
-export const FACTORY_EVENTS = ["issues", "pull_request_label", "action_run_failure", "action_run_success", "push"] as const;
+export const FACTORY_EVENTS = ["issues", "pull_request_label", "action_run_failure", "action_run_success", "push", "pull_request"] as const;
 
 /** Agent logins that may write to a repository the factory works in. */
 const WRITE = ["write", "admin", "owner"];

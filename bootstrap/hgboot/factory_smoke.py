@@ -618,18 +618,37 @@ class Smoke:
                 f"in `smoke-epic/{self.run_token}-f.txt` must end with ` ok`. Make that change on the same "
                 "branch and the same pull request; never open a second pull request or branch.")
         number = self._open_issue(repository, "follow-up", body, ready_at_creation=True)
-        deadline = self.clock() + self.timeout
         shas: set[str] = set()
         escalated = False
-        while True:
-            observation = self._observe(repository, number)
-            self._identity(observation, number)
-            self._assert_single(repository, number)
+
+        def record(observation: Observation) -> None:
+            nonlocal escalated
             head = observation.pr.get("head") if observation.pr else None
             sha = head.get("sha") if isinstance(head, dict) else None
             if isinstance(sha, str) and sha:
                 shas.add(sha)
             escalated = escalated or "ai:escalate" in observation.labels or "ai:escalate" in observation.pr_labels
+
+        deadline = self.clock() + self.timeout
+        while True:
+            observation = self._observe(repository, number)
+            self._identity(observation, number)
+            self._assert_single(repository, number)
+            record(observation)
+            if observation.conversation and not observation.merged:
+                break
+            if observation.merged:
+                raise SmokeFailure(f"#{number}: the follow-up merged before the duplicate trigger could be tested")
+            self._bound(deadline, f"#{number}: follow-up stalled at {observation.reached()}, "
+                                  f"reached {observation.chain()}")
+            self.sleep(self.interval)
+        self._duplicate_trigger_case(repository, number)
+        deadline = self.clock() + self.timeout
+        while True:
+            observation = self._observe(repository, number)
+            self._identity(observation, number)
+            self._assert_single(repository, number)
+            record(observation)
             if observation.merged and observation.closed:
                 break
             self._bound(deadline, f"#{number}: follow-up stalled at {observation.reached()}, "
@@ -639,6 +658,35 @@ class Smoke:
             raise SmokeFailure(f"#{number}: the head sha never changed, no follow-up round happened")
         suffix = " escalated" if escalated else ""
         self.report.add("follow-up", "passed", "same pull request and branch, merged" + suffix)
+
+    def _duplicate_trigger_case(self, repository: str, number: int) -> None:
+        """One repeated trigger while the run is active must not start a concurrent run."""
+        path = f"/repos/{repository}/issues/{number}/comments"
+        self.api.call("POST", path, body={"body": f"retrigger {self.run_token}"})
+        deadline = self.clock() + self.timeout
+        settled = 0
+        while True:
+            conversations = set()
+            for comment in self.api.paged(path):
+                user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
+                text = str(comment.get("body") or "")
+                if user.get("login") == self.factory.agent_login and "conversation" in text.lower():
+                    url = _first_url(text)
+                    if url:
+                        conversations.add(url)
+            try:
+                self._assert_single(repository, number)
+                single = True
+            except SmokeFailure:
+                single = False
+            if len(conversations) > 1 or not single:
+                raise SmokeFailure(f"#{number}: a duplicate trigger started a concurrent run")
+            settled += 1
+            if settled >= SETTLE_POLLS:
+                break
+            self._bound(deadline, f"#{number}: the duplicate trigger did not settle")
+            self.sleep(self.interval)
+        self.report.add("duplicate trigger", "passed", "one run, no second pull request")
 
     def _assert_single(self, repository: str, number: int) -> None:
         """The follow-up round stays on the one pull request and the one branch of the issue."""

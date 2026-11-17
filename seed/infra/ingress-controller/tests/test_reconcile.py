@@ -49,6 +49,7 @@ def plan(env, stack="omniroute"):
 def apply_with_presets(env, meta, stack="omniroute", *, persist=True):
     ctx = env.ctx()
     (spec,) = env.specs(stack)
+    ctx.le_dns_credentials = "token=le-secret"
     _resolve_presets(ctx, [spec], persist=persist, session=session_for(meta))
     return ctx, spec, apply_service(ctx, spec, commit=env.commit_sha)
 
@@ -563,7 +564,7 @@ def test_failed_fetch_uses_stored_list_and_notes(env):
 
     ctx, spec, p = plan_with_presets(env, meta, persist=True)
 
-    assert any("Abruf fehlgeschlagen" in note for note in p.notes)
+    assert any("fetch failed" in note for note in p.notes)
     assert not p.host_changes
     assert apply_service(ctx, spec, commit=env.commit_sha) == "noop"
     assert env.npm.mutations == before
@@ -584,6 +585,9 @@ def test_failed_fetch_without_stored_list_fails_closed(env):
 
 def test_static_and_preset_networks_render_together(env):
     meta = FakeGithubMeta()
+    inventory = env.root / "inventory/ingress.yaml"
+    inventory.write_text(inventory.read_text().replace("dns_challenge: false", "dns_challenge: true")
+                         .replace("dns_provider: null", "dns_provider: cloudflare"))
     set_public(env, "{paths: [/hook], allow_cidrs: [{preset: github-hooks}, 203.0.113.0/24]}")
 
     apply_with_presets(env, meta)

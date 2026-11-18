@@ -350,6 +350,42 @@ The runner (and so Renovate) needs Forgejo on the **address of the host**, not o
 this network and use the address the runner registered with (`http://<HOST_IP>:<PORT_FORGEJO>`). `BIND_ADDRESS=127.0.0.1` therefore does not work with them.
 The Renovate image is the slim one; `-full` (several GB, the tools of every package manager) goes into `.forgejo/workflows/renovate.yml` of the bot's repository.
 
+#### Opting in and migrating
+
+Only `FORGEHANDS_BOOTSTRAP=1` opts in; the compose profile `agents` alone never does. Without the flag, or with `0`, the factory stays
+disabled, none of the variables below is read and the stack behaves as before; the bootstrap's factory step returns without doing anything.
+
+`setup.sh` refuses to overwrite an existing `.env`: it prints that the file exists and exits 1. An `.env` from before the opt-in stays
+untouched; you add the variables below by hand, the way `.env.example` lists them where it does. How the factory then runs is in
+[agents.md](agents.md).
+
+| Variable | Required | Default / note |
+| --- | --- | --- |
+| `FORGEHANDS_BOOTSTRAP` | — | `1` opts in; unset or `0` leaves the factory off |
+| `FORGEHANDS_OPENHANDS_API_URL` | required | |
+| `OPENHANDS_LOCAL_BACKEND_API_KEY` | required | |
+| `FORGEHANDS_STRONG_MODEL` | required | |
+| `FORGEHANDS_CHEAP_MODEL` | required | |
+| `FORGEHANDS_FREE_MODEL` | optional | empty means no free tier |
+| `FORGEHANDS_GATEWAY_URL` | required | |
+| `FORGEHANDS_GATEWAY_API_KEY` | required | |
+| `FORGEHANDS_ALLOWED_REPOS` | required | comma separated |
+| `FORGEHANDS_ALLOWED_SENDERS` | required | comma separated; contains both logins below |
+| `FORGEHANDS_AGENT_LOGIN` | optional | `homegraf-agent` |
+| `FORGEHANDS_HUMAN_LOGIN` | required | not the agent |
+| `FORGEHANDS_SECURITY_REVIEWERS` | optional | comma separated; required with `two_keys` |
+| `FORGEHANDS_SECURITY_TOKEN` | optional | required with `two_keys` |
+| `FORGEHANDS_FORGEJO_AGENT_TOKEN` | optional | the bootstrap creates it; a fresh setup leaves it empty |
+| `FORGEHANDS_FORGEJO_WEBHOOK_SECRET` | required | |
+| `FORGEHANDS_MIRROR_URL` | optional | |
+| `FORGEHANDS_MIRROR_TOKEN` | optional | |
+| `FORGEHANDS_RUNTIME_DIR` | optional | `/factory-runtime` |
+| `FORGEHANDS_MAX_CONCURRENT_PER_TIER` | optional | 2 |
+| `FORGEHANDS_MAX_CONCURRENT` | optional | 4 |
+| `FORGEHANDS_MAX_RUNS_PER_HOUR` | optional | 30 |
+| `FORGEHANDS_MAX_RUN_MINUTES` | optional | 120 |
+| `FORGEHANDS_MERGE_POLICY` | optional | JSON, see Merge policy below |
+
 ### Restoring from the backups
 
 With the profile `backup` on, **`scripts/restore.sh`** puts one database back from a dump:

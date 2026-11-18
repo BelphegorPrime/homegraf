@@ -125,7 +125,7 @@ required check.
 
 ### Merging
 
-**Protected approved-open path.** A pull request touching a path matching the deny list in `FORGEHANDS_MERGE_POLICY` is approved but stays open for a human to merge. The bootstrap-built policy defaults to these deny globs: `.forgejo/**`, `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `.agents/**`, `.claude/**`, `compose.yaml`, `**/compose.yaml`, `setup.sh`, `scripts/**`, `infra/**`, `stacks/**`.
+**Protected approved-open path.** Under the bootstrap-built default policy, a pull request touching a deny-listed path is approved but stays open for a human to merge. The default deny globs are `.forgejo/**`, `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `.agents/**`, `.claude/**`, `compose.yaml`, `**/compose.yaml`, `setup.sh`, `scripts/**`, `infra/**`, and `stacks/**`. An operator-supplied `FORGEHANDS_MERGE_POLICY` may define different rules, including `two_keys` paths eligible for auto-merge after independent security review.
 
 `ai:approved` on the pull request of an agent issue makes ForgeHands merge it when, at the same time: the pull request is open, it comes from
 `ai/issue-<n>`, it is mergeable, the combined commit status of its head commit is green, and no changed file (a rename counts with both

@@ -405,7 +405,8 @@ the wait expires. That rejection is not a guarantee that a stale ready file cann
 
 **Readback and repair.** Every LLM profile and agent profile write is read back and compared: LLM on model, base URL and key; agent on
 name, LLM ref, prompt, skills and `mcp_server_refs`, and, when the profile already existed, the server must also keep its id. A mismatch
-raises, so `ready` stays false and no profile ids are published; there is no retry loop. A rerun is idempotent: a stored LLM or agent
+raises, so the failed run publishes no new profile ids or ready handoff; invalidation is best-effort as described above, so an old ready
+handoff may survive an `OSError`. There is no retry loop. A rerun is idempotent: a stored LLM or agent
 profile that differs from the wanted one is written again and verified ("corrected"), and a missing agent profile is created by cloning
 the default agent profile ("created"). To watch a run or rerun an issue, see [agents.md](agents.md).
 

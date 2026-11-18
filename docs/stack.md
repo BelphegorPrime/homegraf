@@ -395,7 +395,7 @@ mode `0600`, is replaced atomically, is at most 64 KiB and has the shape `{"read
 `FORGEHANDS_RUNTIME_FILE` and starts direct mode only with it. `env` holds these names: `FORGEJO_URL`, `FORGEJO_TOKEN`,
 `FORGEJO_WEBHOOK_SECRET`, `OPENHANDS_API_URL`, `OPENHANDS_API_KEY`, `AGENT_SECRETS`, `LABEL_ROUTES`, `ALLOWED_REPOS`, `ALLOWED_SENDERS`,
 `HUMAN_LOGIN`, `MERGE_POLICY`, `MAX_CONCURRENT_PER_TIER`, `MAX_CONCURRENT`, `MAX_RUNS_PER_HOUR`, `MAX_RUN_MINUTES`, `MAX_ROUNDS` and,
-only when set, `TIER_WEEKLY_BUDGETS`. Names only; values are never documented.
+only when set, `TIER_WEEKLY_BUDGETS`. The `env` object also includes an entry for each name listed in `AGENT_SECRETS`.
 
 **Failure.** On any failed stage `_invalidate` rewrites an existing handoff as `{"ready": false, "env": {}}`; when the failure happens
 before any handoff was written, no file is left behind. Invalidation is best-effort: `_invalidate` ignores an `OSError` from that rewrite,

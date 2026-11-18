@@ -171,7 +171,7 @@ and the rewrite `*.<domain> -> <host address>`. Pitfalls:
 | `infisical` + `infisical-db` + `infisical-redis` | secrets of the stacks, later the certificate authority | 8079 | set up by the bootstrap |
 | `proxy` (Nginx Proxy Manager) | `http://<name>.<domain>` to the containers | 80, 443, admin 81 | set up by the bootstrap |
 | `openhands` (Agent Canvas), **only with the profile `agents`** | Canvas, Agent Server and Automation Server in one image; runs an agent on an issue | 8000 (`PORT_OPENHANDS`) | `LOCAL_BACKEND_API_KEY` from `.env`; data in the volume `openhands-data`; the model provider key is entered in Canvas, not in `.env` (see *Agents: from an issue to a draft pull request*) |
-| `forgehands`, **only with the profile `agents`** | a Forgejo webhook becomes a signed call to OpenHands' automation webhook; with `FORGEHANDS_OPENHANDS_API_URL` and `LABEL_ROUTES` (profile ids) a Forgejo label starts the matching agent profile instead | 8080 (`PORT_FORGEHANDS`) | webhook mode by default; direct mode is opt-in, pinned `v0.4.2`; state (ledger, deliveries) in the volume `forgehands-data`, runs in `forgehands-workspace` |
+| `forgehands`, **only with the profile `agents`** | a Forgejo webhook becomes a signed call to OpenHands' automation webhook; with `FORGEHANDS_OPENHANDS_API_URL` and `LABEL_ROUTES` (profile ids) a Forgejo label starts the matching agent profile instead | 8080 (`PORT_FORGEHANDS`) | webhook mode by default; direct mode is opt-in, pinned `v0.4.10`; state (ledger, deliveries) in the volume `forgehands-data`, runs in `forgehands-workspace` |
 | `technitium` (Technitium DNS Server), **only with `DNS_MODE=technitium`** | answers for the domain: the wildcard to this host; an API token for the tools | 53 on the LAN address, console 8053 (user `admin`, not the e-mail address) | the profile `technitium`; set up by the bootstrap |
 | `dns` (AdGuard Home), **only with `DNS_MODE=adguard`** | answers for the domain: the wildcard to this host | 53 on the LAN address, setup 3300, admin 8053 | the profile `dns`; set up by the bootstrap |
 | `bootstrap` | one-shot: configures the services against each other | | image `ghcr.io/belphegorprime/homegraf-bootstrap`; keeps its state in the volume `bootstrap-state` |
@@ -262,7 +262,7 @@ The three `-free` routes need no label and exist only with a free model; `ai:rea
 `fallback_to` while their tier is out of quota. `ai:changes` and `ci:failure` escalate their last round to `ai:escalate`. A route may also
 set `max_budget` (one run) and `max_concurrent` (that tier); [agents.md](agents.md#limits) has the limits and the rounds.
 
-Label semantics (ForgeHands 0.4.2; the stack pins `v0.4.2`):
+Label semantics (ForgeHands 0.4.10; the stack pins `v0.4.10`):
 
 - Forgejo reports a label added to an existing issue as an `issues` event with action `label_updated` and the *current* labels, not the
   added one. ForgeHands remembers the labels last seen per issue and starts a run for a trigger label that is **new**. So `ai:escalate`

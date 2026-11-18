@@ -5,8 +5,8 @@ OpenHands conversation for the label, the agent works in its own checkout and pu
 decide what happens next. The setup is in [stack.md](stack.md#agents-from-an-issue-to-a-draft-pull-request); this page is how to watch the
 runs, stop them, start an issue again, and what goes wrong.
 
-The factory needs ForgeHands 0.4.2 or newer; `compose.yaml` pins `v0.4.2`. This page describes what that version does; the
-[README of the tag](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.2/README.md) lists every setting with its default, and its
+The factory needs ForgeHands 0.4.2 or newer; `compose.yaml` pins `v0.4.10`. This page describes what that version does; the
+[README of the tag](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md) lists every setting with its default, and its
 `docs/UPGRADING.md` the move from 0.3.
 
 To create the repository the agents work in, and to allow it in ForgeHands, see [new-repo.md](new-repo.md).
@@ -36,7 +36,7 @@ the password; `/healthz` stays open. Without it all three are open and ForgeHand
 `/status` shows, per issue, the run state with its cost, the rounds used (`n/3`, "escalated to <label>" when the last one ran stronger),
 `fell_back` when a job started on its fallback route, and the tier's quota hold with the time it tries again. `/metrics` is Prometheus text
 (`forgehands_jobs`, `forgehands_runs_finished_total`, `forgehands_merge_refusals_total`, ...); its labels come from fixed sets and carry no
-issue numbers. See [Status page and metrics](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.2/README.md#status-page-and-metrics).
+issue numbers. See [Status page and metrics](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#status-page-and-metrics).
 
 ## Limits
 
@@ -61,7 +61,7 @@ planner, the reviewers, `worker-strong` and the security review, `cheap` for the
 may name `"fallback_to": "<another route>"`: while its own tier is held and the target's is not, the run starts with the target's profile and
 tier instead of waiting. `ai:ready`, `ai:changes` and `ci:failure` fall back to `ai:ready-free`, `ai:changes-free` and `ci:failure-free`; one
 hop only, the target needs no label and has no fallback of its own. See
-[Fallback route](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.2/README.md#humans-and-failures).
+[Fallback route](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#humans-and-failures).
 
 **Out of quota, or no model available.** Neither case ends at the human. When a run ends in `error` and its last events say it was a rate
 limit, the job is queued again and its whole tier is held until the reset time (at least a minute, at most `QUOTA_HOLD_MAX_HOURS`, 8 in
@@ -69,7 +69,7 @@ limit, the job is queued again and its whole tier is held until the reset time (
 could answer (`LLMServiceUnavailableError`, `BadGatewayError`, `LLMTimeoutError`) is treated like a used-up quota with growing pauses (1, 2,
 4, 8, 16, then 30 minutes). While a tier is held, a route's `fallback_to` takes over; `/status` shows "model quota used up, tries again after
 HH:MM UTC". The hold lives in memory, so a restart means a retry now. See
-[Humans and failures](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.2/README.md#humans-and-failures).
+[Humans and failures](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#humans-and-failures).
 
 Cost is not capped by ForgeHands on its own: a run has a price only when the LLM gateway reports one, and the gateway is where spend is
 steered (model choice, budgets, keys). The guards inside ForgeHands are `MAX_RUNS_PER_HOUR` (runs started per hour) and a route's
@@ -95,7 +95,7 @@ starts a review, and a review either approves or asks for another round. Agents 
   with the `worker-strong` profile on `smart` before the pull request is blocked and the human mentioned. Branch, kind, prompt and the route's
   own iteration and budget limits stay; the target's tier limits apply; nobody triggers the stronger profile from an issue, and `/status`
   shows the job as escalated. See
-  [Follow-up rounds and escalation](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.2/README.md#follow-up-rounds-and-escalation).
+  [Follow-up rounds and escalation](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#follow-up-rounds-and-escalation).
 - A green commit (all workflows) starts the **review** through the route with `"on": "ci_success"`, but only when the **combined** commit
   status is `success`, so a pending or failed second workflow holds the review back. Without `FORGEJO_URL` and `FORGEJO_TOKEN` ForgeHands
   cannot check the status and starts no review. The reviewer reads the issue, the diff and the discussion, writes one comment with the
@@ -120,7 +120,7 @@ A pull request that touches a protected path is left to the human with **one** c
 green), why a human — each matching pattern with its reason from `MERGE_POLICY` and the files — what the security review found for that
 commit and whether Forgejo reports a conflict. While a security review of the commit still runs, the comment waits for it. Approved and green
 ends the work in progress, so the `WIP:` marker is removed first; Forgejo would not let the human merge it otherwise. See
-[Auto-merge](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.2/README.md#auto-merge).
+[Auto-merge](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#auto-merge).
 
 The merge uses `MERGE_METHOD` (default `merge`), is bound to the head commit that was checked, deletes the branch and closes the issue. It
 needs `FORGEJO_URL` and `FORGEJO_TOKEN` in ForgeHands' own environment; `compose.yaml` passes the agent user's token.
@@ -133,7 +133,7 @@ posts one comment that starts `## Security review: OK` or `## Security review: C
 merges nothing. A run without that comment is made once more, then only logged, and a failed one never blocks. The route names its own forge
 token (`forgejo_token_secret`, `FORGEJO_SECURITY_TOKEN` in `AGENT_SECRETS`), so the security reviewer writes as a user the worker's token
 cannot sign as. Without the route nothing changes. See
-[Security review for protected paths](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.2/README.md#security-review-for-protected-paths-advisory).
+[Security review for protected paths](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#security-review-for-protected-paths-advisory).
 
 ### Keeping pull requests current
 
@@ -164,7 +164,7 @@ ForgeHands looks once a day, and once after a restart, at open pull requests fro
 it writes one comment that starts with `@<login>`, says why the pull request waits and since when, and counts (`ForgeHands: reminder i of k`)
 — at most `REMIND_MAX` (3), the last with `STALE_LABEL` when that is set. A comment by the human restarts the count; the state lives in the
 comments, so a restart only empties the `/status` list until the next pass. See
-[Reminders](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.2/README.md#reminders).
+[Reminders](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#reminders).
 
 ### Webhooks and events
 
@@ -176,13 +176,18 @@ With ForgeHands 0.4.10 or newer a repository that has no workflow file at all (`
 `.github/workflows`, no commit status) is reviewed and merged without a CI run: the switch `REVIEW_WITHOUT_CI` defaults to on, and the
 review starts on the `pull_request` event (opened, reopened, synchronized) or on the `push`. With a workflow, nothing changes.
 
-### Two Forgejo accounts
+### One Forgejo account
 
-The agents write as `homegraf-agent` (`FORGEHANDS_AGENT_LOGIN`), the human as his own user (`HUMAN_LOGIN`); both are in `ALLOWED_SENDERS`.
-Forgejo refuses a formal approve or request-changes on one's own pull request (HTTP 422), so the verdict is a label, not a review state.
-Comments and reviews remain the place for evidence and for asking for changes, but only the labels start the next run. The security review
-has a third account when its route is set up: the token behind `FORGEJO_SECURITY_TOKEN` must belong to a user the worker's token cannot sign
-as.
+The agents act as a Forgejo user of their own, default login `homegraf-agent` (`FORGEHANDS_AGENT_LOGIN`). The factory creates it, makes it a
+collaborator with write access on every allowed repository, and gives it a token with `write:repository`, `write:issue` and `read:user` only:
+it is not an administrator — the admin endpoints answer 403 — and, as a collaborator rather than an owner, it cannot manage webhooks, mirrors
+or users. The human keeps his own account (`HUMAN_LOGIN` in ForgeHands' environment) and can now review the agents' pull requests formally,
+approve or request changes; Forgejo refuses that only on one's own pull request (HTTP 422).
+
+The agents' verdict is still a label (`ai:approved` / `ai:changes`), because the worker and the reviewer share the one agent user; a formal
+approval by the reviewer agent would need a second agent user, an open option. Comments and reviews remain the place for evidence and for
+asking for changes, but only the labels start the next run. The security review has its own account when its route is set up: the token
+behind `FORGEJO_SECURITY_TOKEN` must belong to a user the worker's token cannot sign as.
 
 ### Security reviewer of its own and two keys
 
@@ -240,7 +245,7 @@ tool until the task is done) makes this rarer, and ForgeHands checks the result:
 `ai/issue-<n>` created or changed since the run began, a comment on the issue written since then, or close the issue. If it did none of that,
 the run is made once more; after a second empty run the ticket is marked failed (`no_delivery`) and the human is mentioned on the issue. A strong
 worker that stops after a local commit is found the same way — check the branch on the remote before assuming there is work. See
-[Humans and failures](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.2/README.md#humans-and-failures).
+[Humans and failures](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#humans-and-failures).
 
 **A worker runs out of iterations or time.** `SPLIT_LABEL` is `ai:plan` in `compose.yaml`: a worker run on an issue that ends as
 `max_iterations`, `paused`, `stuck` or `timeout` is not handed to the human, because the ticket is probably too big. The worker label comes

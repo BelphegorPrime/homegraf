@@ -40,7 +40,7 @@ x-template:
     with a workflow nothing changes.
 services:
   app:
-    image: ghcr.io/belphegorprime/forgehands:v0.4.2
+    image: ghcr.io/belphegorprime/forgehands:v0.4.10
     ports:
       - "8080:8080"
     volumes:

@@ -589,7 +589,7 @@ services:
   forgehands:
     # Releases before 0.2.19 do not know HUMAN_LOGIN, so their handover comments carry no @<login> mention and a human never gets mail.
     # Releases before 0.2.15 lack the pull request rounds and the profile-id routes the factory relies on. Pin the version.
-    image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:v0.4.2}
+    image: ${FORGEHANDS_IMAGE:-ghcr.io/belphegorprime/forgehands:v0.4.10}
     container_name: ${PROJECT_PREFIX:-homegraf}-forgehands
     profiles: [agents]
     restart: unless-stopped

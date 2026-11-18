@@ -411,14 +411,9 @@ profile that differs from the wanted one is written again and verified ("correct
 the default agent profile ("created"). To watch a run or rerun an issue, see [agents.md](agents.md).
 
 **Merge policy.** `FORGEHANDS_MERGE_POLICY` is operator-only JSON `repository -> {"deny": [globs]}`, never read from a repository file.
-Example: `{"example-owner/example-repo": {"deny": [".forgejo/**", "infra/**"]}}`. Optional keys `reasons` (deny pattern -> why a human is needed)
-and `two_keys` (deny globs that may merge with an independent security review) exist; a `two_keys` pattern must be covered by a deny pattern
-and requires `FORGEHANDS_SECURITY_REVIEWERS` and `FORGEHANDS_SECURITY_TOKEN`.
+Example: `{"example-owner/example-repo": {"deny": [".forgejo/**", "infra/**"]}}`. Optional keys `reasons` (deny pattern -> why a human is needed) and `two_keys` (deny globs that may merge with an independent security review) exist; a `two_keys` pattern must be covered by a deny pattern and requires `FORGEHANDS_SECURITY_REVIEWERS` and `FORGEHANDS_SECURITY_TOKEN`. Bootstrap handoff exports only `deny`, not `reasons` or `two_keys`.
 
-Semantics: a repository with no entry stays manual (`repository_merge_policy()` returns `None`); an explicit `{}` stays empty (nothing denied);
-the default deny list applies only when the variable is unset, and then only to the stack's own repository. The operator policy is never
-replaced by the default. When the operator sets nothing, `setup.sh` writes `FORGEHANDS_MERGE_POLICY` for the stack's own repository
-(`forgejo_user/infrastructure`) with the default deny globs below.
+Semantics: a repository with no entry stays manual (`repository_merge_policy()` returns `None`); an explicit `{}` as the whole JSON object stays empty (nothing denied). An empty per-repository rule is invalid because each rule needs a `deny` list. The default deny list applies when the variable is unset or set to an empty string, and then only to the stack's own repository; operator policy is never replaced by the default. In either unset or empty case, `setup.sh` writes `FORGEHANDS_MERGE_POLICY` for the stack's own repository (`forgejo_user/infrastructure`) with the default deny globs below.
 
 Default deny globs (from `DEFAULT_MERGE_DENY`, in order):
 

@@ -104,6 +104,18 @@ starts a review, and a review either approves or asks for another round. Agents 
 - A new round or a new review removes `ai:approved` first, so an approval never covers commits it has not seen. A fix that pushes a new
   commit causes new CI events and a new review, until the rounds are used up.
 
+### Dependencies and epics
+- The planner splits a ticket into sub-issues, each with `Part of #<epic>` in the body, and links them with Forgejo issue dependencies:
+  `POST <api>/repos/<owner>/<repo>/issues/<n>/dependencies` with `{"owner":"<owner>","repo":"<repo>","index":<m>}` makes issue `n` wait for
+  issue `m`.
+- The epic depends on every child. A child that needs the files of another child depends on it; independent children get no dependency.
+- The planner adds `ai:ready` to the children only after the links exist and are verified. A child with open dependencies is held back and
+  starts when they are closed.
+- The epic is reviewed and closed when its last child is merged. `ai:close` (`Review and close this ticket when its last dependency is
+  closed, no planner run`) is for a ticket that is only reviewed and closed after its last dependency, with no planner run.
+- A ticket whose run ends in `max_iterations` goes to the planner (`ai:plan`); see
+  [A worker runs out of iterations or time](#known-failure-modes).
+
 ### Reviewer labels
 
 The factory defines these labels:

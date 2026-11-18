@@ -386,6 +386,30 @@ untouched; you add the variables below by hand, the way `.env.example` lists the
 | `FORGEHANDS_MAX_RUN_MINUTES` | optional | 120 |
 | `FORGEHANDS_MERGE_POLICY` | optional | JSON, see Merge policy below |
 
+**MCP isolation.** Each agent profile is written with `mcp_server_refs: []`, and `_agent_matches` accepts a stored profile only when that
+list is empty too. The reason is the tool count: a profile with no MCP server offers the model fewer tools. The code records no other reason.
+
+**Runtime handoff.** `forgehands.json` is written to `FORGEHANDS_RUNTIME_DIR` (default `/factory-runtime`). It is the last stage of a
+factory run: only after preflight, the agent user, labels and hooks, the mirror, CI, the profiles and the routes have passed. The file has
+mode `0600`, is replaced atomically, is at most 64 KiB and has the shape `{"ready": <bool>, "env": {...}}`. ForgeHands reads it from
+`FORGEHANDS_RUNTIME_FILE` and starts direct mode only with it. `env` holds these names: `FORGEJO_URL`, `FORGEJO_TOKEN`,
+`FORGEJO_WEBHOOK_SECRET`, `OPENHANDS_API_URL`, `OPENHANDS_API_KEY`, `AGENT_SECRETS`, `LABEL_ROUTES`, `ALLOWED_REPOS`, `ALLOWED_SENDERS`,
+`HUMAN_LOGIN`, `MERGE_POLICY`, `MAX_CONCURRENT_PER_TIER`, `MAX_CONCURRENT`, `MAX_RUNS_PER_HOUR`, `MAX_RUN_MINUTES`, `MAX_ROUNDS` and,
+only when set, `TIER_WEEKLY_BUDGETS`. The `env` object also includes an entry for each name listed in `AGENT_SECRETS`.
+
+**Failure.** On any failed stage `_invalidate` rewrites an existing handoff as `{"ready": false, "env": {}}`; when the failure happens
+before any handoff was written, no file is left behind. Invalidation is best-effort: `_invalidate` ignores an `OSError` from that rewrite,
+so an old ready file can survive a failed run. ForgeHands starts direct mode only after reading a usable handoff; a missing file, invalid
+JSON, a `ready` value other than exactly `true`, a file readable by group or others or a file over 64 KiB is rejected and retried until
+the wait expires. That rejection is not a guarantee that a stale ready file cannot survive.
+
+**Readback and repair.** Every LLM profile and agent profile write is read back and compared: LLM on model, base URL and key; agent on
+name, LLM ref, prompt, skills and `mcp_server_refs`, and, when the profile already existed, the server must also keep its id. A mismatch
+raises, so the failed run publishes no new profile ids or ready handoff; invalidation is best-effort as described above, so an old ready
+handoff may survive an `OSError`. There is no retry loop. A rerun is idempotent: a stored LLM or agent
+profile that differs from the wanted one is written again and verified ("corrected"), and a missing agent profile is created by cloning
+the default agent profile ("created"). To watch a run or rerun an issue, see [agents.md](agents.md).
+
 ### Restoring from the backups
 
 With the profile `backup` on, **`scripts/restore.sh`** puts one database back from a dump:

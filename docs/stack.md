@@ -410,6 +410,31 @@ handoff may survive an `OSError`. There is no retry loop. A rerun is idempotent:
 profile that differs from the wanted one is written again and verified ("corrected"), and a missing agent profile is created by cloning
 the default agent profile ("created"). To watch a run or rerun an issue, see [agents.md](agents.md).
 
+**Merge policy.** `FORGEHANDS_MERGE_POLICY` is operator-only JSON `repository -> {"deny": [globs]}`, never read from a repository file.
+Example: `{"example-owner/example-repo": {"deny": [".forgejo/**", "infra/**"]}}`. Optional keys `reasons` (deny pattern -> why a human is needed) and `two_keys` (deny globs that may merge with an independent security review) exist; a `two_keys` pattern must be covered by a deny pattern and requires `FORGEHANDS_SECURITY_REVIEWERS` and `FORGEHANDS_SECURITY_TOKEN`. Bootstrap handoff exports only `deny`, not `reasons` or `two_keys`.
+
+Semantics: a repository with no entry stays manual (`repository_merge_policy()` returns `None`); an explicit `{}` as the whole JSON object stays empty (nothing denied). An empty per-repository rule is invalid because each rule needs a `deny` list. The default deny list applies when the variable is unset or set to an empty string, and then only to the stack's own repository; operator policy is never replaced by the default. In either unset or empty case, `setup.sh` writes `FORGEHANDS_MERGE_POLICY` for the stack's own repository (`forgejo_user/infrastructure`) with the default deny globs below.
+
+Default deny globs (from `DEFAULT_MERGE_DENY`, in order):
+
+```
+.forgejo/**
+.github/**
+AGENTS.md
+CLAUDE.md
+CONTRIBUTING.md
+.agents/**
+.claude/**
+compose.yaml
+**/compose.yaml
+setup.sh
+scripts/**
+infra/**
+stacks/**
+```
+
+The handoff publishes the policy as `MERGE_POLICY`; merging is done by ForgeHands, not by the agent. See [agents.md](agents.md) for the operating side.
+
 ### Restoring from the backups
 
 With the profile `backup` on, **`scripts/restore.sh`** puts one database back from a dump:

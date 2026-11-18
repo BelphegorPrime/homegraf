@@ -283,7 +283,7 @@ explain as a rate limit or as "no model available" holds the tier and retries in
 | Secrets, `FORGEHANDS_ALLOWED_REPOS`, the `openhands.<domain>` proxy host and its certificate | `setup.sh` and the bootstrap (`hgboot`) |
 | Services, volumes, healthchecks, fixed `WORKSPACE_DIR` / `JOBS_FILE`, queue and timeout defaults | `compose.yaml` |
 | Label -> profile id, tier, iterations (`LABEL_ROUTES`) | the bootstrap (`bootstrap/hgboot/agents.py`) builds it from the profile ids; a value you set in `.env` wins |
-| Model provider key, LLM profiles, the agent profiles | you, in Canvas; the bootstrap reads the profile ids back and does not create the profiles yet |
+| Model provider key, LLM profiles, the agent profiles | you supply the model gateway key; the bootstrap creates the LLM profiles and the agent profiles when the factory is opted in ([docs/stack.md](stack.md#opting-in-and-migrating)) |
 | The Forgejo webhook, and (webhook mode) the OpenHands automation | you, in Forgejo and Canvas |
 | Starting a review by hand (`ai:review`) | you; a green commit starts the review when the `ci_success` route exists |
 | The verdict (`ai:approved`, `ai:changes`), and the merge itself | the reviewer sets the label; ForgeHands merges by `MERGE_POLICY`; a repository without a policy stays manual |
@@ -297,8 +297,8 @@ The prompts live as files and are referenced here, not pasted:
 - `src/prompt.mjs` in the ForgeHands repository builds the first message of every run: the issue run, the follow-up round, the fix round and
   the review. The untrusted block, the trusted sender list, the tool rule and the end rule are in that file.
 - The role prompts are the prompts of the agent profiles (`planner`, `worker`, `worker-strong`, `reviewer`, the `worker-free` fallback and
-  the security reviewer) that you create in Canvas; the profiles live in the `openhands-data` volume. `bootstrap/hgboot/agents.py` maps labels
-  to profiles and limits and contains no prompt text.
+  the security reviewer); the bootstrap creates the profiles when the factory is opted in ([docs/stack.md](stack.md#opting-in-and-migrating)).
+  The profiles live in the `openhands-data` volume. `bootstrap/hgboot/agents.py` maps labels to profiles and limits and contains no prompt text.
 
 Change the file or the profile and start a new run. A prompt copied into an issue, a pull request or this page would go stale, and an agent
 reading it could mistake it for instructions.

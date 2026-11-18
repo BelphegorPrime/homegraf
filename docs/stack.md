@@ -398,7 +398,10 @@ mode `0600`, is replaced atomically, is at most 64 KiB and has the shape `{"read
 only when set, `TIER_WEEKLY_BUDGETS`. Names only; values are never documented.
 
 **Failure.** On any failed stage `_invalidate` rewrites an existing handoff as `{"ready": false, "env": {}}`; when the failure happens
-before any handoff was written, no file is left behind. A half-done stack never starts direct mode.
+before any handoff was written, no file is left behind. Invalidation is best-effort: `_invalidate` ignores an `OSError` from that rewrite,
+so an old ready file can survive a failed run. ForgeHands starts direct mode only after reading a usable handoff; a missing file, invalid
+JSON, a `ready` value other than exactly `true`, a file readable by group or others or a file over 64 KiB is rejected and retried until
+the wait expires. That rejection is not a guarantee that a stale ready file cannot survive.
 
 **Readback and repair.** Every LLM profile and agent profile write is read back and compared: LLM on model, base URL and key; agent on
 name, LLM ref, prompt, skills and `mcp_server_refs`, and, when the profile already existed, the server must also keep its id. A mismatch

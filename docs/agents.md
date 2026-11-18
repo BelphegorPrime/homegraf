@@ -168,9 +168,13 @@ comments, so a restart only empties the `/status` list until the next pass. See
 
 ### Webhooks and events
 
-The repository needs a Forgejo webhook with the events `issues`, `pull_request_label`, `action_run_failure`, `action_run_success` and `push`.
+The repository needs a Forgejo webhook with the events `issues`, `pull_request_label`, `action_run_failure`, `action_run_success`, `push`
+and `pull_request`.
 Forgejo accepts the two `action_run_*` events only when the hook is created: a PATCH does not add them, so delete the hook and create it
 again. Forgejo sends one event per finished workflow, which is why the review waits for the combined status.
+With ForgeHands 0.4.10 or newer a repository that has no workflow file at all (`.forgejo/workflows`, `.gitea/workflows` or
+`.github/workflows`, no commit status) is reviewed and merged without a CI run: the switch `REVIEW_WITHOUT_CI` defaults to on, and the
+review starts on the `pull_request` event (opened, reopened, synchronized) or on the `push`. With a workflow, nothing changes.
 
 ### Two Forgejo accounts
 

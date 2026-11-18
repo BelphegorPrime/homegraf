@@ -523,7 +523,7 @@ def test_the_agents_first_run_claims_no_bootstrap_run_it_did_not_have(agent):
 def test_the_agents_first_run_names_the_webhook_events_the_pinned_release_needs(agent):
     """An issues-only hook starts no round and no review, so the note names every event."""
     text = _agents(agent).first_run
-    for event in ("issues", "pull_request_label", "action_run_failure", "action_run_success", "push"):
+    for event in ("issues", "pull_request_label", "action_run_failure", "action_run_success", "push", "pull_request"):
         assert re.search(rf"\b{event}\b", text), event
 
 

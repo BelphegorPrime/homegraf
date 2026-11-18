@@ -55,7 +55,7 @@ new repository owner/example-repo (private) on https://forgejo.lab.example
     README.md
   labels        7: ai:approved, ai:changes, ai:close, ai:escalate, ai:plan, ai:ready, ai:review
   webhook       http://forgehands:8080/webhooks/forgejo
-                issues, pull_request_label, action_run_failure, action_run_success, push
+                issues, pull_request_label, action_run_failure, action_run_success, push, pull_request
 
 Nothing was created or changed: rerun with --yes to create the repository and its first commit.
 ```
@@ -73,7 +73,7 @@ Add `--wire` to the same command to also open the pull request that adds the rep
 `--json` prints the plan without `--yes`, and the verified result with it.
 
 What the command does, in order: it renders the profile, creates the repository, adds the agent as a collaborator,
-creates the seven `ai:*` labels the factory uses, creates the webhook for issues, label, action-run and push events,
+creates the seven `ai:*` labels the factory uses, creates the webhook for issues, pull_request, label, action-run and push events,
 commits the profile files to the default branch, and reads all of it back. It exits 0 only when that read-back matches.
 A missing setting fails before the first request and names the setting.
 

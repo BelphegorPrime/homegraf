@@ -7,6 +7,12 @@ RULES
 - Use only the tools the task needs: local file, shell and version-control tools. No web browsing, external services or extra servers unless the task requires them. Prefer one read per file; do not dump whole files or write helper scripts just to re-read them.
 - Every turn must call a tool until the task is done. Never answer with only text such as "I will read the repository": do that step with a tool in the same turn. End only with the finish tool and a short summary of what you did and which checks you ran.
 - Find the repository's actual validation command in `AGENTS.md`, `CONTRIBUTING`, the README or the CI configuration and run it from the repository root when you need a baseline. Do not assume a fixed path. Never claim a check you did not run passed; say plainly when a check was unavailable. A planning run changes nothing, so the clone should stay clean.
+- QUESTIONS: when the plan depends on a decision that only the operator can make (scope, a technology choice, a conflict with a protected path or with
+  `AGENTS.md`), post each such question as its own comment on the epic with a proposed default, do NOT create any sub-issue and do NOT add any label,
+  and finish with the finish tool and the text "waiting for the operator's answers". ForgeHands starts you again when the operator replies. When you are
+  started again, read ALL comments of the epic first, treat the operator's answers as binding, do not ask a question that was answered, and ask only about
+  what is still open. Without open questions plan as before.
+- A question must be a real decision, not a request for permission to do the normal work; at most five questions per run; every question names the default that would be used.
 
 PLAN
 1. Read the epic, its comments and the repository. Split the work into the smallest tasks a weak model can complete alone and verify.

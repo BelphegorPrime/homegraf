@@ -176,13 +176,18 @@ With ForgeHands 0.4.10 or newer a repository that has no workflow file at all (`
 `.github/workflows`, no commit status) is reviewed and merged without a CI run: the switch `REVIEW_WITHOUT_CI` defaults to on, and the
 review starts on the `pull_request` event (opened, reopened, synchronized) or on the `push`. With a workflow, nothing changes.
 
-### Two Forgejo accounts
+### One Forgejo account
 
-The agents write as `homegraf-agent` (`FORGEHANDS_AGENT_LOGIN`), the human as his own user (`HUMAN_LOGIN`); both are in `ALLOWED_SENDERS`.
-Forgejo refuses a formal approve or request-changes on one's own pull request (HTTP 422), so the verdict is a label, not a review state.
-Comments and reviews remain the place for evidence and for asking for changes, but only the labels start the next run. The security review
-has a third account when its route is set up: the token behind `FORGEJO_SECURITY_TOKEN` must belong to a user the worker's token cannot sign
-as.
+The agents act as a Forgejo user of their own, default login `homegraf-agent` (`FORGEHANDS_AGENT_LOGIN`). The factory creates it, makes it a
+collaborator with write access on every allowed repository, and gives it a token with `write:repository`, `write:issue` and `read:user` only:
+it is not an administrator — the admin endpoints answer 403 — and, as a collaborator rather than an owner, it cannot manage webhooks, mirrors
+or users. The human keeps his own account (`HUMAN_LOGIN` in ForgeHands' environment) and can now review the agents' pull requests formally,
+approve or request changes; Forgejo refuses that only on one's own pull request (HTTP 422).
+
+The agents' verdict is still a label (`ai:approved` / `ai:changes`), because the worker and the reviewer share the one agent user; a formal
+approval by the reviewer agent would need a second agent user, an open option. Comments and reviews remain the place for evidence and for
+asking for changes, but only the labels start the next run. The security review has its own account when its route is set up: the token
+behind `FORGEJO_SECURITY_TOKEN` must belong to a user the worker's token cannot sign as.
 
 ### Security reviewer of its own and two keys
 

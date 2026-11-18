@@ -104,6 +104,25 @@ starts a review, and a review either approves or asks for another round. Agents 
 - A new round or a new review removes `ai:approved` first, so an approval never covers commits it has not seen. A fix that pushes a new
   commit causes new CI events and a new review, until the rounds are used up.
 
+### Reviewer labels
+
+The factory defines these labels:
+
+- `ai:plan`: Plan the issue before any implementation
+- `ai:ready`: Start the worker agent on this issue
+- `ai:escalate`: Start the stronger worker agent on this issue
+- `ai:review`: Review the agent pull request
+- `ai:changes`: Reviewer asks the worker for another round
+- `ai:approved`: Reviewer approved the pull request
+- `ai:close`: Review and close this ticket when its last dependency is closed, no planner run
+
+The verdict is the label (`ai:approved` / `ai:changes`), not a formal review, because worker and reviewer share one agent user.
+
+### CI runner and required check
+
+CI runs use runner labelled `docker`. The required check pattern `ci / seed (*)` makes push, pull_request and manual runs satisfy the same
+required check.
+
 ### Merging
 
 `ai:approved` on the pull request of an agent issue makes ForgeHands merge it when, at the same time: the pull request is open, it comes from
@@ -169,9 +188,9 @@ comments, so a restart only empties the `/status` list until the next pass. See
 ### Webhooks and events
 
 The repository needs a Forgejo webhook with the events `issues`, `pull_request_label`, `action_run_failure`, `action_run_success`, `push`
-and `pull_request`.
-Forgejo accepts the two `action_run_*` events only when the hook is created: a PATCH does not add them, so delete the hook and create it
-again. Forgejo sends one event per finished workflow, which is why the review waits for the combined status.
+and `pull_request`. Bootstrap creates the hook with these events. Forgejo accepts the two `action_run_*` events only when the hook is
+created: a PATCH does not add them, so bootstrap deletes and recreates the hook when it must replace it. Forgejo sends one event per
+finished workflow, which is why the review waits for the combined status.
 With ForgeHands 0.4.10 or newer a repository that has no workflow file at all (`.forgejo/workflows`, `.gitea/workflows` or
 `.github/workflows`, no commit status) is reviewed and merged without a CI run: the switch `REVIEW_WITHOUT_CI` defaults to on, and the
 review starts on the `pull_request` event (opened, reopened, synchronized) or on the `push`. With a workflow, nothing changes.

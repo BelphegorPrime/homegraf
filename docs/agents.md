@@ -88,7 +88,7 @@ starts a review, and a review either approves or asks for another round. Agents 
   The route is a `LABEL_ROUTES` entry with `"on": "pull_request"`; the first such route names the label the reviewer uses.
 - A red CI run starts a **fix round** through the route with `"on": "ci_failure"`: reproduce the failing checks, fix, push to the same
   branch, comment.
-- A label round and a fix round both count against `MAX_ROUNDS` (default 3, a ForgeHands environment setting) per issue. When they are used
+- A label round and a fix round both count against `MAX_ROUNDS` per issue. `compose.yaml` sets it from `FORGEHANDS_MAX_ROUNDS` (default `3`); bootstrap accepts an integer from 1 to 100 and stops with an error for any other value. When they are used
   up no further round starts: the pull request gets a comment and the label `ai:blocked` (`BLOCKED_LABEL`). A review does not count as a
   round.
 - **The last round escalates.** `ai:changes` and `ci:failure` name `"escalate_to": "ai:escalate"`, so the last round (`MAX_ROUNDS`, 3) runs
@@ -124,6 +124,8 @@ CI runs use runner labelled `docker`. The required check pattern `ci / seed (*)`
 required check.
 
 ### Merging
+
+**Protected approved-open path.** A pull request touching a path matching the deny list in `FORGEHANDS_MERGE_POLICY` is approved but stays open for a human to merge. The bootstrap-built policy defaults to these deny globs: `.forgejo/**`, `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `.agents/**`, `.claude/**`, `compose.yaml`, `**/compose.yaml`, `setup.sh`, `scripts/**`, `infra/**`, `stacks/**`.
 
 `ai:approved` on the pull request of an agent issue makes ForgeHands merge it when, at the same time: the pull request is open, it comes from
 `ai/issue-<n>`, it is mergeable, the combined commit status of its head commit is green, and no changed file (a rename counts with both

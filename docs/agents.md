@@ -270,6 +270,34 @@ merges and `FORGEJO_SECURITY_TOKEN` can be dropped from `AGENT_SECRETS` and from
 - Create agent profiles with `mcp_server_refs: []`. A profile that inherits every server starts with about 160 tools instead of about 20,
   which costs context and causes wrong tool choices.
 
+## Scratch smoke check
+
+Run the factory smoke only against a disposable, private scratch repository:
+
+```sh
+python -m hgboot factory-smoke --repo OWNER/REPO --confirm-scratch OWNER/REPO [--keep] [--preflight] [--include-epic] [--timeout SECONDS] [--interval SECONDS] [-h|--help]
+```
+
+The repository name must start with `factory-smoke-`. `--confirm-scratch` must repeat `--repo` (guard against a wrong target). An existing repository is reused only when its description has the smoke marker and it is private. The target must also be allowlisted and have an explicit merge-policy entry. `--preflight` is read-only and spends no tokens. `--keep` retains artifacts. `--include-epic` adds the ordered epic and bounded follow-up scenarios and spends extra model tokens. `-h|--help` prints usage and exits 0. Usage errors and refusal exit 2, a failed smoke exits 1, and a pass exits 0.
+
+**Token cost:** The normal, protected and epic stages each start real agent runs. The stages are:
+- `normal path` (needs no `--include-epic`)
+- `ai:ready added later` (needs no `--include-epic`)
+- `protected path` (needs no `--include-epic`)
+- `duplicate trigger` (needs no `--include-epic`)
+- `epic graph` (needs `--include-epic`)
+- `epic order` (needs `--include-epic`)
+- `epic closure` (needs `--include-epic`)
+- `follow-up` (needs `--include-epic`)
+
+**Ownership-aware cleanup:** Cleanup deletes only issues created by this run, and deletes the repository only when this run created it with the scratch marker. `--keep` retains the repository and its issues; it does not make an unmarked or public repository reusable.
+
+**Evidence:** Unit tests in `bootstrap/tests/` use loopback HTTP fixtures at the external API boundary and prove code paths. Only a `factory-smoke` run against a real stack is real end-to-end evidence. This documentation claims no live fresh-stack pass.
+
+**Stats and tool count:** `stats.usage_to_metrics` is the field of the OpenHands conversation JSON to read token/cost metrics from, through the OpenHands API; hgboot does not read it. For tool count, a profile with `mcp_server_refs: []` starts with about 20 tools instead of about 160; an operator checks it by reading the profile back and comparing the tool count of a started conversation.
+
+Examples use `example-owner/factory-smoke-example`.
+
 ## Known failure modes
 
 **A worker run "finishes" without delivering.** A model that answers in words without calling a tool ("next I will clone the repository")

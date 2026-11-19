@@ -225,8 +225,7 @@ Fresh stack, in this order (`setup.sh` writes `FORGEHANDS_BOOTSTRAP=1` when you 
      `homegraf-agent`), not an administrator and not the human; a token with `write:repository`, `write:issue` and `read:user`; `write` on
      every allowed repository. `FORGEHANDS_HUMAN_LOGIN` is the operator's own login (`setup.sh` writes it), and `FORGEHANDS_ALLOWED_SENDERS`
      names the human first and the agent after him: every event from any other sender is ignored.
-   - the labels and one `forgejo` webhook per allowed repository (`factory_repos.py`), events `issues`, `pull_request_label`,
-     `action_run_failure`, `action_run_success` and `push`; then the optional GitHub mirror (`push_mirror.py`) when
+   - the labels and one `forgejo` webhook per allowed repository (`factory_repos.py`), events `issues`, `pull_request_label`, `action_run_failure`, `action_run_success`, `push` and `pull_request`; then the optional GitHub mirror (`push_mirror.py`) when
      `FORGEHANDS_MIRROR_URL` is set.
    - the CI half (`factory_ci.py`): the seed `.forgejo/workflows/ci.yaml`, the runner readiness above and the required check
      `ci / seed (*)` on the default branch.
@@ -235,7 +234,7 @@ Fresh stack, in this order (`setup.sh` writes `FORGEHANDS_BOOTSTRAP=1` when you 
      and compared; a write that did not stick fails the step and publishes no id.
    - the routes (`hgboot.agents.label_routes()`, published by `factory._routes()`): ten routes, thirteen with a free model.
    - the runtime handoff `forgehands.json` in `FORGEHANDS_RUNTIME_DIR` (`/factory-runtime`), written last. ForgeHands' launcher reads it
-     (`FORGEHANDS_RUNTIME_FILE`) and starts only with it; a failing stage removes it, so a half-done stack never starts direct mode.
+     (`FORGEHANDS_RUNTIME_FILE`) and starts only with it; a failed run publishes no new ready handoff. Existing handoff invalidation is best-effort, so an old ready file can survive an `OSError`; see [Runtime handoff](#runtime-handoff) for details.
 
 The mail: the factory warns once (`mailer_warning()`) unless `FORGEJO_MAILER_ENABLED` is true, because Forgejo mails nobody when a run
 mentions the human; fill the `FORGEJO_MAILER_*` variables in `.env` (`.env.example` lists them).

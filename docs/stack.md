@@ -358,6 +358,16 @@ disabled, none of the variables below is read and the stack behaves as before; t
 untouched; you add the variables below by hand, the way `.env.example` lists them where it does. How the factory then runs is in
 [agents.md](agents.md).
 
+#### Writable primary and optional GitHub push mirror
+
+Forgejo remains the writable primary. The optional mirror is push-only: the factory configures Forgejo to push to a GitHub repository; it does not create a GitHub source or pull mirror. Set both `FORGEHANDS_MIRROR_URL` and `FORGEHANDS_MIRROR_TOKEN`; without them, nothing is mirrored. For example, `FORGEHANDS_MIRROR_URL=https://github.com/example-owner/example-repo.git` and `FORGEHANDS_MIRROR_TOKEN=<token>`. The URL must name a GitHub repository (`owner/name`) and use HTTPS when a token is set.
+
+The token must be able to read the target repository and write its contents (GitHub fine-grained token: **Contents: read and write**). Workflows in `.github/workflows/` declare no workflow-token write permissions: all have top-level `permissions: {}`; bootstrap jobs use `contents: read`, image jobs use `contents: read`, and the seed job uses `contents: read`.
+
+Before writing, the reconciler refuses a missing source repository/default branch or a missing target repository, and refuses ambiguous multiple Forgejo push mirrors to that target. It checks every branch: a GitHub-only branch would be deleted by mirror sync and is refused; a GitHub-ahead or diverged branch is refused to avoid rewriting history. GitHub's compare endpoint decides whether a shared branch is behind, identical, ahead or diverged. If GitHub does not know the newer Forgejo commit yet (compare returns 404), Forgejo's compare endpoint must confirm GitHub's older commit is an ancestor; otherwise mirroring is refused. A behind branch is then brought up to date by sync. A drifted mirror is repaired by removing and recreating it. Forgejo runs mirror sync asynchronously on commit and every `8h0m0s`.
+
+The GitHub token is sent only to the GitHub API and Forgejo's mirror credential field as the remote password; it is not put in a remote address, log or error. Authenticated requests do not follow redirects to another origin, and echoed service text is cleaned. Forgejo enforces which operator can manage mirrors; the helper does not check those rights. Bridging external GitHub pull requests back into Forgejo stays manual.
+
 | Variable | Required | Default / note |
 | --- | --- | --- |
 | `FORGEHANDS_BOOTSTRAP` | — | `1` opts in; unset or `0` leaves the factory off |

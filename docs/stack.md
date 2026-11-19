@@ -388,7 +388,9 @@ untouched; you add the variables below by hand, the way `.env.example` lists the
 **MCP isolation.** Each agent profile is written with `mcp_server_refs: []`, and `_agent_matches` accepts a stored profile only when that
 list is empty too. The reason is the tool count: a profile with no MCP server offers the model fewer tools. The code records no other reason.
 
-**Runtime handoff.** `forgehands.json` is written to `FORGEHANDS_RUNTIME_DIR` (default `/factory-runtime`). It is the last stage of a
+#### Runtime handoff
+
+`forgehands.json` is written to `FORGEHANDS_RUNTIME_DIR` (default `/factory-runtime`). It is the last stage of a
 factory run: only after preflight, the agent user, labels and hooks, the mirror, CI, the profiles and the routes have passed. The file has
 mode `0600`, is replaced atomically, is at most 64 KiB and has the shape `{"ready": <bool>, "env": {...}}`. ForgeHands reads it from
 `FORGEHANDS_RUNTIME_FILE` and starts direct mode only with it. `env` holds these names: `FORGEJO_URL`, `FORGEJO_TOKEN`,

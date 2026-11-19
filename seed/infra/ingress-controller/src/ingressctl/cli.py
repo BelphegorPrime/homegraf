@@ -73,7 +73,7 @@ def build_context(root: pathlib.Path | None, inv, specs: list[ServiceSpec]) -> C
 
 
 def _resolve_presets(ctx: Context, specs: list[ServiceSpec], *, persist: bool, session=None) -> None:
-    """Löst die Presets der ausgewählten Manifeste einmal pro Lauf auf (öffentlicher Endpunkt, Standard-TLS-Prüfung)."""
+    """Resolve presets for the selected manifests once per run (public endpoint, standard TLS verification)."""
     names = {name for s in specs if s.public is not None for name in s.public.allow_presets}
     if not names:
         return

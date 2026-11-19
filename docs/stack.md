@@ -360,7 +360,7 @@ untouched; you add the variables below by hand, the way `.env.example` lists the
 
 #### Writable primary and optional GitHub push mirror
 
-Forgejo remains the writable primary. The optional mirror is push-only: the factory configures Forgejo to push to a GitHub repository; it does not create a GitHub source or pull mirror. Set both `FORGEHANDS_MIRROR_URL` and `FORGEHANDS_MIRROR_TOKEN`; When neither variable is set, the mirror stays off; setting only one is an error. For example, `FORGEHANDS_MIRROR_URL=https://github.com/example-owner/example-repo.git` and `FORGEHANDS_MIRROR_TOKEN=<token>`. The URL must name a GitHub repository (`owner/name`) and use HTTPS when a token is set.
+Forgejo remains the writable primary. The optional mirror is push-only: the factory configures Forgejo to push to a GitHub repository; it does not create a GitHub source or pull mirror. Set both `FORGEHANDS_MIRROR_URL` and `FORGEHANDS_MIRROR_TOKEN`. When neither variable is set, the mirror stays off; setting only one is an error. For example, `FORGEHANDS_MIRROR_URL=https://github.com/example-owner/example-repo.git` and `FORGEHANDS_MIRROR_TOKEN=<token>`. The URL must name a GitHub repository (`owner/name`) and use HTTPS when a token is set.
 
 The token must be able to read the target repository and write its contents (GitHub fine-grained token: **Contents: read and write**). Workflows in `.github/workflows/` declare no workflow-token write permissions: all have top-level `permissions: {}`; bootstrap jobs use `contents: read`, image jobs use `contents: read`, and the seed job uses `contents: read`.
 

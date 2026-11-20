@@ -1,4 +1,4 @@
-"""Let's Encrypt über NPM: plan/apply/renew/adopt (Scheibe 4), gegen FakeNpm und FakeChecker."""
+"""Let's Encrypt via NPM: plan/apply/renew/adopt (slice 4), using FakeNpm and FakeChecker."""
 import datetime as dt
 import json
 
@@ -119,7 +119,7 @@ def test_dns01_skips_precheck_and_passes_provider(env, monkeypatch, capsys):
     ctx.le_dns_credentials = "token=le-secret"
 
     def no_http01(domains):
-        raise AssertionError("DNS-01 darf die HTTP-01-Prüfung nicht aufrufen")
+        raise AssertionError("DNS-01 must not call the HTTP-01 check")
 
     monkeypatch.setattr(ctx.npm["main"], "test_http_challenge", no_http01)
     (spec,) = env.specs("omniroute")
@@ -143,7 +143,7 @@ def test_dns01_without_credentials_is_a_blocker(env):
 
 
 def test_validate_context_reports_no_dns_credential_blocker(env):
-    """`ingressctl validate` hat keine NPM-Clients und darf offline keine Credentials verlangen."""
+    """`ingressctl validate` has no NPM clients and must not require credentials offline."""
     from ingressctl.reconcile import Context, _static_blockers
     set_issuer(env, dns_provider="cloudflare")
     use_le(env, cert="issuer_ref: letsencrypt, dns_challenge: true")
@@ -168,9 +168,9 @@ def test_build_context_needs_no_infisical_for_le_and_reads_dns_credentials(env, 
     inv = load_inventory(env.root)
     specs = [s for s in load_all(env.root, inv) if s.stack_id == "omniroute"]
     ctx = cli.build_context(env.root, inv, specs)
-    assert specs[0].issuer_ref not in ctx.issuers  # kein Infisical-Client für Let's Encrypt
+    assert specs[0].issuer_ref not in ctx.issuers  # no Infisical client for Let's Encrypt
     assert ctx.le_dns_credentials == "token=le-secret"
-    use_le(env)  # ohne dns_challenge wird das Secret gar nicht gelesen
+    use_le(env)  # the secret is not read without dns_challenge
     specs = [s for s in load_all(env.root, inv) if s.stack_id == "omniroute"]
     assert cli.build_context(env.root, inv, specs).le_dns_credentials is None
 
@@ -213,7 +213,7 @@ def test_expiring_le_certificate_is_renewed_in_place(env):
     host_before = dict(env.npm.hosts[row["npm_host_id"]])
     ctx, _, res = apply(env)
     assert res == "applied"
-    assert env.npm.hosts[row["npm_host_id"]] == host_before  # Host bleibt unverändert
+    assert env.npm.hosts[row["npm_host_id"]] == host_before  # host remains unchanged
     assert len(env.npm.certs) == 1 and len(env.npm.le_issued) == 1
     updated = ctx.state.get("ai-sandbox/omniroute")
     assert updated["npm_cert_id"] == row["npm_cert_id"]
@@ -237,7 +237,7 @@ def test_adopt_switches_to_own_le_certificate_and_keeps_the_hand_made_one(env):
     assert res == "applied"
     row = ctx.state.get("ai-sandbox/omniroute")
     assert env.npm.hosts[hid]["certificate_id"] == row["npm_cert_id"] != 999
-    assert 999 in env.npm.certs  # handgemachtes Zertifikat wird nie gelöscht
+    assert 999 in env.npm.certs  # manually created certificate is never deleted
     assert len(env.npm.le_issued) == 1
 
 

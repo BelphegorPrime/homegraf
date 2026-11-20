@@ -190,7 +190,7 @@ def plan_service(ctx: Context, spec: ServiceSpec, live_hosts: list[dict], live_c
     unresolved = [name for name in (spec.public.allow_presets if spec.public else ())
                   if name in ctx.preset_errors]
     for name in unresolved:
-        p.blockers.append(f"preset '{name}' nicht abrufbar und kein letzter Stand vorhanden "
+        p.blockers.append(f"preset '{name}' unavailable and no saved value "
                           f"({ctx.preset_errors[name]}); fail closed")
     if spec.public is not None:
         for note in ctx.preset_notes:

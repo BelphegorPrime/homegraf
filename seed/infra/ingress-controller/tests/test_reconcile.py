@@ -499,7 +499,7 @@ def test_plan_shows_advanced_config_diff(env):
     assert "advanced_config" in text and "/hook/abc" in text and "/hook/other" in text
 
 
-# --- proxy.public: aufgelöste IP-Presets -------------------------------------------------------
+# --- proxy.public: resolved IP presets -------------------------------------------------------
 
 def test_preset_resolves_into_host_and_state(env):
     meta = FakeGithubMeta()
@@ -576,6 +576,7 @@ def test_failed_fetch_without_stored_list_fails_closed(env):
 
     ctx, spec, p = plan_with_presets(env, meta, persist=True)
 
+    assert any("preset 'github-hooks' unavailable and no saved value" in blocker for blocker in p.blockers)
     assert any("fail closed" in blocker for blocker in p.blockers)
     with pytest.raises(ConflictError, match="fail closed"):
         apply_service(ctx, spec, commit=env.commit_sha)

@@ -10,7 +10,7 @@ x-addon:
   secrets: []
 services:
   redisinsight:
-    image: redis/redisinsight:3.8.0
+    image: redis/redisinsight:3.10.0
     restart: unless-stopped
     ports:
       - "__PORT__:5540"

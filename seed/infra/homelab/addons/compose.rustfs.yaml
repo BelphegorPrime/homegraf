@@ -14,7 +14,7 @@ x-addon:
     S3_SECRET_KEY: ${RUSTFS_SECRET_KEY}
 services:
   rustfs:
-    image: rustfs/rustfs:1.0.4
+    image: rustfs/rustfs:1.0.6
     user: "0:0"
     restart: unless-stopped
     ports:

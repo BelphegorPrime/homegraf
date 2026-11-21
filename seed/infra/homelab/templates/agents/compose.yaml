@@ -131,7 +131,7 @@ services:
       start_period: 15s
   openhands:
     # The all-in-one Agent Canvas image (Canvas, Agent Server and Automation Server), main on 2026-11-14.
-    image: ghcr.io/openhands/agent-canvas@sha256:360eb652ef69577d013326b2505d6bd04cbfeac257fc259e6012ae904f2270bb
+    image: ghcr.io/openhands/agent-canvas@sha256:bcdbb3fb9610f14eda67f39fc609f162ad8c3c28697d6ff3f4adae55c15c3f1d
     ports:
       - "8000:8000"
     volumes:

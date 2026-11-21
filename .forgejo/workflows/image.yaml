@@ -1,0 +1,103 @@
+name: image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: docker
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - working-directory: app
+        run: npm ci
+      - working-directory: app
+        run: npm run typecheck
+      - working-directory: app
+        run: npm run lint
+      - working-directory: app
+        run: npm run format:check
+      - working-directory: app
+        run: npm test
+      - working-directory: app
+        run: npm audit --omit=dev --audit-level=high
+
+  image:
+    needs: test
+    runs-on: docker
+    timeout-minutes: 45
+    services:
+      docker:
+        image: docker:29.9.2-dind
+        options: >-
+          --privileged
+          --health-cmd "docker info"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+        env:
+          DOCKER_TLS_CERTDIR: ""
+    env:
+      DOCKER_HOST: tcp://docker:2375
+      DOCKER_TLS_CERTDIR: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Docker CLI, Buildx, and Trivy
+        shell: bash
+        run: |
+          bin="$RUNNER_TEMP/image-tools"
+          mkdir -p "$bin" "$HOME/.docker/cli-plugins"
+          cd "$bin"
+          curl -fsSLo docker.tgz https://download.docker.com/linux/static/stable/x86_64/docker-29.9.2.tgz
+          curl -fsSLo docker-buildx https://github.com/docker/buildx/releases/download/v0.39.1/buildx-v0.39.1.linux-amd64
+          curl -fsSLo trivy.tgz https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_Linux-64bit.tar.gz
+          sha256sum --check <<'EOF'
+          9ac225999fd5e863f7694c728ef23d480616b1e5639328fa309befd4243d69eb  docker.tgz
+          903090816da68f8bc1a2ff5346dd163a5adacfce4548d003c75df42cd47a9bf4  docker-buildx
+          bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf  trivy.tgz
+          EOF
+          tar -xzf docker.tgz --strip-components=1 docker/docker
+          install docker-buildx "$HOME/.docker/cli-plugins/docker-buildx"
+          tar -xzf trivy.tgz trivy
+          echo "$bin" >> "$GITHUB_PATH"
+      - name: Wait for Docker daemon
+        run: |
+          for attempt in $(seq 1 30); do
+            if version=$(timeout 2s docker info --format '{{.ServerVersion}}') && [ -n "$version" ]; then
+              printf 'DinD server version: %s\n' "$version"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Docker daemon did not become ready within 30 attempts" >&2
+          exit 1
+      - name: Build image
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/}"
+          else
+            version=dev
+          fi
+          docker buildx build --load --platform linux/amd64 --file app/Dockerfile \
+            --build-arg APP_VERSION="$version" --label "org.opencontainers.image.version=$version" \
+            --tag homegraf:scan .
+          loaded_version=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' homegraf:scan)
+          test "$loaded_version" = "$version"
+          printf 'Loaded image version: %s\n' "$loaded_version"
+      - name: Scan loaded image
+        run: |
+          trivy image --image-src docker --scanners vuln --pkg-types os,library \
+            --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 homegraf:scan

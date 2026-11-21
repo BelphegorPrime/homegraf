@@ -81,23 +81,77 @@ jobs:
           done
           echo "Docker daemon did not become ready within 30 attempts" >&2
           exit 1
+      - name: Resolve image version and tags
+        id: metadata
+        shell: bash
+        env:
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          version=dev
+          tags=
+          number='(0|[1-9][0-9]*)'
+          release="^refs/tags/v($number\.$number)\.$number$"
+          if [ "$EVENT" = push ]; then
+            if [ "$REF" = refs/heads/main ]; then
+              tags="main sha-${COMMIT:0:7}"
+            elif [[ "$REF" =~ $release ]]; then
+              version="${REF#refs/tags/}"
+              tags="${version#v} ${BASH_REMATCH[1]} latest"
+            fi
+          fi
+          printf 'version=%s\ntags=%s\n' "$version" "$tags" >> "$GITHUB_OUTPUT"
       - name: Build image
         env:
-          GITHUB_REF: ${{ github.ref }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          VERSION: ${{ steps.metadata.outputs.version }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF#refs/tags/}"
-          else
-            version=dev
-          fi
           docker buildx build --load --platform linux/amd64 --file app/Dockerfile \
-            --build-arg APP_VERSION="$version" --label "org.opencontainers.image.version=$version" \
+            --build-arg APP_VERSION="$VERSION" --label "org.opencontainers.image.version=$VERSION" \
             --tag homegraf:scan .
           loaded_version=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' homegraf:scan)
-          test "$loaded_version" = "$version"
+          test "$loaded_version" = "$VERSION"
           printf 'Loaded image version: %s\n' "$loaded_version"
       - name: Scan loaded image
+        id: scan
         run: |
           trivy image --image-src docker --scanners vuln --pkg-types os,library \
             --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 homegraf:scan
+      - name: Set up multi-platform builder
+        if: success() && steps.scan.outcome == 'success' && github.event_name == 'push' && steps.metadata.outputs.tags != ''
+        run: |
+          docker run --rm --privileged docker.io/tonistiigi/binfmt@sha256:1b804311fe87047a4c96d38b4b3ef6f62fca8cd125265917a9e3dc3c996c39e6 --install arm64
+          docker buildx create --name publish --driver docker-container \
+            --driver-opt image=docker.io/moby/buildkit@sha256:ddd1ca44b21eda906e81ab14a3d467fa6c39cd73b9a39df1196210edcb8db59e
+          docker buildx inspect publish --bootstrap | grep -F linux/arm64
+      - name: Login to Forgejo registry
+        if: success() && steps.scan.outcome == 'success' && github.event_name == 'push' && steps.metadata.outputs.tags != ''
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          JOB_TOKEN: ${{ github.token }}
+        run: |
+          # Job-token package write access is unverified until the first authorized push.
+          printf '%s' "$JOB_TOKEN" | docker login git.szb.marcel.codes --username "$REGISTRY_USER" --password-stdin
+      - name: Publish multi-platform image
+        if: success() && steps.scan.outcome == 'success' && github.event_name == 'push' && steps.metadata.outputs.tags != ''
+        shell: bash
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          TAGS: ${{ steps.metadata.outputs.tags }}
+        run: |
+          trap 'docker logout git.szb.marcel.codes' EXIT
+          image=git.szb.marcel.codes/marcel/homegraf
+          read -r -a aliases <<< "$TAGS"
+          args=()
+          for tag in "${aliases[@]}"; do
+            args+=(--tag "$image:$tag")
+          done
+          metadata="$RUNNER_TEMP/published-image.json"
+          docker buildx build --builder publish --push --platform linux/amd64,linux/arm64 \
+            --file app/Dockerfile --build-arg APP_VERSION="$VERSION" \
+            --label "org.opencontainers.image.version=$VERSION" --provenance=mode=max --sbom=true \
+            --metadata-file "$metadata" "${args[@]}" .
+          digest=$(node -e 'const d = require(process.argv[1])["containerimage.digest"]; if (!d) process.exit(1); console.log(d)' "$metadata")
+          for tag in "${aliases[@]}"; do
+            printf 'Published %s at %s\n' "$image:$tag" "$digest"
+          done

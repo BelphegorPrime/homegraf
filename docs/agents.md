@@ -275,6 +275,7 @@ merges and `FORGEJO_SECURITY_TOKEN` can be dropped from `AGENT_SECRETS` and from
 Run the factory smoke only against a disposable, private scratch repository:
 
 ```sh
+cd bootstrap
 python -m hgboot factory-smoke --repo OWNER/REPO --confirm-scratch OWNER/REPO [--keep] [--preflight] [--include-epic] [--timeout SECONDS] [--interval SECONDS] [-h|--help]
 ```
 

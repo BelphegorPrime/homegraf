@@ -26,7 +26,11 @@ RUN mkdir /out && cd /ctx/seed \
 # checkout mounted at /repo, git is for the PR flow. apt-get upgrade picks up Debian security fixes (e.g. zlib1g) that
 # the base image has not rebuilt with yet.
 FROM node:26.13.0-slim
-RUN apt-get update \
+# APT_REFRESH changes every day (set by the image workflow), so the build cache never keeps an old upgrade layer:
+# without it the cached layer kept krb5 1.21.3-5+deb13u1 although Debian had published the fix, and the scan failed.
+ARG APT_REFRESH=manual
+RUN echo "apt refresh: ${APT_REFRESH}" \
+ && apt-get update \
  && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends python3 python3-yaml git openssh-client ca-certificates \
  && rm -rf /var/lib/apt/lists/*

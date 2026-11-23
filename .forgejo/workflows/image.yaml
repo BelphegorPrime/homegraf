@@ -109,7 +109,7 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
           docker buildx build --load --platform linux/amd64 --file app/Dockerfile \
-            --build-arg APP_VERSION="$VERSION" --label "org.opencontainers.image.version=$VERSION" \
+            --build-arg APP_VERSION="$VERSION" --build-arg APT_REFRESH="$(date -u +%Y-%m-%d)" --label "org.opencontainers.image.version=$VERSION" \
             --tag homegraf:scan .
           loaded_version=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' homegraf:scan)
           test "$loaded_version" = "$VERSION"
@@ -184,7 +184,7 @@ jobs:
           done
           metadata="$RUNNER_TEMP/published-image.json"
           docker buildx build --builder publish --push --platform linux/amd64,linux/arm64 \
-            --file app/Dockerfile --build-arg APP_VERSION="$VERSION" \
+            --file app/Dockerfile --build-arg APP_VERSION="$VERSION" --build-arg APT_REFRESH="$(date -u +%Y-%m-%d)" \
             --label "org.opencontainers.image.version=$VERSION" --provenance=mode=max --sbom=true \
             --metadata-file "$metadata" "${args[@]}" .
           digest=$(node -e 'const d = require(process.argv[1])["containerimage.digest"]; if (!d) process.exit(1); console.log(d)' "$metadata")

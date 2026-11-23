@@ -81,6 +81,8 @@ jobs:
           done
           echo "Docker daemon did not become ready within 30 attempts" >&2
           exit 1
+      - name: Check live registry TLS
+        run: test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' https://git.szb.marcel.codes/v2/)" = 401
       - name: Resolve image version and tags
         id: metadata
         shell: bash
@@ -117,6 +119,40 @@ jobs:
         run: |
           trivy image --image-src docker --scanners vuln --pkg-types os,library \
             --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 homegraf:scan
+      - name: Smoke-test loaded image
+        shell: bash
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          app="homegraf-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          browser="$app-browser"
+          trap 'timeout 15s docker rm -f -v "$browser" "$app" >/dev/null 2>&1 || true' EXIT
+          timeout 30s docker run -d --name "$app" --network none homegraf:scan
+          browser_image=mcr.microsoft.com/playwright:v1.58.2-noble@sha256:6446946a1d9fd62d9ae501312a2d76a43ee688542b21622056a372959b65d63d
+          timeout 300s docker pull "$browser_image"
+          timeout 60s docker run --rm --name "$browser" --network "container:$app" -i \
+            "$browser_image" bash -euo pipefail -s -- "$VERSION" <<'EOF'
+          base=http://127.0.0.1:8080
+          for attempt in $(seq 1 15); do
+            if health=$(curl -fsS --max-time 1 "$base/api/health") && [ "$health" = '{"ok":true}' ]; then
+              break
+            fi
+            if [ "$attempt" = 15 ]; then
+              echo 'Homegraf health check failed' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          # Chromium executes the served bundle; a label or a bundle string alone cannot prove what React renders.
+          chrome=(/ms-playwright/chromium-*/chrome-linux64/chrome)
+          dom=$("${chrome[0]}" --headless --no-sandbox --disable-dev-shm-usage \
+            --virtual-time-budget=5000 --dump-dom "$base/" 2>/tmp/chromium.log) || { cat /tmp/chromium.log >&2; exit 1; }
+          if ! grep -Fq "homegraf <span class=\"text-xs font-normal text-muted-foreground\">$1</span>" <<< "$dom"; then
+            printf 'Login page did not render expected app version: %s\n' "$1" >&2
+            exit 1
+          fi
+          printf 'Rendered app version: %s\n' "$1"
+          EOF
       - name: Set up multi-platform builder
         if: success() && steps.scan.outcome == 'success' && github.event_name == 'push' && steps.metadata.outputs.tags != ''
         run: |

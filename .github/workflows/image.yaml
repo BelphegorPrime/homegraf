@@ -56,6 +56,11 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # The day goes into the build as APT_REFRESH (app/Dockerfile): the apt upgrade layer is rebuilt once a day instead of
+      # being reused from the build cache with old packages (the scan failed on a krb5 fix the cache never picked up).
+      - id: aptrefresh
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       # The version shown in the UI: the tag on a release (v1.2.3), the placeholder "dev" on every other build.
       - id: version
         run: echo "version=$(git describe --tags --exact-match 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
@@ -98,7 +103,9 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: homegraf:scan
-          build-args: APP_VERSION=${{ steps.version.outputs.version }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+            APT_REFRESH=${{ steps.aptrefresh.outputs.day }}
           cache-from: type=gha,scope=homegraf
           cache-to: type=gha,scope=homegraf,mode=max
 
@@ -120,7 +127,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          build-args: APP_VERSION=${{ steps.version.outputs.version }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+            APT_REFRESH=${{ steps.aptrefresh.outputs.day }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true

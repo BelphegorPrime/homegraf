@@ -163,11 +163,17 @@ jobs:
       - name: Login to Forgejo registry
         if: success() && steps.scan.outcome == 'success' && github.event_name == 'push' && steps.metadata.outputs.tags != ''
         env:
-          REGISTRY_USER: ${{ github.actor }}
-          JOB_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ vars.PACKAGES_USERNAME }}
+          REGISTRY_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
         run: |
-          # Job-token package write access is unverified until the first authorized push.
-          printf '%s' "$JOB_TOKEN" | docker login git.szb.marcel.codes --username "$REGISTRY_USER" --password-stdin
+          # Run 3689 job 4898 logged in successfully but the Forgejo job token was
+          # rejected with HTTP 401 at blob upload, so publication uses a scoped
+          # package token (write:package) provided by the operator.
+          if [ -z "${REGISTRY_USER:-}" ] || [ -z "${REGISTRY_TOKEN:-}" ]; then
+            echo "Missing scoped Forgejo package credentials: set vars.PACKAGES_USERNAME and secrets.PACKAGES_TOKEN" >&2
+            exit 1
+          fi
+          printf '%s' "$REGISTRY_TOKEN" | docker login git.szb.marcel.codes --username "$REGISTRY_USER" --password-stdin
       - name: Publish multi-platform image
         if: success() && steps.scan.outcome == 'success' && github.event_name == 'push' && steps.metadata.outputs.tags != ''
         shell: bash

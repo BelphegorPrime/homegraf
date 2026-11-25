@@ -495,6 +495,28 @@ class AgentProfilesTest(unittest.TestCase):
         self.assertEqual(self.fake.llm[LLM_STRONG]["model"], STRONG_MODEL)
         self.assertNotIn("/api/agent-profiles/planner", written)
 
+    def test_a_legacy_worker_strong_instruction_is_replaced_once(self):
+        ids = self.run_profiles()
+        legacy = "Legacy install: always run infra/ci/validate.sh before opening a PR."
+        self.fake.agents["worker-strong"]["system_message_suffix"] = legacy
+        self.fake.writes.clear()
+
+        again = self.run_profiles()
+
+        self.assertEqual(again, ids)
+        self.assertEqual(len(self.fake.writes), 1)
+        method, path, _ = self.fake.writes[0]
+        self.assertEqual((method, path), ("POST", "/api/agent-profiles/worker-strong"))
+        prompt = (PROMPTS / "worker-strong.md").read_text(encoding="utf-8")
+        stored = self.fake.agents["worker-strong"]["system_message_suffix"]
+        self.assertEqual(stored, prompt)
+        self.assertNotIn(legacy, stored)
+        self.assertEqual(self.fake.agents["worker-strong"]["id"], ids["worker-strong"])
+
+        self.fake.writes.clear()
+        self.assertEqual(self.run_profiles(), ids)
+        self.assertEqual(self.fake.writes, [])
+
     def test_an_ignored_agent_update_blocks_readiness(self):
         ids = self.run_profiles()
         self.fake.agents["reviewer"]["system_message_suffix"] = "stale reviewer"

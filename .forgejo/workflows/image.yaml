@@ -114,10 +114,49 @@ jobs:
           loaded_version=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' homegraf:scan)
           test "$loaded_version" = "$VERSION"
           printf 'Loaded image version: %s\n' "$loaded_version"
+      - name: Resolve Trivy DB cache key
+        id: trivydb
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      - name: Restore Trivy DB cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/trivy-cache
+          key: trivy-db-${{ steps.trivydb.outputs.day }}
+          restore-keys: trivy-db-
+      - name: Download Trivy DB
+        shell: bash
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+          TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
+        run: |
+          # The DB is public: an empty Docker config keeps registry credentials out of the download.
+          export DOCKER_CONFIG="$RUNNER_TEMP/trivy-docker-config"
+          mkdir -p "$DOCKER_CONFIG"
+          for attempt in 1 2 3; do
+            if trivy image --download-db-only; then
+              exit 0
+            fi
+            printf 'Trivy DB download attempt %s failed\n' "$attempt" >&2
+            sleep $((attempt * 20))
+          done
+          # Diagnostics: what the runner gets from both sources.
+          curl -sS -o /dev/null -w 'mirror.gcr.io manifest: %{http_code}\n' \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+            https://mirror.gcr.io/v2/aquasec/trivy-db/manifests/2 || true
+          curl -sS -o /dev/null -w 'ghcr.io token: %{http_code}\n' \
+            'https://ghcr.io/token?scope=repository:aquasecurity/trivy-db:pull&service=ghcr.io' || true
+          if [ -f "$TRIVY_CACHE_DIR/db/trivy.db" ]; then
+            echo "::warning::Trivy DB download failed; scanning with the cached DB"
+            exit 0
+          fi
+          echo "Trivy DB download failed and no cached DB exists" >&2
+          exit 1
       - name: Scan loaded image
         id: scan
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
         run: |
-          trivy image --image-src docker --scanners vuln --pkg-types os,library \
+          trivy image --image-src docker --scanners vuln --pkg-types os,library --skip-db-update \
             --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 homegraf:scan
       - name: Smoke-test loaded image
         shell: bash

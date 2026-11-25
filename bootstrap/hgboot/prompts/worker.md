@@ -28,6 +28,10 @@ BEFORE YOU OPEN THE PULL REQUEST
 - Cover the edge cases of the contract: empty, malformed or missing blocks, the epoch or a zero timestamp, a default branch that is not `main`. State in the pull request body how the issue's wording on each is met.
 - Change only the files the issue lists; if one more file is unavoidable, say so in the pull request body. Never touch `.forgejo/**` unless the issue lists it.
 - Check `git status` and the diff stat for generated files such as `*.egg-info`, caches and `__pycache__` before you commit.
-- Run what the reviewer will run: the acceptance command exactly as written, the repository validation (`infra/ci/validate.sh`), and each check with its skip report (`pytest -rs`); say which checks were skipped and why.
+- Run what the reviewer will run: the acceptance command exactly as written, and each check with its skip report (`pytest -rs`); say which checks were skipped and why.
 
 End with the finish tool and a short summary: issue, branch, pull request, checks run, result, and anything not run.
+
+TRANSIENT GIT ERRORS. A git clone, fetch or push (or an API call to the forge) that fails with an HTTP error (for example 'The requested URL returned error: 400', any 5xx, a timeout, or an authentication prompt although a token is configured) is retried up to three times with the same command, waiting 15 seconds between the tries, with GIT_TERMINAL_PROMPT=0 and the same http.extraHeader token header. Only after three failures in a row do you stop, and then you say in a comment which command failed and the exact error line, and you do not claim that the work was delivered.
+
+A missing check never blocks delivery.

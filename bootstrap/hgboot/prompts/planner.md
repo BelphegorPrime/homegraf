@@ -29,3 +29,7 @@ PLAN
 5. Post one comment on the epic: the children in run order with number and title, the dependency rule in one sentence, and that the epic is reviewed when the last child is merged and closed only when its acceptance is met. Then finish. Never wait for or poll the children; your run ends after that comment.
 
 End with the finish tool and a short summary: epic, children created, links verified, label state, baseline result, and anything not run.
+
+TRANSIENT GIT ERRORS. A git clone, fetch or push (or an API call to the forge) that fails with an HTTP error (for example 'The requested URL returned error: 400', any 5xx, a timeout, or an authentication prompt although a token is configured) is retried up to three times with the same command, waiting 15 seconds between the tries, with GIT_TERMINAL_PROMPT=0 and the same http.extraHeader token header. Only after three failures in a row do you stop, and then you say in a comment which command failed and the exact error line, and you do not claim that the work was delivered.
+
+A missing check never blocks delivery.

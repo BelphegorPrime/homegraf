@@ -137,11 +137,20 @@ required check.
 
 ### Merging
 
-**Protected approved-open path.** A pull request that touches a path matching the deny list of `FORGEHANDS_MERGE_POLICY` is approved but stays open for a human to merge. The default deny globs of the bootstrap-built policy are `.forgejo/**`, `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `.agents/**`, `.claude/**`, `compose.yaml`, `**/compose.yaml`, `setup.sh`, `scripts/**`, `infra/**` and `stacks/**`.
+**Protected paths and two-key paths.** A pull request that touches a path matching the deny list of `FORGEHANDS_MERGE_POLICY` is approved,
+but whether ForgeHands may then merge it depends on `two_keys`. A deny glob that is also listed in `two_keys` is a two-key path: ForgeHands
+merges it automatically once the reviewer approved (`ai:approved`), CI is green and the security review comment of that very commit says
+`OK`; the second key is the security reviewer's account of its own. Every other deny glob has no second key and stays open for a human to
+merge. The default deny globs of the bootstrap-built policy are `.forgejo/**`, `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
+`.agents/**`, `.claude/**`, `compose.yaml`, `**/compose.yaml`, `setup.sh`, `scripts/**`, `infra/**` and `stacks/**`.
+
+The production policy lists `compose.yaml` and `seed/infra/homelab/templates/agents/compose.yaml` in `deny` and `two_keys`, so Compose
+changes merge after both keys: reviewer and security approval, no human merge.
 
 `ai:approved` on the pull request of an agent issue makes ForgeHands merge it when, at the same time: the pull request is open, it comes from
-`ai/issue-<n>`, it is mergeable, the combined commit status of its head commit is green, and no changed file (a rename counts with both
-names) matches a deny pattern of `MERGE_POLICY` for that repository.
+`ai/issue-<n>`, it is mergeable, the combined commit status of its head commit is green, and every changed file that matches a deny pattern
+of `MERGE_POLICY` for that repository also matches a `two_keys` pattern of that repository with the security review comment of the head commit
+saying `OK` (a rename counts with both names).
 
 `MERGE_POLICY` is a JSON value in ForgeHands' own environment (`FORGEHANDS_MERGE_POLICY`; the bootstrap writes it into the runtime handoff
 and `compose.yaml` passes it on), for example `{"owner/repo": {"deny": ["stacks/**"], "reasons": {"stacks/**": "what runs on the host"}}}`;
@@ -149,10 +158,10 @@ and `compose.yaml` passes it on), for example `{"owner/repo": {"deny": ["stacks/
 a file of the repository, because the pull request it should restrain could change that file. A repository without an entry in `MERGE_POLICY`
 is **never** merged automatically.
 
-A pull request that touches a protected path is left to the human with **one** comment that mentions him: what is done (commit approved, CI
-green), why a human — each matching pattern with its reason from `MERGE_POLICY` and the files — what the security review found for that
-commit and whether Forgejo reports a conflict. While a security review of the commit still runs, the comment waits for it. Approved and green
-ends the work in progress, so the `WIP:` marker is removed first; Forgejo would not let the human merge it otherwise. See
+A pull request with a file that matches a deny pattern outside `two_keys` is left to the human with **one** comment that mentions him: what is
+done (commit approved, CI green), why a human — each matching pattern with its reason from `MERGE_POLICY` and the files — what the security
+review found for that commit and whether Forgejo reports a conflict. While a security review of the commit still runs, the comment waits for
+it. Approved and green ends the work in progress, so the `WIP:` marker is removed first; Forgejo would not let the human merge it otherwise. See
 [Auto-merge](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#auto-merge).
 
 The merge uses `MERGE_METHOD` (default `merge`), is bound to the head commit that was checked, deletes the branch and closes the issue. It

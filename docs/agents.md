@@ -135,20 +135,6 @@ The verdict is the label (`ai:approved` / `ai:changes`), not a formal review, be
 CI runs use runner labelled `docker`. The required check pattern `ci / seed (*)` makes push, pull_request and manual runs satisfy the same
 required check.
 
-### REVERT_ON_RED route
-
-A compatible ForgeHands deployment can enable `REVERT_ON_RED` in its own environment and add a `main:red` entry with `on: main_red`, the `worker-strong` profile ID, and tier `smart` to the effective route map, preserving existing entries. This allows automatic revert proposals for red-main routes. The Homegraf-pinned tag may not expose this feature: if the tagged source does not support `REVERT_ON_RED`, document the compatibility caveat rather than promising the shipped Compose passes the setting through. To verify the effective configuration on a compatible instance, check the ForgeHands route map after setting `REVERT_ON_RED=true` and adding the `main:red` route entry; the configuration will be active without requiring a live setting change or a direct push to main.
-
-### One Forgejo account
-
-The agents act as a Forgejo user of their own, default login `homegraf-agent` (`FORGEHANDS_AGENT_LOGIN`). The factory creates it, makes it a
-collaborator with write access on every allowed repository, and gives it a token with `write:repository`, `write:issue` and `read:user` only:
-it is not an administrator — the admin endpoints answer 403 — and, as a collaborator rather than an owner, it cannot manage webhooks, mirrors
-or users. The human keeps his own account (`HUMAN_LOGIN` in ForgeHands' environment) and can now review the agents' pull requests formally,
-The agents' verdict is still a label (`ai:approved` / `ai:changes`), because the worker and the reviewer share the one agent user; a formal
-approval by the reviewer agent would need a second agent user, an open option. Comments and reviews remain the place for evidence and for
-asking for changes, but only the labels start the next run. The security review has its own account when its route is set up: the token
-
 ### Merging
 
 **Protected approved-open path.** A pull request that touches a path matching the deny list of `FORGEHANDS_MERGE_POLICY` is approved but stays open for a human to merge. The default deny globs of the bootstrap-built policy are `.forgejo/**`, `.github/**`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `.agents/**`, `.claude/**`, `compose.yaml`, `**/compose.yaml`, `setup.sh`, `scripts/**`, `infra/**` and `stacks/**`.
@@ -229,6 +215,8 @@ The agents act as a Forgejo user of their own, default login `homegraf-agent` (`
 collaborator with write access on every allowed repository, and gives it a token with `write:repository`, `write:issue` and `read:user` only:
 it is not an administrator — the admin endpoints answer 403 — and, as a collaborator rather than an owner, it cannot manage webhooks, mirrors
 or users. The human keeps his own account (`HUMAN_LOGIN` in ForgeHands' environment) and can now review the agents' pull requests formally,
+approve or request changes; Forgejo refuses that only on one's own pull request (HTTP 422).
+
 The agents' verdict is still a label (`ai:approved` / `ai:changes`), because the worker and the reviewer share the one agent user; a formal
 approval by the reviewer agent would need a second agent user, an open option. Comments and reviews remain the place for evidence and for
 asking for changes, but only the labels start the next run. The security review has its own account when its route is set up: the token

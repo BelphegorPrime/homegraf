@@ -284,6 +284,12 @@ cd bootstrap
 python -m hgboot factory-smoke --repo OWNER/REPO --confirm-scratch OWNER/REPO [--keep] [--preflight] [--include-epic] [--timeout SECONDS] [--interval SECONDS] [-h|--help]
 ```
 
+To run only the read-only preflight, copy this command, replace `OWNER`, and use an allowlisted scratch repository only:
+
+```sh
+cd bootstrap && python -m hgboot factory-smoke --repo OWNER/factory-smoke-epic46 --confirm-scratch OWNER/factory-smoke-epic46 --preflight
+```
+
 The repository name must start with `factory-smoke-`. `--confirm-scratch` must repeat `--repo` (guard against a wrong target). An existing repository is reused only when its description has the smoke marker and it is private. The target must also be allowlisted and have an explicit merge-policy entry that denies the protected fixture `infra/smoke-guard.sh` (for example with `infra/**`). `--preflight` is read-only and spends no tokens. `--keep` retains artifacts. `--include-epic` adds the ordered epic and bounded follow-up scenarios and spends extra model tokens. `-h|--help` prints usage and exits 0. Usage errors and refusal exit 2, a failed smoke exits 1, and a pass exits 0.
 
 **Token cost:** The normal, protected and epic stages each start real agent runs. The stages are:

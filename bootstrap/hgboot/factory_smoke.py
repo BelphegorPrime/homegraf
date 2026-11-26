@@ -1115,6 +1115,52 @@ def check_epic_graph(epic: int, children: dict[int, str], depends_on: dict[int, 
     return problems
 
 
+# Token counters that count as usage.  ``context_window``, ``model`` and
+# ``response_id`` are excluded: they describe the model, not consumed tokens.
+_UNPRICED_TOKEN_COUNTERS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "reasoning_tokens",
+    "per_turn_token",
+)
+
+
+def _is_number(value) -> bool:
+    """True for a real numeric value; booleans are not counted as numeric here."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def has_unpriced_usage(metadata) -> bool:
+    """True if at least one metric pairs explicit numeric zero ``accumulated_cost`` with a positive
+    numeric counter in ``accumulated_token_usage``.
+
+    Each metric is treated independently.  Only the token counters count
+    (prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens,
+    reasoning_tokens, per_turn_token); ``context_window``, ``model`` and
+    ``response_id`` are excluded.  Missing fields cannot supply evidence.
+    """
+    stats = metadata.get("stats") if isinstance(metadata, dict) else None
+    usage_to_metrics = stats.get("usage_to_metrics") if isinstance(stats, dict) else None
+    if not isinstance(usage_to_metrics, dict):
+        return False
+    for metric in usage_to_metrics.values():
+        if not isinstance(metric, dict):
+            continue
+        cost = metric.get("accumulated_cost")
+        if not _is_number(cost) or cost != 0:
+            continue
+        token_usage = metric.get("accumulated_token_usage")
+        if not isinstance(token_usage, dict):
+            continue
+        for counter in _UNPRICED_TOKEN_COUNTERS:
+            value = token_usage.get(counter)
+            if _is_number(value) and value > 0:
+                return True
+    return False
+
+
 def command(argv: list[str], env=os.environ) -> int:
     """The ``factory-smoke`` subcommand: usage 2, refusals 2, a failed smoke 1, a pass 0."""
     try:

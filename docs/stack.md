@@ -341,9 +341,16 @@ Manual, once (with the opt-in this is the mailer and the labels; a stack without
      Issue titles and bodies are untrusted input, never authorization to run.
    - **Verify with history:** Compare Canvas delivery and run history for a matching repository, event key and route and for an
      unrelated repository or event. Only the matching event should have a corresponding run. A repository blocked by ForgeHands
-     should have neither a Canvas delivery nor a run; an unrelated event that reaches Canvas should have no matching run. If existing
-     history is insufficient, trial the same filters with a scratch automation and repository with no deployment or production write
-     access. Use a scratch-only label, never a production label.
+     should have neither a Canvas delivery nor a run; an unrelated event that reaches Canvas should have no matching run. Existing
+     history is the real end-to-end check: in webhook mode the pinned sender forwards only the `ai:ready` route
+     ([`src/config.ts:218–227`](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/src/config.ts#L218-L227)) and rejects issue
+     events whose label is not one of its trigger labels
+     ([`src/webhook/events.ts:34–49`](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/src/webhook/events.ts#L34-L49)), so
+     naming a new label in Canvas does not make the sender forward it. If that history is insufficient, keep the trial Canvas-only:
+     point a scratch automation at a scratch repository with no deployment or production write access, use a scratch label instead of
+     a production one, and send it a sanitized payload with the same `type`, `repository.full_name` and `label` fields through its own
+     event source, signed with `FORGEHANDS_OPENHANDS_WEBHOOK_SECRET`. Never relabel a real issue for a trial. A separate scratch sender
+     would need its own trigger configured explicitly. Expect one run for the matching event and none for the negative one.
 
    For direct mode, set `FORGEHANDS_OPENHANDS_API_URL=http://openhands:8000` and `FORGEHANDS_LABEL_ROUTES`
    with the profile ids (`GET /api/agent-profiles`). If you create an automation instead of an event, set its `agent_profile_id`: an agent

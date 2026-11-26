@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import fnmatch
+import math
 import os
 import re
 import sys
@@ -1113,6 +1114,79 @@ def check_epic_graph(epic: int, children: dict[int, str], depends_on: dict[int, 
     if None in (a, b, c):
         problems.append("cannot tell A, B and C apart by their smoke-epic file names")
     return problems
+
+
+_UNPRICED_USAGE_COUNTERS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "reasoning_tokens",
+    "per_turn_token",
+)
+
+
+def _is_finite_number(value) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _find_usage_to_metrics(metadata):
+    if not isinstance(metadata, dict):
+        return None
+    candidates = [metadata]
+    for key in ("stats", "metadata", "conversation", "data", "result"):
+        value = metadata.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+    for candidate in candidates:
+        if isinstance(candidate, dict) and "usage_to_metrics" in candidate:
+            value = candidate["usage_to_metrics"]
+            if isinstance(value, (dict, list)):
+                return value
+    for candidate in candidates:
+        if (
+            isinstance(candidate, dict)
+            and candidate
+            and all(
+                isinstance(item, dict)
+                and ("accumulated_cost" in item or "accumulated_token_usage" in item)
+                for item in candidate.values()
+            )
+        ):
+            return candidate
+    return None
+
+
+def has_unpriced_usage(metadata) -> bool:
+    """Return whether any metric reports explicit zero cost with positive usage.
+
+    The check is pure: ``metadata`` is the conversation payload (or a nested
+    ``stats``/metadata object).  Missing or malformed data is unavailable, not
+    evidence, and never hides another valid metric.
+    """
+    metrics = _find_usage_to_metrics(metadata)
+    if not isinstance(metrics, (dict, list)):
+        return False
+    items = metrics.values() if isinstance(metrics, dict) else metrics
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        cost = item.get("accumulated_cost", object())
+        if not _is_finite_number(cost) or cost != 0:
+            continue
+        usage = item.get("accumulated_token_usage")
+        if not isinstance(usage, dict):
+            continue
+        if any(
+            _is_finite_number(usage.get(counter)) and usage.get(counter) > 0
+            for counter in _UNPRICED_USAGE_COUNTERS
+        ):
+            return True
+    return False
 
 
 def command(argv: list[str], env=os.environ) -> int:

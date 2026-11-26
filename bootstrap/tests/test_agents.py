@@ -170,7 +170,7 @@ class GeneratedDefaultsTests(unittest.TestCase):
             shutil.copy(ROOT / "setup.sh", tmp)
             env = {**os.environ, "HOST_IP": "10.0.0.10", "DNS_MODE": "external",
                    "ADMIN_EMAIL": "owner@lab.example", "ADMIN_PASSWORD": "correct-horse-1",
-                   "OPTIONAL_SERVICES": "agents",
+                   "OPTIONAL_SERVICES": "agents,runner",
                    "FORGEHANDS_STRONG_MODEL": "vendor/strong-model",
                    "FORGEHANDS_CHEAP_MODEL": "vendor/cheap-model",
                    "FORGEHANDS_GATEWAY_URL": "https://llm.example/v1",

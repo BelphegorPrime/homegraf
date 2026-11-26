@@ -634,7 +634,7 @@ services:
       # The agent user's token only.  The operator's FORGEJO_TOKEN never reaches ForgeHands; in opted-in mode the bootstrap's
       # handoff supplies the agent token, and the launcher checks its identity before anything starts.
       FORGEJO_TOKEN: ${FORGEHANDS_FORGEJO_AGENT_TOKEN:-}
-      # Label -> profile id, tier, max_iterations (and optional max_budget, max_concurrent); ids from GET /api/agent-profiles, a name is
+      # Label -> profile id, tier, max_iterations; ids from GET /api/agent-profiles, a name is
       # rejected with HTTP 422. Empty keeps direct mode off.
       LABEL_ROUTES: ${FORGEHANDS_LABEL_ROUTES:-}
       ALLOWED_REPOS: ${FORGEHANDS_ALLOWED_REPOS:-}

@@ -508,6 +508,19 @@ def test_the_agents_first_run_points_at_the_automated_hgboot_path(agent):
     assert "FORGEHANDS_MERGE_POLICY" in text             # the operator's policy, not a file of the repository
 
 
+def test_the_agents_rendered_note_describes_gateway_cost_control_only(agent):
+    """Rendered wizard output names gateway cost control, not route-level dollar limits."""
+    text = _agents(agent).first_run
+    assert "max_budget" not in text                      # no route-level dollar-limit recommendation
+    assert not re.search(r"weekly?\s+budget", text, re.I) # no tier weekly budget claim
+    assert re.search(r"gateway", text, re.I)             # cost control is the gateway's job
+    env = yaml.safe_load(_agents(agent).compose)["services"]["agents"]["environment"]
+    limits = {name: env[name] for name in ("MAX_CONCURRENT_PER_TIER", "MAX_CONCURRENT", "MAX_RUNS_PER_HOUR",
+                                           "MAX_RUN_MINUTES")}
+    assert {name: int(value) for name, value in limits.items()} == {
+        "MAX_CONCURRENT_PER_TIER": 2, "MAX_CONCURRENT": 4, "MAX_RUNS_PER_HOUR": 30, "MAX_RUN_MINUTES": 120}
+
+
 def test_the_agents_first_run_claims_no_bootstrap_run_it_did_not_have(agent):
     """A stack created by this template alone has no profiles and no routes; the note says so and keeps webhook mode."""
     text = _agents(agent).first_run

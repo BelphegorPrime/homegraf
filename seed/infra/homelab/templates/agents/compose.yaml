@@ -31,8 +31,9 @@ x-template:
     ai:review, and on the pull request of an agent issue "on": "pull_request" (ai:changes), "on": "ci_failure",
     "on": "ci_success", "on": "epic_done" and "on": "conflict". Empty profile ids keep direct mode off.
     Tiers, the security review route and the worker routes' fallback and escalation are set by the bootstrap's LABEL_ROUTES
-    (follow-up tickets), not by this template; the per-tier weekly budget is gone, so MAX_RUNS_PER_HOUR and a route's
-    max_budget steer cost.
+    (follow-up tickets), not by this template. ForgeHands caps runs per hour and per run (MAX_RUNS_PER_HOUR,
+    MAX_RUN_MINUTES); cost is steered in the LLM gateway (model choice, budgets, keys). Default routes carry no
+    dollar limit.
     In both modes the Forgejo webhook (events: issues, pull_request_label, action_run_failure, action_run_success, push, pull_request;
     secret FORGEJO_WEBHOOK_SECRET) is required. Put a Forgejo token with write:repository and read:user into FORGEJO_TOKEN and set
     ALLOWED_REPOS to the owner/repository pairs the agents may work on (comma separated).

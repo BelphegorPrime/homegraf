@@ -386,6 +386,21 @@ class FactoryTest(unittest.TestCase):
         for secret in (BACKEND_KEY, GATEWAY_KEY, WEBHOOK_SECRET, OPERATOR_TOKEN, env["FORGEJO_TOKEN"]):
             self.assertNotIn(secret, summary)
 
+    def test_a_stale_weekly_budget_is_neither_published_nor_reported_as_applied(self):
+        report = self.run_factory(env={**self.env, "FORGEHANDS_TIER_WEEKLY_BUDGETS": '{"worker":25}'})
+        env = json.loads(self.runtime().read_text())["env"]
+        self.assertNotIn("TIER_WEEKLY_BUDGETS", env)
+        report_text = "\n".join(handoff.factory_summary(report)) + "\n" + \
+            "\n".join(f"{stage.name}: {stage.status}" for stage in report.stages)
+        self.assertNotIn("budget", report_text.lower())
+
+    def test_a_malformed_stale_weekly_budget_does_not_block_bootstrap(self):
+        report = self.run_factory(env={**self.env, "FORGEHANDS_TIER_WEEKLY_BUDGETS": "{not json"})
+        document = json.loads(self.runtime().read_text())
+        self.assertTrue(document["ready"])
+        self.assertNotIn("TIER_WEEKLY_BUDGETS", document["env"])
+        self.assertEqual(report.stages[-1].status, "published")
+
     def test_routes_publishes_the_full_table_with_a_worker_free_id(self):
         routes = json.loads(factory._routes(ROUTE_IDS))
         self.assertEqual(set(routes), FREE_ROUTE_KEYS)

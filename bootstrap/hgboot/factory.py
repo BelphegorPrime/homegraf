@@ -187,9 +187,6 @@ def _validate_contract(factory, env) -> None:
         if not isinstance(value, int) or not 1 <= value <= maximum:
             raise StepError(f"{attribute} must be between 1 and {maximum}")
     _max_rounds(env)
-    budgets = (env.get("FORGEHANDS_TIER_WEEKLY_BUDGETS") or "").strip()
-    if budgets:
-        _budgets(budgets)
     for name in _agent_secrets(env).split(","):
         if name in _RESERVED_AGENT_SECRETS:
             raise StepError(f"AGENT_SECRETS must not name the process setting {name}")
@@ -370,10 +367,6 @@ def _runtime_env(factory, cfg, env, token, routes) -> dict[str, str]:
         "MAX_RUN_MINUTES": str(factory.max_run_minutes),
         "MAX_ROUNDS": _max_rounds(env),
     }
-    budgets = (env.get("FORGEHANDS_TIER_WEEKLY_BUDGETS") or "").strip()
-    if budgets:
-        _budgets(budgets)
-        values["TIER_WEEKLY_BUDGETS"] = budgets
     for name in agent_secrets.split(","):
         if name in values:
             continue
@@ -407,18 +400,6 @@ def _max_rounds(env) -> str:
     if not raw.isascii() or not raw.isdigit() or not 1 <= int(raw) <= _MAX_ROUNDS:
         raise StepError(f"FORGEHANDS_MAX_ROUNDS must be an integer between 1 and {_MAX_ROUNDS}")
     return raw
-
-
-def _budgets(raw: str) -> None:
-    try:
-        value = json.loads(raw)
-    except ValueError:
-        raise StepError("FORGEHANDS_TIER_WEEKLY_BUDGETS must be valid JSON") from None
-    if not isinstance(value, dict) or not value:
-        raise StepError("FORGEHANDS_TIER_WEEKLY_BUDGETS must be a JSON object of tier -> amount")
-    for tier, amount in value.items():
-        if not isinstance(tier, str) or not tier or isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
-            raise StepError("FORGEHANDS_TIER_WEEKLY_BUDGETS needs a tier and a number > 0")
 
 
 def _policy(policy) -> dict:

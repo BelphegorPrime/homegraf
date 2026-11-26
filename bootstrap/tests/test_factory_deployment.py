@@ -99,7 +99,7 @@ class FreshOptInTests(unittest.TestCase):
     def test_agents_is_the_opt_in_and_writes_the_factory_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = pathlib.Path(temporary)
-            result = run_setup(tmp)
+            result = run_setup(tmp, optional="agents,runner")
             env = read_env(tmp)
             mode = stat.S_IMODE((tmp / ".env").stat().st_mode)
         self.assertEqual(mode, 0o600)
@@ -118,7 +118,7 @@ class FreshOptInTests(unittest.TestCase):
     def test_direct_mode_stays_off_until_the_four_ids_are_verified(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = pathlib.Path(temporary)
-            run_setup(tmp)
+            run_setup(tmp, optional="agents,runner")
             text = (tmp / ".env").read_text()
             env = read_env(tmp)
         self.assertEqual(env.get("FORGEHANDS_OPENHANDS_API_URL", ""), "")
@@ -130,7 +130,7 @@ class FreshOptInTests(unittest.TestCase):
     def test_a_fresh_own_repository_policy_protects_the_deploy_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = pathlib.Path(temporary)
-            run_setup(tmp)
+            run_setup(tmp, optional="agents,runner")
             policy = json.loads(read_env(tmp)["FORGEHANDS_MERGE_POLICY"])
         self.assertEqual(list(policy), ["owner/infrastructure"])
         denied = policy["owner/infrastructure"]["deny"]
@@ -144,27 +144,27 @@ class FreshOptInTests(unittest.TestCase):
     def test_an_explicit_empty_policy_stays_manual(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = pathlib.Path(temporary)
-            run_setup(tmp, overrides={"FORGEHANDS_MERGE_POLICY": "{}"})
+            run_setup(tmp, optional="agents,runner", overrides={"FORGEHANDS_MERGE_POLICY": "{}"})
             self.assertEqual(read_env(tmp)["FORGEHANDS_MERGE_POLICY"], "{}")
 
     def test_an_explicit_policy_is_never_replaced_by_the_default(self):
         policy = '{"owner/infrastructure":{"deny":["custom/**"]}}'
         with tempfile.TemporaryDirectory() as temporary:
             tmp = pathlib.Path(temporary)
-            run_setup(tmp, overrides={"FORGEHANDS_MERGE_POLICY": policy})
+            run_setup(tmp, optional="agents,runner", overrides={"FORGEHANDS_MERGE_POLICY": policy})
             self.assertEqual(read_env(tmp)["FORGEHANDS_MERGE_POLICY"], policy)
 
     def test_a_second_allowed_repository_stays_manual(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = pathlib.Path(temporary)
-            run_setup(tmp, overrides={"FORGEHANDS_ALLOWED_REPOS": "owner/infrastructure,owner/other"})
+            run_setup(tmp, optional="agents,runner", overrides={"FORGEHANDS_ALLOWED_REPOS": "owner/infrastructure,owner/other"})
             policy = json.loads(read_env(tmp)["FORGEHANDS_MERGE_POLICY"])
         self.assertEqual(list(policy), ["owner/infrastructure"])
 
     def test_the_agents_profile_without_factory_inputs_fails_before_writing_env(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = pathlib.Path(temporary)
-            result = run_setup(tmp, overrides={name: "" for name in FACTORY_INPUTS}, check=False)
+            result = run_setup(tmp, optional="agents,runner", overrides={name: "" for name in FACTORY_INPUTS}, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("FORGEHANDS_STRONG_MODEL", result.stderr)
             self.assertFalse((tmp / ".env").exists())
@@ -172,7 +172,7 @@ class FreshOptInTests(unittest.TestCase):
     def test_the_operator_token_is_not_the_factory_agent_token(self):
         with tempfile.TemporaryDirectory() as temporary:
             tmp = pathlib.Path(temporary)
-            result = run_setup(tmp, overrides={"FORGEJO_TOKEN": "operator-token-123"})
+            result = run_setup(tmp, optional="agents,runner", overrides={"FORGEJO_TOKEN": "operator-token-123"})
             env = read_env(tmp)
         self.assertEqual(env["FORGEJO_TOKEN"], "operator-token-123")
         self.assertNotIn("FORGEHANDS_FORGEJO_AGENT_TOKEN", env)
@@ -201,6 +201,39 @@ class FreshOptInTests(unittest.TestCase):
         self.assertEqual(after, before)
 
 
+class FreshAgentRunnerRequirementTests(unittest.TestCase):
+    def test_fresh_agents_requires_an_explicit_runner_choice(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp = pathlib.Path(temporary)
+            result = run_setup(tmp, optional="agents", check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((tmp / ".env").exists())
+            self.assertIn("runner", result.stderr)
+            self.assertIn("renovate", result.stderr)
+            self.assertIn("privileged", result.stderr)
+
+    def test_agents_with_runner_succeeds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp = pathlib.Path(temporary)
+            result = run_setup(tmp, optional="agents,runner")
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue((tmp / ".env").exists())
+
+    def test_agents_with_renovate_succeeds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp = pathlib.Path(temporary)
+            result = run_setup(tmp, optional="agents,renovate")
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue((tmp / ".env").exists())
+
+    def test_non_agents_setup_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tmp = pathlib.Path(temporary)
+            result = run_setup(tmp, optional="runner")
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue((tmp / ".env").exists())
+            self.assertNotIn("FORGEHANDS_BOOTSTRAP", read_env(tmp))
+
 class FreshDeploymentIntegrationTests(unittest.TestCase):
     def test_the_fresh_rendered_bootstrap_environment_parses_and_the_agent_identity_supplies_the_token(self):
         docker = shutil.which("docker")
@@ -214,7 +247,7 @@ class FreshDeploymentIntegrationTests(unittest.TestCase):
             self.skipTest("docker compose is not available")
         with tempfile.TemporaryDirectory() as temporary:
             tmp = pathlib.Path(temporary)
-            run_setup(tmp, overrides={"FORGEJO_TOKEN": "operator-token-123"})
+            run_setup(tmp, optional="agents,runner", overrides={"FORGEJO_TOKEN": "operator-token-123"})
             fresh = read_env(tmp)
             rendered = subprocess.run([docker, "compose", "--env-file", str(tmp / ".env"), "--profile", "agents",
                                        "-f", str(COMPOSE), "config", "--format", "json"],

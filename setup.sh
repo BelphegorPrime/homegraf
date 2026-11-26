@@ -141,6 +141,7 @@ if $interactive && [ -z "$optional" ]; then
   echo "            (needs an LLM API key and a few manual steps afterwards; docs/stack.md)"
   read -r -p "Optional services: " optional
 fi
+optional=${optional//,/ }
 profiles=""
 [ "$dns_mode" != adguard ] || profiles="dns"
 [ "$dns_mode" != technitium ] || profiles="technitium"
@@ -148,6 +149,16 @@ for o in $optional; do
   case "$o" in renovate | runner | backup | status | agents) ;; *) die "unknown optional service '$o' (renovate, runner, backup, status, agents)" ;; esac
   case ",$profiles," in *,"$o",*) ;; *) profiles="${profiles:+$profiles,}$o" ;; esac
 done
+case ",$profiles," in
+  *,agents,*)
+    case ",$profiles," in
+      *,runner,*|*,renovate,*) ;;
+      *)
+        die "fresh 'agents' setup requires a CI runner: add 'runner' (a Forgejo Actions runner; its bundled docker-in-docker daemon needs --privileged) or 'renovate' (dependency updates as pull requests; it brings the runner along). Agents alone would enable factory bootstrap without a runner."
+        ;;
+    esac
+    ;;
+esac
 factory=false
 case ",$profiles," in
   *,agents,*)

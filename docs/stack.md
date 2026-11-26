@@ -215,6 +215,8 @@ HTTP 422). With the opt-in the bootstrap creates the profiles and publishes the 
 
 Fresh stack, in this order (`setup.sh` writes `FORGEHANDS_BOOTSTRAP=1` when you pick the profile `agents`):
 
+Profile selection: `agents` is only valid together with `runner` or `renovate`; `setup.sh` rejects a fresh `agents` opt-in without one of them. `runner` is a Forgejo Actions runner whose `runner-dind` daemon is **privileged** (docker-in-docker); `renovate` brings that runner along for dependency updates. The factory's read-only preflight requires a runner labelled `docker` to be online before it writes anything; confirm it in Forgejo under the repository or owner settings (Actions -> Runners, label `docker`, status idle or active) or by a successful `docker compose run --rm bootstrap python -m hgboot run`. Agents alone never silently enables privileged services.
+
 1. `./setup.sh` writes `.env`: the secrets, the two logins, the models and the gateway (`FORGEHANDS_STRONG_MODEL`,
    `FORGEHANDS_CHEAP_MODEL`, `FORGEHANDS_GATEWAY_URL`, `FORGEHANDS_GATEWAY_API_KEY`), `FORGEHANDS_ALLOWED_REPOS`,
    `FORGEHANDS_MERGE_POLICY` and the limits.

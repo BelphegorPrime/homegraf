@@ -368,7 +368,7 @@ The prompts live as files and are referenced here, not pasted:
   The profiles live in the `openhands-data` volume. `bootstrap/hgboot/agents.py` maps labels to profiles and limits and contains no prompt text.
 
 - Every role prompt must require reading `AGENTS.md` at the repository root first. The canonical reusable worker prompt is
-  `../bootstrap/hgboot/prompts/worker.md`; link to it rather than pasting it.
+  [worker.md](../bootstrap/hgboot/prompts/worker.md); link to it rather than pasting it.
 
 Change the file or the profile and start a new run. A prompt copied into an issue, a pull request or this page would go stale, and an agent
 reading it could mistake it for instructions. The short example below is illustrative only, not live configuration.

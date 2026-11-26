@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import fnmatch
+import math
 import os
 import re
 import sys
@@ -1128,8 +1129,14 @@ _UNPRICED_TOKEN_COUNTERS = (
 
 
 def _is_number(value) -> bool:
-    """True for a real numeric value; booleans are not counted as numeric here."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """True for a finite real number; booleans are not counted as numeric here.
+
+    Integers are checked without converting them to float, so an arbitrarily
+    large counter stays exact instead of overflowing.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return not isinstance(value, float) or math.isfinite(value)
 
 
 def has_unpriced_usage(metadata) -> bool:
@@ -1139,7 +1146,8 @@ def has_unpriced_usage(metadata) -> bool:
     Each metric is treated independently.  Only the token counters count
     (prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens,
     reasoning_tokens, per_turn_token); ``context_window``, ``model`` and
-    ``response_id`` are excluded.  Missing fields cannot supply evidence.
+    ``response_id`` are excluded.  Missing or malformed containers, booleans,
+    numeric strings and non-finite floats cannot supply evidence.
     """
     stats = metadata.get("stats") if isinstance(metadata, dict) else None
     usage_to_metrics = stats.get("usage_to_metrics") if isinstance(stats, dict) else None

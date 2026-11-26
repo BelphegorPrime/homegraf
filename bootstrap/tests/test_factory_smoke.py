@@ -1361,8 +1361,72 @@ class HasUnpricedUsageTests(unittest.TestCase):
             self.assertTrue(factory_smoke.has_unpriced_usage(meta), counter)
 
     def test_boolean_cost_is_not_numeric_zero(self):
-        meta = self.metadata(m1=self.metric(False, {"prompt_tokens": 10}))
+        for cost in (False, True):
+            meta = self.metadata(m1=self.metric(cost, {"prompt_tokens": 10}))
+            self.assertFalse(factory_smoke.has_unpriced_usage(meta), cost)
+
+    def test_boolean_token_usage_is_not_positive_usage(self):
+        for value in (False, True):
+            meta = self.metadata(m1=self.metric(0, {"prompt_tokens": value}))
+            self.assertFalse(factory_smoke.has_unpriced_usage(meta), value)
+
+    def test_numeric_string_cost_is_rejected(self):
+        for cost in ("0", "0.0", "-0.0", "10"):
+            meta = self.metadata(m1=self.metric(cost, {"prompt_tokens": 10}))
+            self.assertFalse(factory_smoke.has_unpriced_usage(meta), cost)
+
+    def test_numeric_string_token_usage_is_rejected(self):
+        for value in ("0", "1", "10", "1e3"):
+            meta = self.metadata(m1=self.metric(0, {"prompt_tokens": value}))
+            self.assertFalse(factory_smoke.has_unpriced_usage(meta), value)
+
+    def test_nonfinite_cost_is_rejected(self):
+        for cost in (float("nan"), float("inf"), float("-inf")):
+            meta = self.metadata(m1=self.metric(cost, {"prompt_tokens": 10}))
+            self.assertFalse(factory_smoke.has_unpriced_usage(meta), cost)
+
+    def test_nonfinite_token_usage_is_rejected(self):
+        for value in (float("nan"), float("inf"), float("-inf")):
+            meta = self.metadata(m1=self.metric(0, {"prompt_tokens": value}))
+            self.assertFalse(factory_smoke.has_unpriced_usage(meta), value)
+
+    def test_negative_token_usage_is_not_unpriced(self):
+        meta = self.metadata(m1=self.metric(0, {"prompt_tokens": -1}))
         self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_an_arbitrarily_large_integer_counter_stays_exact(self):
+        meta = self.metadata(m1=self.metric(0, {"prompt_tokens": 10 ** 400}))
+        self.assertTrue(factory_smoke.has_unpriced_usage(meta))
+
+    def test_an_arbitrarily_large_integer_cost_is_not_zero(self):
+        meta = self.metadata(m1=self.metric(10 ** 400, {"prompt_tokens": 1}))
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_finite_float_zero_cost_and_positive_usage_is_unpriced(self):
+        meta = self.metadata(m1=self.metric(0.0, {"prompt_tokens": 1.5}))
+        self.assertTrue(factory_smoke.has_unpriced_usage(meta))
+
+    def test_malformed_metadata_is_not_unpriced(self):
+        for meta in (None, "not metadata", [], 0, {"stats": None}, {"stats": []},
+                     {"stats": "stats"}, {"stats": {"usage_to_metrics": None}},
+                     {"stats": {"usage_to_metrics": []}}, {"stats": {"usage_to_metrics": "metrics"}}):
+            self.assertFalse(factory_smoke.has_unpriced_usage(meta), meta)
+
+    def test_malformed_metric_entries_are_skipped(self):
+        meta = self.metadata(m1=None, m2=[], m3="metric", m4=0)
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_a_malformed_token_usage_is_skipped(self):
+        meta = self.metadata(m1={"accumulated_cost": 0, "accumulated_token_usage": []})
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_a_malformed_metric_before_a_valid_one_is_unpriced(self):
+        meta = self.metadata(malformed=None, valid=self.metric(0, {"prompt_tokens": 1}))
+        self.assertTrue(factory_smoke.has_unpriced_usage(meta))
+
+    def test_a_malformed_metric_after_a_valid_one_is_unpriced(self):
+        meta = self.metadata(valid=self.metric(0, {"prompt_tokens": 1}), malformed=["not a metric"])
+        self.assertTrue(factory_smoke.has_unpriced_usage(meta))
 
     def test_missing_stats_returns_false(self):
         self.assertFalse(factory_smoke.has_unpriced_usage({}))

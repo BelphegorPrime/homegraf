@@ -313,10 +313,10 @@ Manual, once (with the opt-in this is the mailer and the labels; a stack without
 
 1. The mailer: fill `FORGEJO_MAILER_*` in `.env` (`.env.example` lists them) and set `FORGEJO_MAILER_ENABLED=true`; without it the
    bootstrap warns that a mention of the human is not mailed. That switch only enables SMTP delivery; the human still chooses his own
-   notification policy. As the human, open Forgejo *Settings -> Notifications* (`/user/settings/notifications`) and set *Email Notifications*
-   to *Only Email on Mention* (the "only on mention" preference): routine agent comments then send no mail, while a mention such as the
-   protected-PR handoff still notifies him. Verify on the isolated stack with its SMTP sink — zero mail for a routine agent comment, one
-   notification for a protected-PR handoff — and never against production.
+   notification policy. As the human, open Forgejo *Settings -> Account & Notifications* (`/user/settings/account`), choose *Only email on
+   mention* under the email notifications preference and press *Set email preference* (the "only on mention" preference): routine agent
+   comments then send no mail, while a mention such as the protected-PR handoff still notifies him. Verify on the isolated stack with its
+   SMTP sink — zero mail for a routine agent comment, one notification for a protected-PR handoff — and never against production.
 2. Label an issue `ai:plan`, `ai:ready`, `ai:escalate` or `ai:review` in an allowed repository (or a pull request `ai:changes`; the other
    routes start on their event), either when you create it or later. The matching profile works in its own checkout under `/workspace` and
    opens a draft pull request; nothing merges it.

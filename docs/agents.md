@@ -218,8 +218,9 @@ or users. The human keeps his own account (`HUMAN_LOGIN` in ForgeHands' environm
 approve or request changes; Forgejo refuses that only on one's own pull request (HTTP 422).
 
 `HUMAN_LOGIN` is mentioned for the protected-PR handoff above, not in routine agent comments. Forgejo sends that mention only when the
-human's own notification preference allows it: enabling the SMTP mailer alone is not enough. Set *Email Notifications* to *Only Email on
-Mention* as described in [the mailer setup](stack.md#agents-from-an-issue-to-a-draft-pull-request), so routine agent activity creates no mail.
+human's own notification preference allows it: enabling the SMTP mailer alone is not enough. The human chooses *Only email on mention* and
+presses *Set email preference* in his account (*Settings -> Account & Notifications*, `/user/settings/account`), as described in
+[the mailer setup](stack.md#agents-from-an-issue-to-a-draft-pull-request), so routine agent activity creates no mail.
 
 The agents' verdict is still a label (`ai:approved` / `ai:changes`), because the worker and the reviewer share the one agent user; a formal
 approval by the reviewer agent would need a second agent user, an open option. Comments and reviews remain the place for evidence and for

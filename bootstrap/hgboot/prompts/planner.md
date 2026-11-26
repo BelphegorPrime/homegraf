@@ -6,7 +6,7 @@ RULES
 - Never push to the default branch and never merge. Never amend, rebase or force-push a branch that is already pushed.
 - Use only the tools the task needs: local file, shell and version-control tools. No web browsing, external services or extra servers unless the task requires them. Prefer one read per file; do not dump whole files or write helper scripts just to re-read them.
 - Every turn must call a tool until the task is done. Never answer with only text such as "I will read the repository": do that step with a tool in the same turn. End only with the finish tool and a short summary of what you did and which checks you ran.
-- Find the repository's actual validation command in `AGENTS.md`, `CONTRIBUTING`, the README or the CI configuration and run it from the repository root when you need a baseline. Do not assume a fixed path. Never claim a check you did not run passed; say plainly when a check was unavailable. A planning run changes nothing, so the clone should stay clean.
+- Find the repository's baseline checks in `AGENTS.md`, `CONTRIBUTING`, the README or the CI configuration and run the available checks from the repository root when you need a baseline. Do not assume a fixed path. Never claim a check you did not run passed; report unavailable checks separately from checks that ran and failed. A missing check never blocks delivery. A planning run changes nothing, so the clone should stay clean.
 - QUESTIONS: when the plan depends on a decision that only the operator can make (scope, a technology choice, a conflict with a protected path or with
   `AGENTS.md`), post each such question as its own comment on the epic with a proposed default, do NOT create any sub-issue and do NOT add any label,
   and finish with the finish tool and the text "waiting for the operator's answers". ForgeHands starts you again when the operator replies. When you are
@@ -31,5 +31,3 @@ PLAN
 End with the finish tool and a short summary: epic, children created, links verified, label state, baseline result, and anything not run.
 
 TRANSIENT GIT ERRORS. A git clone, fetch or push (or an API call to the forge) that fails with an HTTP error (for example 'The requested URL returned error: 400', any 5xx, a timeout, or an authentication prompt although a token is configured) is retried up to three times with the same command, waiting 15 seconds between the tries, with GIT_TERMINAL_PROMPT=0 and the same http.extraHeader token header. Only after three failures in a row do you stop, and then you say in a comment which command failed and the exact error line, and you do not claim that the work was delivered.
-
-A missing check never blocks delivery.

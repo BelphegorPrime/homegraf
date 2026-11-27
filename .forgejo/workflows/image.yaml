@@ -35,12 +35,14 @@ jobs:
   image:
     needs: test
     runs-on: docker
-    timeout-minutes: 45
+    # The build took about 40 minutes in DinD (2 minutes on a workstation); 90 leaves room for scan and publish on main.
+    timeout-minutes: 90
     services:
       docker:
         image: docker:29.9.2-dind
         options: >-
           --privileged
+          --tmpfs /var/lib/docker:rw,exec,size=16g
           --health-cmd "docker info"
           --health-interval 2s
           --health-timeout 2s
@@ -75,6 +77,8 @@ jobs:
           for attempt in $(seq 1 30); do
             if version=$(timeout 2s docker info --format '{{.ServerVersion}}') && [ -n "$version" ]; then
               printf 'DinD server version: %s\n' "$version"
+              # /var/lib/docker is a tmpfs (service options), so overlay2 works; vfs here would copy every layer and be very slow.
+              printf 'DinD storage driver: %s\n' "$(docker info --format '{{.Driver}}')"
               exit 0
             fi
             sleep 2
@@ -114,15 +118,7 @@ jobs:
           loaded_version=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' homegraf:scan)
           test "$loaded_version" = "$VERSION"
           printf 'Loaded image version: %s\n' "$loaded_version"
-      - name: Resolve Trivy DB cache key
-        id: trivydb
-        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
-      - name: Restore Trivy DB cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/trivy-cache
-          key: trivy-db-${{ steps.trivydb.outputs.day }}
-          restore-keys: trivy-db-
+      # No actions/cache for the Trivy DB: restoring and saving it took over 4 minutes each, the download itself 13 seconds.
       - name: Download Trivy DB
         shell: bash
         env:

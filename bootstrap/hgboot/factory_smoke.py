@@ -206,6 +206,7 @@ class Plan:
 class Observation:
     labels: tuple[str, ...]
     conversation: str = ""
+    conversation_ids: tuple[str, ...] = ()
     pr: dict | None = None
     pr_labels: tuple[str, ...] = ()
     ci: bool = False
@@ -872,6 +873,7 @@ class Smoke:
             if not conversation and "conversation" in body.lower():
                 conversation = _first_url(body)
         observation = Observation(labels=labels, conversation=conversation,
+                                  conversation_ids=conversation_ids(agent_comments),
                                   closed=str(issue.get("state") or "open") == "closed",
                                   agent_comments=tuple(agent_comments))
         pulls = self.api.json("GET", f"/repos/{repository}/pulls?state=all&limit={PAGE_SIZE}")
@@ -1036,6 +1038,37 @@ def _covered(path: str, globs) -> bool:
 def _first_url(text: str) -> str:
     match = re.search(r"https?://[^\s)>\]]+", text)
     return match.group(0) if match else ""
+
+
+_CONVERSATION_PATH = re.compile(r"(?:^|/)conversations/([A-Za-z0-9_-]+)/?$")
+
+
+def conversation_ids(bodies) -> tuple[str, ...]:
+    """The conversation IDs in comment URLs, first seen first, without duplicates.
+
+    Only the URL path counts, so a query or fragment carrying a token is ignored. The path must
+    end in one opaque ``/conversations/<id>`` segment; malformed URLs are skipped.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    if isinstance(bodies, str):
+        bodies = (bodies,)
+    for body in bodies:
+        if not isinstance(body, str):
+            continue
+        for url in re.findall(r"https?://[^\s)>\]]+", body):
+            try:
+                path = urlsplit(url).path
+            except ValueError:
+                continue
+            match = _CONVERSATION_PATH.search(path)
+            if match is None:
+                continue
+            identifier = match.group(1)
+            if identifier not in seen:
+                seen.add(identifier)
+                found.append(identifier)
+    return tuple(found)
 
 
 def _conversation(observation: Observation) -> str:

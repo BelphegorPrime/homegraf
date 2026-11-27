@@ -645,6 +645,112 @@ class NormalCaseTests(SmokeTest):
         self.assertFalse(_mentions("@owner.", "owner"))
 
 
+class ConversationIdsHelperTests(unittest.TestCase):
+    def ids(self, *bodies):
+        return factory_smoke.conversation_ids(bodies)
+
+    def test_multiple_urls_are_collected_in_first_seen_order(self):
+        self.assertEqual(
+            self.ids("https://host/conversations/one and https://host/conversations/two"),
+            ("one", "two"))
+
+    def test_trailing_slash_query_and_fragment_are_ignored(self):
+        self.assertEqual(
+            self.ids("https://host/conversations/one/?access_token=secret#frag",
+                     "https://host/conversations/two#top"),
+            ("one", "two"))
+
+    def test_duplicates_across_bodies_are_removed(self):
+        self.assertEqual(
+            self.ids("https://host/conversations/same", "https://host/conversations/other",
+                     "https://host/conversations/same"),
+            ("same", "other"))
+
+    def test_the_id_accepts_letters_digits_underscores_and_dashes(self):
+        self.assertEqual(self.ids("https://host/conversations/AbC_123-xyz"),
+                         ("AbC_123-xyz",))
+
+    def test_malformed_paths_are_rejected(self):
+        bodies = (
+            "https://host/conversations/a.b",
+            "https://host/conversations/a%2Fb",
+            "https://host/conversations/a%2Eb",
+            "https://host/conversations/a/b",
+            "https://host/conversations/",
+            "https://host/conversations",
+            "https://host/notconversations/abc",
+            "https://host/conversations/abc/extra",
+        )
+        self.assertEqual(self.ids(*bodies), ())
+
+    def test_malformed_urls_do_not_raise(self):
+        self.assertEqual(self.ids("http://[::1", "not a url", "", "-- ///"), ())
+
+    def test_a_single_body_string_is_accepted(self):
+        self.assertEqual(factory_smoke.conversation_ids(
+            "https://host/conversations/one"), ("one",))
+
+    def test_an_observation_starts_with_no_conversation_ids(self):
+        self.assertEqual(factory_smoke.Observation(labels=()).conversation_ids, ())
+
+
+class ConversationIdObservationTests(SmokeTest):
+    def observe(self, comments):
+        repo = self.fake.repo()
+        repo["issues"][1] = {
+            "number": 1, "title": "Factory smoke: conversation ids [deadbeef]", "body": "",
+            "state": "open", "labels": set(), "polls": 0, "timeline": [], "kind": "normal"}
+        repo["comments"][1] = [
+            {"id": 100 + index, "user": {"login": login}, "body": body}
+            for index, (login, body) in enumerate(comments)]
+        self.fake.stall = True
+        return self.smoke()._observe(REPO, 1)
+
+    def test_multiple_links_and_duplicates_are_deduplicated(self):
+        observation = self.observe([
+            ("homegraf-agent", "Working in https://openhands.local:8000/conversations/abc123 and "
+                               "https://openhands.local:8000/conversations/def-456/"),
+            ("homegraf-agent", "Still https://openhands.local:8000/conversations/abc123"
+                               "?access_token=secret#top")])
+        self.assertEqual(observation.conversation_ids, ("abc123", "def-456"))
+        self.assertEqual(observation.conversation,
+                         "https://openhands.local:8000/conversations/abc123")
+
+    def test_untrusted_comments_are_ignored(self):
+        observation = self.observe([
+            ("owner", "https://host/conversations/untrusted"),
+            ("homegraf-agent", "https://host/conversations/trusted")])
+        self.assertEqual(observation.conversation_ids, ("trusted",))
+
+    def test_an_observation_without_comments_has_no_ids(self):
+        observation = self.observe([])
+        self.assertEqual(observation.conversation, "")
+        self.assertEqual(observation.conversation_ids, ())
+
+    def test_malformed_conversation_paths_are_rejected(self):
+        observation = self.observe([
+            ("homegraf-agent", "https://host/conversations/a.b "
+                               "https://host/conversations/a%2Fb "
+                               "https://host/conversations/a/b "
+                               "https://host/conversations/ "
+                               "https://host/notconversations/abc "
+                               "https://host/conversations/ok")])
+        self.assertEqual(observation.conversation_ids, ("ok",))
+
+    def test_legacy_first_url_is_kept_when_it_is_not_an_id_match(self):
+        observation = self.observe([
+            ("homegraf-agent", "The conversation lives at https://host/not-conversations/old"),
+            ("homegraf-agent", "https://host/conversations/new-id")])
+        self.assertEqual(observation.conversation, "https://host/not-conversations/old")
+        self.assertEqual(observation.conversation_ids, ("new-id",))
+
+    def test_a_malformed_url_does_not_break_the_observation(self):
+        observation = self.observe([
+            ("homegraf-agent", "Conversation: http://[::1 and https://host/conversations/ok")])
+        self.assertEqual(observation.conversation, "http://[::1")
+        self.assertEqual(observation.conversation_ids, ("ok",))
+
+
 class ProtectedCaseTests(SmokeTest):
     def test_the_protected_pull_request_has_to_settle_approved_green_open_and_without_wip(self):
         report = self.smoke().run(REPO, REPO)

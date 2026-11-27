@@ -405,6 +405,7 @@ class Smoke:
         self.report = SmokeReport(cfg.repository)
         self.owned_repository = False
         self.owned_issues: list[int] = []
+        self.completed_conversation_ids: set[str] = set()
 
     # -- preflight (read-only) ---------------------------------------------------------------
     def preflight(self, repository: str, confirm: str) -> Plan:
@@ -448,6 +449,7 @@ class Smoke:
 
     # -- run ---------------------------------------------------------------------------------
     def run(self, repository: str, confirm: str) -> SmokeReport:
+        self.completed_conversation_ids.clear()
         plan = self.preflight(repository, confirm)
         if self.preflight_only:
             action = "reuse" if plan.existing else "create"
@@ -541,6 +543,7 @@ class Smoke:
         number = self._open_issue(plan.repository, "normal", body, ready_at_creation=True)
         observation = self._track_merged(number)
         self._assert_no_routine_mention(observation, number)
+        self.completed_conversation_ids.update(observation.conversation_ids)
         strong = " with the strong tier (reference)" if "ai:escalate" in observation.labels else ""
         self.report.add("normal path", "passed", f"{observation.chain()}{strong}" + _conversation(observation))
 
@@ -554,6 +557,7 @@ class Smoke:
         self._add_labels(plan.repository, number, ("ai:ready",))
         observation = self._track_merged(number)
         self._assert_no_routine_mention(observation, number)
+        self.completed_conversation_ids.update(observation.conversation_ids)
         self.report.add("ai:ready added later", "passed", observation.chain())
 
     def _protected_case(self, plan: Plan) -> None:
@@ -568,6 +572,7 @@ class Smoke:
         human = self.factory.human_login
         if not any(_mentions(comment, human) for comment in observation.agent_comments):
             raise SmokeFailure(f"#{number}: no handover comment mentions @{human}")
+        self.completed_conversation_ids.update(observation.conversation_ids)
         self.report.add("protected path", "passed",
                         f"handover mentions @{human}, approved, green, open, without WIP: " + observation.chain())
 

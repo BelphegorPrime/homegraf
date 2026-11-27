@@ -219,10 +219,10 @@ Profile selection: `agents` is only valid together with `runner` or `renovate`; 
 
 1. `./setup.sh` writes `.env`: the secrets, the two logins, the models and the gateway (`FORGEHANDS_STRONG_MODEL`,
    `FORGEHANDS_CHEAP_MODEL`, `FORGEHANDS_GATEWAY_URL`, `FORGEHANDS_GATEWAY_API_KEY`), `FORGEHANDS_ALLOWED_REPOS`,
-   `FORGEHANDS_MERGE_POLICY` and the limits. The wizard (`--template agents`) and the bootstrap write model ids and agent profiles that
-   use that gateway; choose the model and the routing policy there, and set rate and spend limits at the gateway or the upstream provider
-   where it supports and measures them. Neither the wizard nor the bootstrap installs a spend budget, and neither changes ForgeHands'
-   default webhook mode.
+   `FORGEHANDS_MERGE_POLICY` and the limits. The wizard (`--template agents`) writes the model ids and gateway settings as inputs, not the
+   Canvas agent profiles: the opt-in bootstrap creates the profiles from that gateway, and without it you create them yourself. Choose the
+   model and the routing policy at the gateway, and set rate and spend limits at the gateway or the upstream provider where it supports
+   and measures them. Neither the wizard nor the bootstrap installs a spend budget, and neither changes ForgeHands' default webhook mode.
 2. `docker compose up -d --wait` starts Forgejo, Canvas and the rest; the one-shot `bootstrap` service runs `python -m hgboot run`.
 3. The factory step (`bootstrap/hgboot/factory.py`) runs only with the opt-in and only after a read-only preflight (every allowed repository
    is writable, a runner with the label `docker` is ready), then in this order:
@@ -380,9 +380,10 @@ The same two containers also exist as a wizard template: `./homelab.py new-app -
 (`seed/infra/homelab/templates/agents/`) with its secrets in Infisical and two proxy hosts of its own, `<id>.<domain>` for ForgeHands and
 `openhands.<domain>` for Canvas (the wizard picks a free port for each). It starts in webhook mode; its compose file sets `ALLOWED_REPOS`,
 `ALLOWED_SENDERS`, `FORGEHANDS_AGENT_LOGIN`, `HUMAN_LOGIN`, `FORGEHANDS_STRONG_MODEL`, `FORGEHANDS_CHEAP_MODEL`, `FORGEHANDS_GATEWAY_URL` and the
-limits `MAX_CONCURRENT_PER_TIER`, `MAX_CONCURRENT`, `MAX_RUNS_PER_HOUR`, `MAX_RUN_MINUTES` and `MAX_ROUNDS`. For direct mode, replace its
-empty `OPENHANDS_API_URL` and `LABEL_ROUTES` with the service URL and the profile ids. Use it when the agents should be an app next to the
-platform instead of part of the platform compose file.
+limits `MAX_CONCURRENT_PER_TIER`, `MAX_CONCURRENT`, `MAX_RUNS_PER_HOUR`, `MAX_RUN_MINUTES` and `MAX_ROUNDS`. The wizard writes those gateway
+and model settings as inputs but creates no Canvas profiles: the opt-in bootstrap (`FORGEHANDS_BOOTSTRAP=1`) creates them from the chosen
+gateway, and without it you create them in Canvas. For direct mode, replace its empty `OPENHANDS_API_URL` and `LABEL_ROUTES` with the
+service URL and the profile ids. Use it when the agents should be an app next to the platform instead of part of the platform compose file.
 
 Troubleshooting: `docker compose logs -f forgehands` shows verdicts, queue decisions and delivery failures. A 401 means the Forgejo secret
 differs; a 502 means `OPENHANDS_WEBHOOK_URL` is not reachable from the container (webhook mode); in direct mode a refused

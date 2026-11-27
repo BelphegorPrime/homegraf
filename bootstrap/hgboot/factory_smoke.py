@@ -22,6 +22,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
+from http.client import HTTPException
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from . import factory as factory_step
@@ -504,7 +505,7 @@ class Smoke:
             try:
                 response = self.http("GET", f"{base}/api/conversations/{conversation_id}",
                                      headers={"X-Session-API-Key": key}, redirect=False)
-            except (Unreachable, TimeoutError, ValueError, OSError):
+            except (Unreachable, TimeoutError, ValueError, OSError, HTTPException):
                 continue
             if not response.ok:
                 continue

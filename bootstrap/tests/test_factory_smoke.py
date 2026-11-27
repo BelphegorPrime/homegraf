@@ -14,7 +14,9 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 from urllib.parse import parse_qs, unquote
 
@@ -1802,6 +1804,28 @@ class UnpricedUsageReportTests(SmokeTest):
         self.assertNotIn("unpriced", report.render())
         self.assertNotIn("backend broke", report.render())
         self.assertEqual(len(backend.requests), 3)
+
+    def test_an_interrupted_body_is_not_a_warning(self):
+        class ShortBody(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", "20")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *args):
+                pass
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), ShortBody)
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+        backend = mock.Mock(url=f"http://127.0.0.1:{httpd.server_address[1]}")
+        report = self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertNotIn("unpriced", report.render())
+        self.assertNotIn("advisory", report.render())
 
     def test_zero_usage_and_malformed_stats_are_not_warnings(self):
         cases = {"abc123": self.usage(0, prompt_tokens=0),

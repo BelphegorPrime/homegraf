@@ -41,19 +41,19 @@ issue numbers. See [Status page and metrics](https://github.com/BelphegorPrime/F
 ## Limits
 
 The queue and timeout limits are set in `.env` and passed to ForgeHands by `compose.yaml`; `setup.sh` writes the commented defaults for the
-agents profile. `max_iterations` (and the optional `max_concurrent` and `max_budget`) are part of a route.
+agents profile. `max_iterations` and the optional `max_concurrent` are part of a route.
 
 | Setting | Default | What it limits |
 | --- | --- | --- |
 | `FORGEHANDS_MAX_CONCURRENT_PER_TIER` | 2 | runs of one tier at once; the rest wait in the queue |
 | `FORGEHANDS_MAX_CONCURRENT` | 4 | runs of the whole stack at once |
 | `FORGEHANDS_MAX_RUNS_PER_HOUR` | 30 | runs started per hour, a cap against runaway fan-out |
-| `FORGEHANDS_MAX_RUN_MINUTES` | 120 | how long a run keeps its slot; the conversation itself is not deleted |
-| `max_iterations` in `LABEL_ROUTES` | 80 planner, 120 worker, 120 worker-strong, 60 reviewer and security review | LLM calls of one run |
-| `max_concurrent` in a route | unset | per-tier override of the first row |
-| `max_budget` in a route | unset | cost of one run |
+| `FORGEHANDS_MAX_RUN_MINUTES` | 120 | how long a run keeps its slot; the slot is released when the run ends or the timeout passes, the conversation is not deleted |
+| `max_iterations` in `LABEL_ROUTES` | 80 planner, 120 worker, 120 worker-strong, 60 reviewer and security review; no explicit route value on the free fallback routes, so no route-level override applies | agent iterations of one run, not a guaranteed model-call count |
+| `max_concurrent` in a route (optional) | unset | a per-tier cap for runs on that route, separate from the factory-wide `FORGEHANDS_MAX_CONCURRENT_PER_TIER` and `FORGEHANDS_MAX_CONCURRENT` defaults |
 
-`bootstrap/hgboot/agents.py` holds the label, profile, tier and `max_iterations` table and builds `LABEL_ROUTES` from the profile ids.
+`bootstrap/hgboot/agents.py` holds the label, profile, tier and `max_iterations` table and builds `LABEL_ROUTES` from the profile ids. None of
+these controls caps tokens or dollars: they bound how many runs start, how long one run keeps its slot and how much one run iterates.
 
 **Tiers.** A route names a tier, and the tier decides two things in ForgeHands: the per-tier queue (`FORGEHANDS_MAX_CONCURRENT_PER_TIER`) and
 the quota hold. Which model answers is the gateway's choice for the OpenHands profile, not ForgeHands'. This stack uses `smart` for the
@@ -71,9 +71,15 @@ could answer (`LLMServiceUnavailableError`, `BadGatewayError`, `LLMTimeoutError`
 HH:MM UTC". The hold lives in memory, so a restart means a retry now. See
 [Humans and failures](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#humans-and-failures).
 
-Cost is not capped by ForgeHands on its own: a run has a price only when the LLM gateway reports one, and the gateway is where spend is
-steered (model choice, budgets, keys). The guards inside ForgeHands are `MAX_RUNS_PER_HOUR` (runs started per hour) and a route's
-`max_budget` (one run); a weekly cap per tier does not exist any more. Read the gateway's own accounting for what was spent.
+**Cost is gateway-first.** Choose the models and the routing at the LLM gateway, and enforce rate and spend limits at the gateway or upstream
+where the provider supports and measures them. ForgeHands does not cap tokens or dollars on its own: a run has a price only when the gateway
+reports one, and the limits above bound run volume and time, not spend. A route's `max_budget`, an OpenHands budget or a per-tier budget is
+not a default safeguard in this installation; do not present one as a cap.
+
+OmniRoute's `auto/*` routes can report zero accumulated cost with positive token usage, so OpenHands and ForgeHands see a price of zero while
+tokens are spent. A cost-based brake cannot enforce a cap without a price, so a reported zero is not proof that a run was free. Read the
+gateway's own accounting for what was spent, and check `stats.usage_to_metrics` of a completed conversation before trusting its cost. Possible
+follow-ups, not defaults, are price overrides on the OpenHands profiles so the gateway reports a real cost, or a token budget in ForgeHands.
 
 ## The factory loop
 
@@ -93,7 +99,7 @@ starts a review, and a review either approves or asks for another round. Agents 
   round.
 - **The last round escalates.** `ai:changes` and `ci:failure` name `"escalate_to": "ai:escalate"`, so the last round (`MAX_ROUNDS`, 3) runs
   with the `worker-strong` profile on `smart` before the pull request is blocked and the human mentioned. Branch, kind, prompt and the route's
-  own iteration and budget limits stay; the target's tier limits apply; nobody triggers the stronger profile from an issue, and `/status`
+  own iteration limit stay; the target's tier applies; nobody triggers the stronger profile from an issue, and `/status`
   shows the job as escalated. See
   [Follow-up rounds and escalation](https://github.com/BelphegorPrime/ForgeHands/blob/v0.4.10/README.md#follow-up-rounds-and-escalation).
 - A green commit (all workflows) starts the **review** through the route with `"on": "ci_success"`, but only when the **combined** commit
@@ -315,7 +321,9 @@ The repository name must start with `factory-smoke-`. `--confirm-scratch` must r
 
 **Evidence:** Unit tests in `bootstrap/tests/` use loopback HTTP fixtures at the external API boundary and prove code paths. Only a `factory-smoke` run against a real stack is real end-to-end evidence. This documentation claims no live fresh-stack pass.
 
-**Stats and tool count:** `stats.usage_to_metrics` is the field of the OpenHands conversation JSON to read token/cost metrics from, through the OpenHands API; hgboot does not read it. For tool count, a profile with `mcp_server_refs: []` starts with about 20 tools instead of about 160; an operator checks it by reading the profile back and comparing the tool count of a started conversation.
+**Unpriced usage advisory:** Before any write, the smoke warns that each stage starts real agent runs and spends model tokens; `--preflight` stays read-only and spends none. After the run, the smoke reads `stats.usage_to_metrics` of the conversations it completed through the OpenHands API. For a completed conversation whose metric pairs positive token usage with an explicit numeric zero `accumulated_cost`, it adds an advisory warning and leaves the verdict unchanged: a pass stays a pass. Missing, malformed or absent metrics are not treated as proof of a problem and also leave the verdict unchanged. The advisory is a hint that the gateway reported no price (see [Limits](#limits)), not a cost measurement.
+
+**Stats and tool count:** `stats.usage_to_metrics` is the field of the OpenHands conversation JSON that carries token and cost metrics; hgboot reads it only for the unpriced-usage advisory described above, through the OpenHands API. For tool count, a profile with `mcp_server_refs: []` starts with about 20 tools instead of about 160; an operator checks it by reading the profile back and comparing the tool count of a started conversation.
 
 Examples use `example-owner/factory-smoke-example`.
 

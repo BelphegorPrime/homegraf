@@ -613,6 +613,8 @@ class Smoke:
                      and (comment.get("user") or {}).get("login") == self.factory.agent_login]
         if len(summaries) != 1:
             raise SmokeFailure(f"#{epic}: the planner left {len(summaries)} comments, expected one summary")
+        self.completed_conversation_ids.update(
+            conversation_ids(comment.get("body") for comment in summaries))
         self.report.add("epic graph", "passed", "3 children, epic depends on all, B after A, C independent")
         return epic, children
 
@@ -621,9 +623,12 @@ class Smoke:
         roles = _child_roles(children)
         a, b, c = (roles[role][0] for role in "abc")
         a_observation = self._track_merged(a, watch=lambda: self._assert_not_started(b, a))
+        self.completed_conversation_ids.update(a_observation.conversation_ids)
         b_observation = self._track_merged(b)
-        self._track_merged(c)
         self._assert_merged_after(b, b_observation, a, a_observation)
+        self.completed_conversation_ids.update(b_observation.conversation_ids)
+        c_observation = self._track_merged(c)
+        self.completed_conversation_ids.update(c_observation.conversation_ids)
         self._await_epic_closure(epic, children)
         self.report.add("epic order", "passed", "B started after A merged, C independent")
         self.report.add("epic closure", "passed", "closed by the reviewer")

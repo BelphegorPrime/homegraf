@@ -685,6 +685,7 @@ class Smoke:
             self.sleep(self.interval)
         if len(shas) < 2:
             raise SmokeFailure(f"#{number}: the head sha never changed, no follow-up round happened")
+        self.completed_conversation_ids.update(observation.conversation_ids)
         suffix = " escalated" if escalated else ""
         self.report.add("follow-up", "passed", "same pull request and branch, merged" + suffix)
 

@@ -53,6 +53,8 @@ class FakeFactory:
         self.spurious_dependency = False
         self.epic_missing_child = False
         self.duplicate_children = False
+        self.planner_links = 1
+        self.incomplete_child = None
         self.early_start = False
         self.no_epic_closure = False
         self.human_closes_epic = False
@@ -65,6 +67,7 @@ class FakeFactory:
         self.escalate_followup = False
         self.no_handover = False
         self.routine_mention = False
+        self.child_links = 1
         self.conversations = 0
         self.now = 0.0
 
@@ -108,6 +111,10 @@ class FakeFactory:
             self._advance(repo, issue, issue["polls"])
 
     def _child_step(self, repo: dict, issue: dict) -> None:
+        if self.incomplete_child == issue["part"]:
+            if issue["polls"] == 1 and self.conversation:
+                repo["comments"][issue["number"]] = [self._conversation()]
+            return
         if self.early_start and issue["part"] == "B" and issue["polls"] == 1:
             repo["comments"][issue["number"]] = [self._conversation()]
             return
@@ -189,7 +196,10 @@ class FakeFactory:
     def _advance(self, repo: dict, issue: dict, polls: int) -> None:
         number = issue["number"]
         if polls == 1 and self.conversation:
-            repo["comments"][number] = [self._conversation()]
+            comment = self._conversation()
+            links = [comment["body"]] + [self._conversation()["body"]
+                                         for _ in range(self.child_links - 1)]
+            repo["comments"][number] = [{**comment, "body": " ".join(links)}]
         if polls >= 2 and number not in repo["pulls"]:
             repo["pulls"][number] = {
                 "id": self.next_id(), "number": number, "state": "open", "draft": True,
@@ -266,9 +276,10 @@ class FakeFactory:
             graph[c] = {a}
         repo["dependencies"].update(graph)
         listed = ", ".join(f"#{child['number']}" for child in children)
+        links = " ".join(self._conversation()["body"] for _ in range(self.planner_links))
         repo["comments"][epic["number"]] = [{
             "id": self.next_id(), "user": {"login": "homegraf-agent"},
-            "body": f"Planned three children: {listed}."}]
+            "body": f"Planned three children: {listed}. {links}"}]
 
     def _child(self, repo: dict, epic: dict, token: str, part: str, task: str) -> dict:
         number = len(repo["issues"]) + 1
@@ -807,6 +818,64 @@ class CompletedConversationIdTests(SmokeTest):
         self.assertEqual(smoke.completed_conversation_ids, {"abc123", "abc123-2", "abc123-3"})
         self.assertTrue(smoke.run(REPO, REPO).passed)
         self.assertEqual(smoke.completed_conversation_ids, {"abc123-4", "abc123-5", "abc123-6"})
+
+
+class EpicCompletedConversationIdTests(SmokeTest):
+    def planned(self):
+        smoke = self.smoke(include_epic=True, timeout=60)
+        plan = smoke.preflight(REPO, REPO)
+        smoke._ensure_repository(plan)
+        smoke._configure(plan)
+        epic, children = smoke._epic_plan_case(plan)
+        return smoke, plan, epic, children
+
+    def ids(self, repo, number):
+        return set(factory_smoke.conversation_ids(
+            comment["body"] for comment in repo["comments"].get(number, [])
+            if comment["user"]["login"] == "homegraf-agent"))
+
+    def test_the_planner_records_its_conversation_without_a_pull_request(self):
+        smoke, _, epic, _ = self.planned()
+        repo = self.fake.repos[REPO]
+        self.assertEqual([pull for pull in repo["pulls"].values() if pull["number"] == epic], [])
+        planner_ids = self.ids(repo, epic)
+        self.assertTrue(planner_ids)
+        self.assertEqual(smoke.completed_conversation_ids, planner_ids)
+
+    def test_multiple_planner_and_child_links_are_all_recorded(self):
+        self.fake.planner_links = 2
+        self.fake.child_links = 2
+        smoke = self.smoke(include_epic=True, keep=True)
+        report = smoke.run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        repo = self.fake.repos[REPO]
+        epic = next(issue for issue in repo["issues"].values() if "ai:plan" in issue["labels"])
+        children = [issue for issue in repo["issues"].values() if issue.get("epic") == epic["number"]]
+        planner_ids = self.ids(repo, epic["number"])
+        self.assertEqual(len(planner_ids), 2)
+        expected = set(planner_ids)
+        for child in children:
+            child_ids = self.ids(repo, child["number"])
+            self.assertEqual(len(child_ids), 2)
+            expected |= child_ids
+        self.assertEqual(len(expected), 8)
+        self.assertTrue(expected <= smoke.completed_conversation_ids)
+
+    def test_a_start_only_child_contributes_no_ids(self):
+        self.fake.incomplete_child = "C"
+        smoke, plan, epic, children = self.planned()
+        with self.assertRaises(SmokeTimeout):
+            smoke._epic_run_case(plan, epic, children)
+        repo = self.fake.repos[REPO]
+        roles = factory_smoke._child_roles(children)
+        expected = self.ids(repo, epic)
+        for role in "ab":
+            expected |= self.ids(repo, roles[role][0])
+        self.assertTrue(expected)
+        self.assertEqual(smoke.completed_conversation_ids, expected)
+        c_ids = self.ids(repo, roles["c"][0])
+        self.assertTrue(c_ids)
+        self.assertFalse(smoke.completed_conversation_ids & c_ids)
 
 
 class ProtectedCaseTests(SmokeTest):

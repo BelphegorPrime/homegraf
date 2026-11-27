@@ -1473,6 +1473,63 @@ class FollowupCaseTests(SmokeTest):
         self.assertIn("second pull request or branch", report.render())
 
 
+class FollowupCompletedConversationIdTests(SmokeTest):
+    def _followup_run(self):
+        smoke = self.smoke(include_epic=True, timeout=120)
+        plan = smoke.preflight(REPO, REPO)
+        smoke._ensure_repository(plan)
+        smoke._configure(plan)
+        return smoke, plan
+
+    def _followup_ids(self, repo):
+        issues = [issue for issue in repo["issues"].values() if issue["kind"] == "followup"]
+        self.assertEqual(len(issues), 1)
+        number = issues[0]["number"]
+        return set(factory_smoke.conversation_ids(
+            comment["body"] for comment in repo["comments"].get(number, [])
+            if comment["user"]["login"] == "homegraf-agent"))
+
+    def test_a_completed_followup_records_its_multiple_ids_only_at_the_terminal_observation(self):
+        self.fake.child_links = 2
+        smoke, plan = self._followup_run()
+        observations = []
+        snapshots = []
+        original = smoke._observe
+
+        def observe(repository, number):
+            observation = original(repository, number)
+            observations.append(observation)
+            snapshots.append(set(smoke.completed_conversation_ids))
+            return observation
+
+        smoke._observe = observe
+        smoke._followup_case(plan)
+        terminal = self._followup_ids(self.fake.repos[REPO])
+        self.assertEqual(len(terminal), 2)
+        self.assertTrue(observations[0].conversation_ids)
+        self.assertFalse(observations[0].merged)
+        self.assertTrue(observations[-1].merged and observations[-1].closed)
+        self.assertEqual(set().union(*snapshots), set(),
+                         "an initial, intermediate or retrigger observation contributed ids")
+        self.assertEqual(smoke.completed_conversation_ids, terminal)
+
+    def test_a_failed_followup_contributes_no_ids(self):
+        self.fake.rounds_exhausted = True
+        self.addCleanup(setattr, self.fake, "rounds_exhausted", False)
+        smoke, plan = self._followup_run()
+        with self.assertRaises(SmokeFailure):
+            smoke._followup_case(plan)
+        self.assertTrue(self._followup_ids(self.fake.repos[REPO]))
+        self.assertEqual(smoke.completed_conversation_ids, set())
+
+    def test_an_escalated_followup_still_records_the_terminal_ids(self):
+        self.fake.escalate_followup = True
+        self.addCleanup(setattr, self.fake, "escalate_followup", False)
+        smoke, plan = self._followup_run()
+        smoke._followup_case(plan)
+        self.assertEqual(smoke.completed_conversation_ids, self._followup_ids(self.fake.repos[REPO]))
+
+
 class CheckEpicGraphTests(unittest.TestCase):
     """The pure check: one case per problem, plus the clean graph."""
 

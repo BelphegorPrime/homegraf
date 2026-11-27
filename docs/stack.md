@@ -219,7 +219,10 @@ Profile selection: `agents` is only valid together with `runner` or `renovate`; 
 
 1. `./setup.sh` writes `.env`: the secrets, the two logins, the models and the gateway (`FORGEHANDS_STRONG_MODEL`,
    `FORGEHANDS_CHEAP_MODEL`, `FORGEHANDS_GATEWAY_URL`, `FORGEHANDS_GATEWAY_API_KEY`), `FORGEHANDS_ALLOWED_REPOS`,
-   `FORGEHANDS_MERGE_POLICY` and the limits.
+   `FORGEHANDS_MERGE_POLICY` and the limits. The wizard (`--template agents`) writes the model ids and gateway settings as inputs, not the
+   Canvas agent profiles: the opt-in bootstrap creates the profiles from that gateway, and without it you create them yourself. Choose the
+   model and the routing policy at the gateway, and set rate and spend limits at the gateway or the upstream provider where it supports
+   and measures them. Neither the wizard nor the bootstrap installs a spend budget, and neither changes ForgeHands' default webhook mode.
 2. `docker compose up -d --wait` starts Forgejo, Canvas and the rest; the one-shot `bootstrap` service runs `python -m hgboot run`.
 3. The factory step (`bootstrap/hgboot/factory.py`) runs only with the opt-in and only after a read-only preflight (every allowed repository
    is writable, a runner with the label `docker` is ready), then in this order:
@@ -237,6 +240,10 @@ Profile selection: `agents` is only valid together with `runner` or `renovate`; 
    - the routes (`hgboot.agents.label_routes()`, published by `factory._routes()`): ten routes, thirteen with a free model.
    - the runtime handoff `forgehands.json` in `FORGEHANDS_RUNTIME_DIR` (`/factory-runtime`), written last. ForgeHands' launcher reads it
      (`FORGEHANDS_RUNTIME_FILE`) and starts only with it; a failed run publishes no new ready handoff. Existing handoff invalidation is best-effort, so an old ready file can survive an `OSError`; see [Runtime handoff](#runtime-handoff) for details.
+
+The optional factory smoke (`python -m hgboot factory-smoke`, see [agents.md](agents.md#scratch-smoke-check)) is a diagnostic: it spends
+model tokens, and its unpriced-usage warning is advisory. It does not gate the factory, and the warning does not turn a pass into a failed
+smoke verdict.
 
 The mail: the factory warns once (`mailer_warning()`) unless `FORGEJO_MAILER_ENABLED` is true, because Forgejo mails nobody when a run
 mentions the human; fill the `FORGEJO_MAILER_*` variables in `.env` (`.env.example` lists them).
@@ -261,7 +268,12 @@ The routes; the profile column names the profile, the route carries its id:
 
 The three `-free` routes need no label and exist only with a free model; `ai:ready`, `ai:changes` and `ci:failure` name them as
 `fallback_to` while their tier is out of quota. `ai:changes` and `ci:failure` escalate their last round to `ai:escalate`. A route may also
-set `max_budget` (one run) and `max_concurrent` (that tier); [agents.md](agents.md#limits) has the limits and the rounds.
+set `max_concurrent` (that tier).
+
+The guards are operational, not financial: a route's `max_iterations` bounds the LLM calls of one run, a run longer than 120 minutes
+(`FORGEHANDS_MAX_RUN_MINUTES`) is stopped, `FORGEHANDS_MAX_CONCURRENT_PER_TIER` (2) and `FORGEHANDS_MAX_CONCURRENT` (4, stack-wide) bound
+the runs in flight, and `FORGEHANDS_MAX_RUNS_PER_HOUR` (30) bounds the starts. None of them caps tokens or dollars;
+[agents.md](agents.md#limits) has the limits and the rounds.
 
 Label semantics (ForgeHands 0.4.10; the stack pins `v0.4.10`):
 
@@ -289,8 +301,10 @@ operator's value). Each can be set in `.env`:
 | `FORGEHANDS_MAX_RUNS_PER_HOUR` | 30 | hourly cap |
 | `FORGEHANDS_MAX_RUN_MINUTES` | 120 | a run that takes longer is stopped |
 
-Cost is steered in the LLM gateway (model choice, budgets, keys) and by `FORGEHANDS_MAX_RUNS_PER_HOUR`; a route can add `max_budget` for one
-run. ForgeHands only knows a price when the gateway reports one; [agents.md](agents.md#limits) has the limits.
+Cost is steered in the LLM gateway: choose the models and the routing policy there, and set rate and spend limits at the gateway or the
+upstream provider where it supports and measures them. ForgeHands' operational limits (iterations, run timeout, concurrency, runs per hour)
+do not cap tokens or dollars. ForgeHands reads a price only when the gateway reports one; OmniRoute `auto/*` routes can show zero accumulated
+cost despite token use, so a cost-based limit cannot enforce a cap without a price. [agents.md](agents.md#limits) has the limits.
 
 `WORKSPACE_DIR` (`/workspace`, volume `forgehands-workspace`) and `JOBS_FILE` (`/app/data/jobs.json`) are fixed in the compose file; the
 ForgeHands container stays read-only and drops every capability. A started conversation is marked untrusted: the issue text goes into
@@ -366,9 +380,10 @@ The same two containers also exist as a wizard template: `./homelab.py new-app -
 (`seed/infra/homelab/templates/agents/`) with its secrets in Infisical and two proxy hosts of its own, `<id>.<domain>` for ForgeHands and
 `openhands.<domain>` for Canvas (the wizard picks a free port for each). It starts in webhook mode; its compose file sets `ALLOWED_REPOS`,
 `ALLOWED_SENDERS`, `FORGEHANDS_AGENT_LOGIN`, `HUMAN_LOGIN`, `FORGEHANDS_STRONG_MODEL`, `FORGEHANDS_CHEAP_MODEL`, `FORGEHANDS_GATEWAY_URL` and the
-limits `MAX_CONCURRENT_PER_TIER`, `MAX_CONCURRENT`, `MAX_RUNS_PER_HOUR`, `MAX_RUN_MINUTES` and `MAX_ROUNDS`. For direct mode, replace its
-empty `OPENHANDS_API_URL` and `LABEL_ROUTES` with the service URL and the profile ids. Use it when the agents should be an app next to the
-platform instead of part of the platform compose file.
+limits `MAX_CONCURRENT_PER_TIER`, `MAX_CONCURRENT`, `MAX_RUNS_PER_HOUR`, `MAX_RUN_MINUTES` and `MAX_ROUNDS`. The wizard writes those gateway
+and model settings as inputs but creates no Canvas profiles: the opt-in bootstrap (`FORGEHANDS_BOOTSTRAP=1`) creates them from the chosen
+gateway, and without it you create them in Canvas. For direct mode, replace its empty `OPENHANDS_API_URL` and `LABEL_ROUTES` with the
+service URL and the profile ids. Use it when the agents should be an app next to the platform instead of part of the platform compose file.
 
 Troubleshooting: `docker compose logs -f forgehands` shows verdicts, queue decisions and delivery failures. A 401 means the Forgejo secret
 differs; a 502 means `OPENHANDS_WEBHOOK_URL` is not reachable from the container (webhook mode); in direct mode a refused

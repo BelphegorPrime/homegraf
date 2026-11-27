@@ -496,6 +496,8 @@ describe("creating a repository", () => {
     expect(command.calls).toEqual([]);
   });
 
+  // Building the users hashes their passwords and every request verifies one, so this test needs more
+  // than the default timeout on a busy runner.
   it("answers 400 with the reason for a bad form", async () => {
     const f = await forgejo();
     const command = repoCommand();
@@ -523,7 +525,7 @@ describe("creating a repository", () => {
       expect(res.body).toMatchObject({ error: "invalid input" });
     }
     expect(command.calls).toEqual([]);
-  });
+  }, 20_000);
 
   it("answers 503 and runs nothing when the ForgeHands wiring is not configured", async () => {
     const f = await forgejo();

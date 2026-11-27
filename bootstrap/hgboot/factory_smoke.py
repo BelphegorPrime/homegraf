@@ -167,6 +167,7 @@ class SmokeReport:
     stages: list[Stage] = field(default_factory=list)
     retained: tuple[str, ...] = ()
     passed: bool = True
+    warnings: list[str] = field(default_factory=list)
 
     def add(self, name: str, status: str, detail: str = "") -> None:
         self.stages.append(Stage(name, status, detail))
@@ -176,6 +177,8 @@ class SmokeReport:
         for stage in self.stages:
             detail = _sanitize(stage.detail, secrets)
             lines.append(f"  {stage.name}: {stage.status}" + (f" ({detail})" if detail else ""))
+        for warning in self.warnings:
+            lines.append("  advisory: " + _sanitize(warning, secrets))
         if self.retained:
             lines.append("  retained: " + ", ".join(self.retained))
         return "\n".join(lines)
@@ -400,7 +403,8 @@ class Smoke:
         self.keep, self.preflight_only = keep, preflight_only
         self.include_epic = include_epic
         self.api = _Api(cfg, token, http=http)
-        self.secrets = (token, getattr(factory, "forgejo_webhook_secret", ""))
+        self.secrets = (token, getattr(factory, "forgejo_webhook_secret", ""),
+                        getattr(factory, "openhands_backend_key", ""))
         self.run_token = uuid.uuid4().hex[:8]
         self.report = SmokeReport(cfg.repository)
         self.owned_repository = False
@@ -484,7 +488,38 @@ class Smoke:
             except (StepError, Unreachable, TimeoutError, ValueError, OSError) as exc:
                 self.report.passed = False
                 self.report.add("cleanup", "failed", str(exc))
+        self._advise_unpriced_usage()
         return self.report
+
+    def _advise_unpriced_usage(self) -> None:
+        """Warn about completed conversations with tokens at zero cost; never changes the verdict."""
+        backend = _backend_base(self.factory)
+        if backend is None:
+            return
+        base, key = backend
+        unpriced = 0
+        for conversation_id in sorted(self.completed_conversation_ids):
+            if not _CONVERSATION_ID.fullmatch(conversation_id):
+                continue
+            try:
+                response = self.http("GET", f"{base}/api/conversations/{conversation_id}",
+                                     headers={"X-Session-API-Key": key}, redirect=False)
+            except (Unreachable, TimeoutError, ValueError, OSError):
+                continue
+            if not response.ok:
+                continue
+            try:
+                metadata = response.json()
+            except ValueError:
+                continue
+            if has_unpriced_usage(metadata):
+                unpriced += 1
+        if unpriced:
+            noun = "conversation" if unpriced == 1 else "conversations"
+            verb = "reports" if unpriced == 1 else "report"
+            self.report.warnings.append(
+                f"unpriced usage: {unpriced} completed {noun} {verb} positive tokens "
+                "at an explicit zero accumulated cost")
 
     def _ensure_repository(self, plan: Plan) -> None:
         if plan.existing:
@@ -1052,6 +1087,25 @@ def _first_url(text: str) -> str:
 
 
 _CONVERSATION_PATH = re.compile(r"(?:^|/)conversations/([A-Za-z0-9_-]+)/?$")
+_CONVERSATION_ID = re.compile(r"[A-Za-z0-9_-]+\Z")
+
+
+def _backend_base(factory) -> tuple[str, str] | None:
+    """The configured OpenHands base URL and session key, or None when either is unavailable."""
+    url = getattr(factory, "openhands_url", "")
+    key = getattr(factory, "openhands_backend_key", "")
+    if not isinstance(url, str) or not isinstance(key, str) or not key.strip():
+        return None
+    url = url.rstrip("/")
+    try:
+        parts = urlsplit(url)
+        parts.port                                                          # a bad port raises here
+    except ValueError:
+        return None
+    if (parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password
+            or "@" in parts.netloc or parts.query or parts.fragment):
+        return None
+    return url, key
 
 
 def conversation_ids(bodies) -> tuple[str, ...]:

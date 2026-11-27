@@ -118,15 +118,7 @@ jobs:
           loaded_version=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' homegraf:scan)
           test "$loaded_version" = "$VERSION"
           printf 'Loaded image version: %s\n' "$loaded_version"
-      - name: Resolve Trivy DB cache key
-        id: trivydb
-        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
-      - name: Restore Trivy DB cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/trivy-cache
-          key: trivy-db-${{ steps.trivydb.outputs.day }}
-          restore-keys: trivy-db-
+      # No actions/cache for the Trivy DB: restoring and saving it took over 4 minutes each, the download itself 13 seconds.
       - name: Download Trivy DB
         shell: bash
         env:

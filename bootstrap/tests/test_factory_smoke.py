@@ -1304,6 +1304,73 @@ class CheckEpicGraphTests(unittest.TestCase):
         self.assertIn("duplicate children: #2, #5 all take the A part", problems)
 
 
+class HasUnpricedUsageTests(unittest.TestCase):
+    """The pure helper: each metric treated independently, zero cost with positive usage."""
+
+    def metric(self, cost, token_usage):
+        return {"accumulated_cost": cost, "accumulated_token_usage": token_usage}
+
+    def metadata(self, **metrics):
+        return {"stats": {"usage_to_metrics": metrics}}
+
+    def test_explicit_zero_cost_with_positive_usage_is_unpriced(self):
+        meta = self.metadata(m1=self.metric(0, {"prompt_tokens": 10}))
+        self.assertTrue(factory_smoke.has_unpriced_usage(meta))
+
+    def test_mixed_priced_and_unpriced_metrics_is_unpriced(self):
+        meta = self.metadata(
+            priced=self.metric(5, {"prompt_tokens": 10}),
+            unpriced=self.metric(0, {"completion_tokens": 3}),
+        )
+        self.assertTrue(factory_smoke.has_unpriced_usage(meta))
+
+    def test_priced_only_is_not_unpriced(self):
+        meta = self.metadata(m1=self.metric(5, {"prompt_tokens": 10}))
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_zero_usage_is_not_unpriced(self):
+        meta = self.metadata(m1=self.metric(0, {"prompt_tokens": 0}))
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_missing_cost_is_not_unpriced(self):
+        meta = self.metadata(m1=self.metric(None, {"prompt_tokens": 10}))
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_capacity_only_usage_is_not_unpriced(self):
+        meta = self.metadata(m1=self.metric(0, {"context_window": 100}))
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_model_response_id_are_excluded(self):
+        meta = self.metadata(
+            m1=self.metric(0, {"model": "gpt-4"}),
+            m2=self.metric(0, {"response_id": "resp_123"}),
+        )
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_zero_cost_and_positive_usage_on_different_metrics_is_not_unpriced(self):
+        meta = self.metadata(
+            m1=self.metric(0, {"prompt_tokens": 0}),
+            m2=self.metric(5, {"prompt_tokens": 10}),
+        )
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_all_counted_counters_count(self):
+        for counter in ("prompt_tokens", "completion_tokens", "cache_read_tokens",
+                        "cache_write_tokens", "reasoning_tokens", "per_turn_token"):
+            meta = self.metadata(m1=self.metric(0, {counter: 1}))
+            self.assertTrue(factory_smoke.has_unpriced_usage(meta), counter)
+
+    def test_boolean_cost_is_not_numeric_zero(self):
+        meta = self.metadata(m1=self.metric(False, {"prompt_tokens": 10}))
+        self.assertFalse(factory_smoke.has_unpriced_usage(meta))
+
+    def test_missing_stats_returns_false(self):
+        self.assertFalse(factory_smoke.has_unpriced_usage({}))
+        self.assertFalse(factory_smoke.has_unpriced_usage({"stats": {}}))
+        self.assertFalse(factory_smoke.has_unpriced_usage(None))
+        self.assertFalse(factory_smoke.has_unpriced_usage("not metadata"))
+
+
 class WiringTests(SmokeTest):
     def test_main_routes_the_subcommand_and_help_writes_nothing(self):
         out = io.StringIO()

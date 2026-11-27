@@ -14,7 +14,9 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 from urllib.parse import parse_qs, unquote
 
@@ -1723,6 +1725,181 @@ class HasUnpricedUsageTests(unittest.TestCase):
         self.assertFalse(factory_smoke.has_unpriced_usage({"stats": {}}))
         self.assertFalse(factory_smoke.has_unpriced_usage(None))
         self.assertFalse(factory_smoke.has_unpriced_usage("not metadata"))
+
+
+class UnpricedUsageReportTests(SmokeTest):
+    """The final report reads each completed conversation once and warns, without touching the verdict."""
+
+    BACKEND_KEY = "backend-session-key-1"
+
+    def backend(self, answers):
+        def handle(req):
+            prefix = "/api/conversations/"
+            if req.method != "GET" or not req.path.startswith(prefix):
+                return 404, {"message": "not found"}
+            answer = answers.get(req.path[len(prefix):])
+            if answer is None:
+                return 404, {"message": "not found"}
+            if callable(answer):
+                return answer(req)
+            return 200, answer
+        server = Server(handle)
+        self.addCleanup(server.close)
+        return server
+
+    def configured(self, backend, **over):
+        return FactoryConfig(**{**self.factory.__dict__, "openhands_url": backend.url,
+                                "openhands_backend_key": self.BACKEND_KEY, **over})
+
+    def usage(self, cost, **tokens):
+        return {"stats": {"usage_to_metrics": {
+            "model": {"accumulated_cost": cost, "accumulated_token_usage": tokens}}}}
+
+    def unpriced(self):
+        return self.usage(0, prompt_tokens=12)
+
+    def priced(self):
+        return self.usage(0.02, prompt_tokens=12)
+
+    def ids(self):
+        return ("abc123", "abc123-2", "abc123-3")
+
+    def test_explicit_zero_cost_with_positive_usage_is_an_advisory_warning(self):
+        backend = self.backend({"abc123": self.unpriced()})
+        report = self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        rendered = report.render()
+        self.assertIn("advisory", rendered)
+        self.assertIn("unpriced usage", rendered)
+        self.assertEqual([stage for stage in report.stages if stage.name == "result"], [])
+        self.assertEqual(sorted(request.path for request in backend.requests),
+                         [f"/api/conversations/{conversation_id}" for conversation_id in self.ids()])
+        for request in backend.requests:
+            self.assertEqual(request.method, "GET")
+            self.assertEqual(request.headers.get("x-session-api-key"), self.BACKEND_KEY)
+
+    def test_priced_usage_is_not_a_warning(self):
+        backend = self.backend({conversation_id: self.priced() for conversation_id in self.ids()})
+        report = self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertNotIn("unpriced", report.render())
+
+    def test_a_mixed_metric_warns_even_when_another_metric_is_priced(self):
+        metadata = {"stats": {"usage_to_metrics": {
+            "priced": {"accumulated_cost": 0.02, "accumulated_token_usage": {"prompt_tokens": 5}},
+            "unpriced": {"accumulated_cost": 0, "accumulated_token_usage": {"completion_tokens": 5}}}}}
+        backend = self.backend({conversation_id: metadata for conversation_id in self.ids()})
+        report = self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertIn("unpriced usage", report.render())
+
+    def test_unavailable_and_unreadable_answers_are_not_warnings(self):
+        backend = self.backend({
+            "abc123": lambda req: (500, {"message": "backend broke"}),
+            "abc123-2": lambda req: (200, b"not json"),
+            "abc123-3": None,
+        })
+        report = self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertNotIn("unpriced", report.render())
+        self.assertNotIn("backend broke", report.render())
+        self.assertEqual(len(backend.requests), 3)
+
+    def test_an_interrupted_body_is_not_a_warning(self):
+        class ShortBody(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", "20")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *args):
+                pass
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), ShortBody)
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+        backend = mock.Mock(url=f"http://127.0.0.1:{httpd.server_address[1]}")
+        report = self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertNotIn("unpriced", report.render())
+        self.assertNotIn("advisory", report.render())
+
+    def test_zero_usage_and_malformed_stats_are_not_warnings(self):
+        cases = {"abc123": self.usage(0, prompt_tokens=0),
+                 "abc123-2": {},
+                 "abc123-3": {"stats": {"usage_to_metrics": []}}}
+        backend = self.backend(cases)
+        report = self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertNotIn("unpriced", report.render())
+
+    def test_a_redirect_is_unavailable_and_never_followed(self):
+        link = Server(lambda req: (200, self.unpriced()))
+        self.addCleanup(link.close)
+
+        def redirect(req):
+            return 302, b"", {"location": f"{link.url}/api/conversations/abc123"}
+
+        backend = self.backend({conversation_id: redirect for conversation_id in self.ids()})
+        report = self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertNotIn("unpriced", report.render())
+        self.assertEqual(link.requests, [])
+
+    def test_each_completed_id_is_read_at_most_once(self):
+        def conversation():
+            return {"id": self.fake.next_id(), "user": {"login": "homegraf-agent"},
+                    "body": "Working in https://host/conversations/shared"}
+
+        self.fake._conversation = conversation
+        backend = self.backend({"shared": self.unpriced()})
+        smoke = self.smoke(factory=self.configured(backend))
+        report = smoke.run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(smoke.completed_conversation_ids, {"shared"})
+        self.assertEqual([request.path for request in backend.requests], ["/api/conversations/shared"])
+
+    def test_invalid_ids_are_never_requested(self):
+        backend = self.backend({"ok-1": self.unpriced()})
+        smoke = self.smoke(factory=self.configured(backend))
+        smoke.completed_conversation_ids = {"ok-1", "../admin", "a/b", "a.b", "a?b", "", "x y", "x#y"}
+        smoke._advise_unpriced_usage()
+        self.assertEqual([request.path for request in backend.requests], ["/api/conversations/ok-1"])
+
+    def test_a_preflight_reads_no_conversation(self):
+        backend = self.backend({conversation_id: self.unpriced() for conversation_id in self.ids()})
+        report = self.smoke(factory=self.configured(backend), preflight_only=True).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(backend.requests, [])
+
+    def test_an_unconfigured_backend_is_skipped(self):
+        backend = self.backend({conversation_id: self.unpriced() for conversation_id in self.ids()})
+        factory = FactoryConfig(**{**self.factory.__dict__, "openhands_url": backend.url,
+                                   "openhands_backend_key": ""})
+        report = self.smoke(factory=factory).run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(backend.requests, [])
+
+    def test_the_backend_key_never_reaches_forgejo(self):
+        backend = self.backend({conversation_id: self.unpriced() for conversation_id in self.ids()})
+        self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertFalse([request for request in self.srv.requests
+                          if "x-session-api-key" in request.headers])
+        self.assertEqual(len(backend.requests), 3)
+
+    def test_a_failed_verdict_and_its_result_stage_are_unchanged(self):
+        self.fake.protected_wip = True
+        backend = self.backend({"abc123": self.unpriced()})
+        report = self.smoke(factory=self.configured(backend)).run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("protected path stalled", report.render())
+        self.assertIn("unpriced usage", report.render())
+        result = [stage for stage in report.stages if stage.name == "result"]
+        self.assertEqual([(stage.name, stage.status) for stage in result], [("result", "failed")])
+        self.assertTrue(result[0].detail.startswith("#3: protected path stalled at"), result[0].detail)
 
 
 class WiringTests(SmokeTest):

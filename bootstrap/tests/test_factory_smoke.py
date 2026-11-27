@@ -751,6 +751,64 @@ class ConversationIdObservationTests(SmokeTest):
         self.assertEqual(observation.conversation_ids, ("ok",))
 
 
+class CompletedConversationIdTests(SmokeTest):
+    def test_each_baseline_records_its_conversation_at_completion(self):
+        smoke = self.smoke()
+        report = smoke.run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(smoke.completed_conversation_ids, {"abc123", "abc123-2", "abc123-3"})
+
+    def test_a_protected_draft_only_contributes_nothing(self):
+        self.fake.protected_wip = True
+        smoke = self.smoke()
+        report = smoke.run(REPO, REPO)
+        self.assertFalse(report.passed)
+        self.assertIn("protected path stalled", report.render())
+        self.assertEqual(smoke.completed_conversation_ids, {"abc123", "abc123-2"})
+
+    def test_a_start_only_observation_does_not_register(self):
+        repo = self.fake.repo()
+        repo["issues"][1] = {
+            "number": 1, "title": "Factory smoke: start only [deadbeef]", "body": "",
+            "state": "open", "labels": set(), "polls": 0, "timeline": [], "kind": "normal"}
+        smoke = self.smoke()
+        observation = smoke._observe(REPO, 1)
+        self.assertEqual(observation.conversation_ids, ("abc123",))
+        self.assertFalse(observation.pr)
+        self.assertEqual(smoke.completed_conversation_ids, set())
+
+    def test_multiple_ids_are_retained_and_duplicates_collapse(self):
+        counter = {"n": 0}
+
+        def conversation():
+            counter["n"] += 1
+            return {"id": self.fake.next_id(), "user": {"login": "homegraf-agent"},
+                    "body": "Working in https://host/conversations/shared and "
+                            f"https://host/conversations/unique-{counter['n']}"}
+
+        self.fake._conversation = conversation
+        smoke = self.smoke()
+        report = smoke.run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(smoke.completed_conversation_ids,
+                         {"shared", "unique-1", "unique-2", "unique-3"})
+
+    def test_a_preflight_invocation_clears_previous_completed_ids(self):
+        smoke = self.smoke(preflight_only=True)
+        smoke.completed_conversation_ids.add("stale")
+        report = smoke.run(REPO, REPO)
+        self.assertTrue(report.passed, report.render())
+        self.assertEqual(smoke.completed_conversation_ids, set())
+        self.assertEqual(self.writes(), [])
+
+    def test_a_second_run_clears_previous_completed_ids(self):
+        smoke = self.smoke()          # cleanup deletes the repository, so the second run starts clean
+        self.assertTrue(smoke.run(REPO, REPO).passed)
+        self.assertEqual(smoke.completed_conversation_ids, {"abc123", "abc123-2", "abc123-3"})
+        self.assertTrue(smoke.run(REPO, REPO).passed)
+        self.assertEqual(smoke.completed_conversation_ids, {"abc123-4", "abc123-5", "abc123-6"})
+
+
 class ProtectedCaseTests(SmokeTest):
     def test_the_protected_pull_request_has_to_settle_approved_green_open_and_without_wip(self):
         report = self.smoke().run(REPO, REPO)

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Declarative HTTPS endpoints: ingress.yaml -> Nginx Proxy Manager + Infisical private CA"
 requires-python = ">=3.11"
 dependencies = [
-  "PyYAML==6.0.3",
+  "PyYAML==6.0.4",
   "requests==2.34.2",
   "cryptography==50.0.2",
   "jsonschema==4.26.0",
